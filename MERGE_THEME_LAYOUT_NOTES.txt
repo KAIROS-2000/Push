@@ -1,0 +1,18 @@
+Merged from ProgHUB-fix_verst_tests.max into ProgHUB-autochecker.
+
+Included:
+- Theme support (light/dark) via frontend/src/lib/theme.ts and ThemeHydrator
+- Responsive/layout updates in safe UI files only
+- Full project archive preserved (backend, judge_runner, etc.)
+
+Intentionally NOT replaced because they include logic/model changes beyond layout:
+- frontend/src/components/teacher-workspace.tsx
+- frontend/src/components/lesson-player.tsx
+- frontend/src/types/index.ts
+- backend/*
+- docker-compose.yml
+- .env / README / other non-layout files
+
+Notes:
+- Auth form and profile view include minimal theme persistence/apply behavior.
+- Business logic from the main project remains the source of truth.

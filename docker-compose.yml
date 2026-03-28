@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codequest
+      POSTGRES_USER: codequest
+      POSTGRES_PASSWORD: codequest
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codequest -d codequest"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  judge-runner:
+    build: ./judge_runner
+    restart: unless-stopped
+    environment:
+      JUDGE_RUNNER_HOST: 0.0.0.0
+      JUDGE_RUNNER_PORT: "8090"
+    expose:
+      - "8090"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      ENABLE_DEMO_DATA: "false"
+      FLASK_DEBUG: "0"
+      CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
+      CODE_JUDGE_ALLOW_LOCAL_FALLBACK: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      judge-runner:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      INTERNAL_API_URL: http://backend:8000/api
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
