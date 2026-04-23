@@ -19,7 +19,7 @@ if (appEnv === 'production') {
   }
 }
 
-// CSP is now owned by src/middleware.ts (nonce-based, per-request).
+// CSP is owned by src/proxy.ts (nonce-based, per-request; Next 16 proxy replaces middleware).
 // Only static security headers that don't need nonces live here.
 const nextConfig: NextConfig = {
   poweredByHeader: false,
