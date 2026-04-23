@@ -3,6 +3,43 @@ import { NextRequest, NextResponse } from 'next/server'
 import { AUTH_ROUTE_PREFIXES, pathMatches } from '@/lib/auth-routes'
 import { INTERNAL_API_URL } from '@/lib/server-env'
 
+function buildContentSecurityPolicy() {
+	const nonce = crypto.randomUUID().replace(/-/g, '')
+
+	const scriptSrc =
+		process.env.NODE_ENV !== 'production'
+			? `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`
+			: `'self' 'nonce-${nonce}' 'strict-dynamic'`
+
+	const csp = [
+		"default-src 'self'",
+		`script-src ${scriptSrc}`,
+		`style-src 'self' 'nonce-${nonce}' 'unsafe-inline'`,
+		"img-src 'self' data: blob:",
+		"font-src 'self' data:",
+		"connect-src 'self'",
+		"worker-src 'self' blob:",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		'upgrade-insecure-requests',
+	].join('; ')
+
+	return { nonce, csp }
+}
+
+function requestHeadersWithNonce(request: NextRequest, nonce: string) {
+	const requestHeaders = new Headers(request.headers)
+	requestHeaders.set('x-nonce', nonce)
+	return requestHeaders
+}
+
+function withCsp(response: NextResponse, csp: string) {
+	response.headers.set('Content-Security-Policy', csp)
+	return response
+}
+
 type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
 
 const ACCESS_COOKIE = 'codequest_access_token'
@@ -131,62 +168,69 @@ async function refreshSession(request: NextRequest) {
 }
 
 export async function proxy(request: NextRequest) {
+	const { nonce, csp } = buildContentSecurityPolicy()
+	const requestHeaders = requestHeadersWithNonce(request, nonce)
+
 	const pathname = request.nextUrl.pathname
 	const isAuthRoute = AUTH_ROUTE_PREFIXES.some((route) => pathMatches(pathname, route))
 	const roleRule = ROLE_RULES.find((rule) => pathMatches(pathname, rule.path))
 
+	const nextWithCsp = () => withCsp(NextResponse.next({ request: { headers: requestHeaders } }), csp)
+	const redirectWithCsp = (url: URL) => withCsp(NextResponse.redirect(url), csp)
+
 	if (!isAuthRoute && !roleRule) {
-		return NextResponse.next()
+		return nextWithCsp()
 	}
 
 	const currentRole = accessRoleFromRequest(request)
 	if (currentRole) {
 		if (isAuthRoute) {
-			return NextResponse.redirect(dashboardUrl(request))
+			return redirectWithCsp(dashboardUrl(request))
 		}
 		if (roleRule && !roleRule.roles.includes(currentRole)) {
-			return NextResponse.redirect(dashboardUrl(request))
+			return redirectWithCsp(dashboardUrl(request))
 		}
-		return NextResponse.next()
+		return nextWithCsp()
 	}
 
 	const refreshedSession = await refreshSession(request)
 	if (refreshedSession) {
 		if (isAuthRoute) {
-			return applyUpstreamAuthCookies(
-				NextResponse.redirect(dashboardUrl(request)),
-				refreshedSession.response,
+			return withCsp(
+				applyUpstreamAuthCookies(NextResponse.redirect(dashboardUrl(request)), refreshedSession.response),
+				csp,
 			)
 		}
 
 		const response =
 			roleRule && !roleRule.roles.includes(refreshedSession.role)
 				? NextResponse.redirect(dashboardUrl(request))
-				: NextResponse.next()
-		return applyUpstreamAuthCookies(response, refreshedSession.response)
+				: NextResponse.next({ request: { headers: requestHeaders } })
+		return withCsp(applyUpstreamAuthCookies(response, refreshedSession.response), csp)
 	}
 
 	if (isAuthRoute) {
-		return request.cookies.get(ACCESS_COOKIE) || request.cookies.get(REFRESH_COOKIE)
-			? clearAuthCookies(NextResponse.next())
-			: NextResponse.next()
+		if (request.cookies.get(ACCESS_COOKIE) || request.cookies.get(REFRESH_COOKIE)) {
+			return withCsp(clearAuthCookies(NextResponse.next({ request: { headers: requestHeaders } })), csp)
+		}
+		return nextWithCsp()
 	}
 
-	return clearAuthCookies(NextResponse.redirect(loginUrl(request)))
+	return withCsp(
+		clearAuthCookies(NextResponse.redirect(loginUrl(request))),
+		csp,
+	)
 }
 
 export const config = {
 	matcher: [
-		'/dashboard/:path*',
-		'/messages/:path*',
-		'/roadmap/:path*',
-		'/lessons/:path*',
-		'/leaderboard/:path*',
-		'/profile/:path*',
-		'/teacher/:path*',
-		'/admin/:path*',
-		'/superadmin/:path*',
-		'/auth/login/:path*',
-		'/auth/register/:path*',
+		{
+			// All app routes: CSP + nonce; auth paths also run access checks above.
+			source: '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+			missing: [
+				{ type: 'header', key: 'next-router-prefetch' },
+				{ type: 'header', key: 'purpose', value: 'prefetch' },
+			],
+		},
 	],
 }
