@@ -1,12 +1,12 @@
-# Кодиумс Fullsite v3
+# Progyx Fullsite v3
 
-Полноценный fullstack‑сайт для обучения программированию по методичке Кодиумс и вашим уточнениям по ролям.
+Полноценный fullstack‑сайт для обучения программированию по методичке Progyx и вашим уточнениям по ролям.
 
 ## Что реализовано
 
-- регистрация и вход с JWT access + refresh
+- регистрация и вход через backend-set `HttpOnly` session cookies
 - роли: `student`, `teacher`, `admin`, `superadmin`
-- суперадмин создаётся автоматически при старте по `.env`
+- bootstrap суперадмина включается только явно через `.env`
 - ученик: dashboard, roadmap, уроки, теория, практика, мини‑тесты, достижения, рейтинг, вступление в класс
 - teacher workflow: создание классов, назначение заданий, просмотр учеников, проверка сдач
 - teacher practice builder: ручная проверка, авто‑проверка по ключевым словам и настоящие автотесты для `Python`/`JavaScript`
@@ -19,7 +19,7 @@
 
 ## Актуальный стек
 
-- Backend: Flask + Flask-SQLAlchemy + PostgreSQL + PyJWT
+- Backend: Flask + Flask-SQLAlchemy + PostgreSQL + PyJWT + Gunicorn
 - Frontend: Next.js + React + Tailwind CSS + GSAP
 - Учебные инструменты: Monaco Editor, текстовые и кодовые практики
 
@@ -36,16 +36,23 @@ docker compose up --build
 
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000/api
+- фронтенд в `development` использует `NEXT_PUBLIC_API_URL=http://localhost:3000/api`
+- фронтенд в `production` должен получать `NEXT_PUBLIC_API_URL` только из env
+- server-side proxy фронтенда ходит в backend через `INTERNAL_API_URL`
 - `judge-runner` поднимается внутри Docker-сети и не публикует порт наружу
 
 ## Production режим
 
-- по умолчанию проект запускается в production-конфигурации:
-  - `APP_ENV=production`
+- для локального старта используйте `APP_ENV=development`
+- для frontend также выставляйте `NEXT_PUBLIC_APP_ENV=development`
+- при `APP_ENV=production`:
+  - `CLIENT_URL`, `NEXT_PUBLIC_API_URL` и `INTERNAL_API_URL` должны приходить из env
   - `ENABLE_DEMO_DATA=false`
 - фронтенд в Docker собирается через `next build` и запускается через `next start`
-- backend стартует без `debug` режима (`FLASK_DEBUG=0`)
+- backend запускается через Gunicorn, а `flask.run()` запрещён в production
 - если в `APP_ENV=production` оставлен слабый `SECRET_KEY` (`dev-secret-key` или `super-secret-key-change-me`), backend завершит запуск с ошибкой
+- в `APP_ENV=production` обязательны `SESSION_COOKIE_SECURE=true` и `GIGACHAT_VERIFY_SSL=true`
+- `SUPERADMIN_BOOTSTRAP` в production требует явных и достаточно сильных `SUPERADMIN_EMAIL` и `SUPERADMIN_PASSWORD`
 
 ## Автопроверка кода
 
@@ -56,18 +63,23 @@ docker compose up --build
 - режим `Автотесты` ожидает программу, которая читает из `stdin` и пишет результат в `stdout`
 - в `docker compose` backend отправляет код в отдельный сервис `judge-runner`
 - runner запускает код в собственной временной директории, с таймаутом, лимитом памяти и сокращённым окружением
-- backend может использовать локальный fallback только если это явно разрешено через `CODE_JUDGE_ALLOW_LOCAL_FALLBACK=true`
+- локальный fallback по умолчанию отключён и должен включаться только в доверенной локальной среде
 
 Поддерживаемые настройки `.env`:
 
 ```env
+NEXT_PUBLIC_APP_ENV=development
+NEXT_PUBLIC_API_URL=http://localhost:3000/api
+INTERNAL_API_URL=http://localhost:8000/api
+CLIENT_URL=http://localhost:3000
 CODE_JUDGE_PYTHON_BIN=python
 CODE_JUDGE_NODE_BIN=node
+CODE_JUDGE_RUNNER_URL=http://localhost:8090/execute
 CODE_JUDGE_DEFAULT_TIME_LIMIT_MS=2000
 CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB=128
 CODE_JUDGE_MAX_OUTPUT_CHARS=4000
 CODE_JUDGE_RUNNER_TIMEOUT_MS=15000
-CODE_JUDGE_ALLOW_LOCAL_FALLBACK=true
+CODE_JUDGE_ALLOW_LOCAL_FALLBACK=false
 ```
 
 ## Тестовые данные (только для локальной проверки)
@@ -100,7 +112,7 @@ backend/
     api/        # auth, student, teacher, admin
     core/       # config, db, security, gamification
     models/     # users, modules, lessons, assignments, invites, progress
-    seed/       # автосоздание суперадмина и учебного контента
+    seed/       # учебный контент и опциональный bootstrap суперадмина
 frontend/
   src/app/      # страницы App Router
   src/components/

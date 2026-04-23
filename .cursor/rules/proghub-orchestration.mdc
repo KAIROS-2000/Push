@@ -1,0 +1,9 @@
+---
+description: Apply when coordinating multi-step work in the ProgHUB codebase. Use this to keep orchestration safe, incremental, and test-oriented.
+alwaysApply: false
+---
+- Start by identifying whether the task is a feature, bug fix, refactor, investigation, or review.
+- For medium or large tasks, obtain a repository/file map before implementation.
+- Delegate to specialized subagents when the task crosses backend, frontend, learning logic, or QA/security boundaries.
+- Use verification before marking work complete.
+- Keep all internal plans, progress notes, and generated workflow materials in English.

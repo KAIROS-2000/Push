@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import random
+import secrets
 import string
 
 from flask import current_app
@@ -26,7 +26,8 @@ from ..models.user import User, UserRole
 
 
 def generate_code(length: int = 8) -> str:
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+    alphabet = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 def _username_from_email(email: str, fallback: str) -> str:
@@ -38,6 +39,9 @@ def _username_from_email(email: str, fallback: str) -> str:
 
 def bootstrap_superadmin() -> None:
     email = current_app.config['SUPERADMIN_EMAIL'].strip().lower()
+    password = current_app.config.get('SUPERADMIN_PASSWORD') or ''
+    if not email or not password:
+        return
     if User.query.filter_by(email=email).first():
         return
     username = email.split('@')[0]
@@ -46,7 +50,7 @@ def bootstrap_superadmin() -> None:
             full_name=current_app.config['SUPERADMIN_NAME'],
             username=username,
             email=email,
-            password_hash=hash_password(current_app.config['SUPERADMIN_PASSWORD']),
+            password_hash=hash_password(password),
             role=UserRole.SUPERADMIN,
             age_group='adult',
             xp=5000,
@@ -973,7 +977,7 @@ def seed_parent_invite() -> None:
         ParentInvite(
             student_id=student.id,
             code=parent_code,
-            label='Семейный кабинет',
+            label='Родительский кабинет',
             weekly_limit_minutes=180,
             modules_whitelist=['middle-python-intro', 'middle-conditions'],
             expires_at=ParentInvite.next_month_expiry(),
@@ -1053,7 +1057,8 @@ def repair_legacy_code_task_validations() -> None:
 
 
 def seed_all(enable_demo_data: bool = True) -> None:
-    bootstrap_superadmin()
+    if current_app.config.get('SUPERADMIN_BOOTSTRAP', False):
+        bootstrap_superadmin()
     seed_achievements()
     cleanup_deprecated_learning_artifacts()
     seed_modules()

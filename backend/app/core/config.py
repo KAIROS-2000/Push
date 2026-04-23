@@ -1,4 +1,14 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_DIR.parent
+
+load_dotenv(PROJECT_ROOT / '.env', override=False)
+load_dotenv(BACKEND_DIR / '.env', override=False)
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -7,47 +17,68 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+def _env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
 class Config:
-    APP_ENV = os.getenv('APP_ENV', 'production').strip().lower()
+    APP_ENV = (_env('APP_ENV') or 'production').lower()
     IS_PRODUCTION = APP_ENV == 'production'
-    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        'DATABASE_URL',
-        'postgresql+psycopg://codequest:codequest@db:5432/codequest',
-    )
+    SECRET_KEY = _env('SECRET_KEY') or 'dev-secret-key'
+    SQLALCHEMY_DATABASE_URI = _env('DATABASE_URL') or 'postgresql+psycopg://codequest:codequest@db:5432/codequest'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    ACCESS_TOKEN_MINUTES = int(os.getenv('ACCESS_TOKEN_MINUTES', '30'))
-    REFRESH_TOKEN_DAYS = int(os.getenv('REFRESH_TOKEN_DAYS', '14'))
-    CLIENT_URL = os.getenv('CLIENT_URL', 'http://localhost:3000')
-    SUPERADMIN_EMAIL = os.getenv('SUPERADMIN_EMAIL', 'superadmin@codequest.local')
-    SUPERADMIN_PASSWORD = os.getenv('SUPERADMIN_PASSWORD', 'ChangeMe123!')
-    SUPERADMIN_NAME = os.getenv('SUPERADMIN_NAME', 'Главный администратор')
+    ACCESS_TOKEN_MINUTES = int(_env('ACCESS_TOKEN_MINUTES') or '30')
+    REFRESH_TOKEN_DAYS = int(_env('REFRESH_TOKEN_DAYS') or '14')
+    CLIENT_URL = _env('CLIENT_URL') or (None if IS_PRODUCTION else 'http://localhost:3000')
+    SESSION_COOKIE_SECURE = _as_bool(os.getenv('SESSION_COOKIE_SECURE'), default=IS_PRODUCTION)
+    SESSION_COOKIE_SAMESITE = _env('SESSION_COOKIE_SAMESITE') or 'Lax'
+    TRUST_PROXY = _as_bool(os.getenv('TRUST_PROXY'), default=False)
+    SUPERADMIN_BOOTSTRAP = _as_bool(os.getenv('SUPERADMIN_BOOTSTRAP'), default=not IS_PRODUCTION)
+    SUPERADMIN_EMAIL = (_env('SUPERADMIN_EMAIL') or ('' if IS_PRODUCTION else 'superadmin@codequest.local')).lower()
+    SUPERADMIN_PASSWORD = _env('SUPERADMIN_PASSWORD') or ('' if IS_PRODUCTION else 'LocalOnlySuperAdmin123!')
+    SUPERADMIN_NAME = _env('SUPERADMIN_NAME') or 'Главный администратор'
     ENABLE_DEMO_DATA = _as_bool(
         os.getenv('ENABLE_DEMO_DATA'),
         default=not IS_PRODUCTION,
     )
-    DEMO_STUDENT_EMAIL = os.getenv('DEMO_STUDENT_EMAIL', '')
-    DEMO_STUDENT_PASSWORD = os.getenv('DEMO_STUDENT_PASSWORD', '')
-    DEMO_TEACHER_EMAIL = os.getenv('DEMO_TEACHER_EMAIL', '')
-    DEMO_TEACHER_PASSWORD = os.getenv('DEMO_TEACHER_PASSWORD', '')
-    DEMO_ADMIN_EMAIL = os.getenv('DEMO_ADMIN_EMAIL', '')
-    DEMO_ADMIN_PASSWORD = os.getenv('DEMO_ADMIN_PASSWORD', '')
-    DEMO_CLASS_CODE = os.getenv('DEMO_CLASS_CODE', '')
-    DEMO_PARENT_CODE = os.getenv('DEMO_PARENT_CODE', '')
-    CODE_JUDGE_PYTHON_BIN = os.getenv('CODE_JUDGE_PYTHON_BIN', 'python')
-    CODE_JUDGE_NODE_BIN = os.getenv('CODE_JUDGE_NODE_BIN', 'node')
-    CODE_JUDGE_DEFAULT_TIME_LIMIT_MS = int(os.getenv('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS', '2000'))
-    CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB = int(os.getenv('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB', '128'))
-    CODE_JUDGE_MAX_OUTPUT_CHARS = int(os.getenv('CODE_JUDGE_MAX_OUTPUT_CHARS', '4000'))
-    CODE_JUDGE_RUNNER_URL = (os.getenv('CODE_JUDGE_RUNNER_URL') or '').strip() or None
-    CODE_JUDGE_RUNNER_TIMEOUT_MS = int(os.getenv('CODE_JUDGE_RUNNER_TIMEOUT_MS', '15000'))
-    CODE_JUDGE_ALLOW_LOCAL_FALLBACK = _as_bool(os.getenv('CODE_JUDGE_ALLOW_LOCAL_FALLBACK'), default=True)
+    DEMO_STUDENT_EMAIL = _env('DEMO_STUDENT_EMAIL') or ''
+    DEMO_STUDENT_PASSWORD = _env('DEMO_STUDENT_PASSWORD') or ''
+    DEMO_TEACHER_EMAIL = _env('DEMO_TEACHER_EMAIL') or ''
+    DEMO_TEACHER_PASSWORD = _env('DEMO_TEACHER_PASSWORD') or ''
+    DEMO_ADMIN_EMAIL = _env('DEMO_ADMIN_EMAIL') or ''
+    DEMO_ADMIN_PASSWORD = _env('DEMO_ADMIN_PASSWORD') or ''
+    DEMO_CLASS_CODE = _env('DEMO_CLASS_CODE') or ''
+    DEMO_PARENT_CODE = _env('DEMO_PARENT_CODE') or ''
+    CODE_JUDGE_PYTHON_BIN = _env('CODE_JUDGE_PYTHON_BIN') or 'python'
+    CODE_JUDGE_NODE_BIN = _env('CODE_JUDGE_NODE_BIN') or 'node'
+    CODE_JUDGE_DEFAULT_TIME_LIMIT_MS = int(_env('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS') or '2000')
+    CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB = int(_env('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB') or '128')
+    CODE_JUDGE_MAX_OUTPUT_CHARS = int(_env('CODE_JUDGE_MAX_OUTPUT_CHARS') or '4000')
+    CODE_JUDGE_RUNNER_URL = _env('CODE_JUDGE_RUNNER_URL')
+    CODE_JUDGE_RUNNER_TOKEN = _env('CODE_JUDGE_RUNNER_TOKEN')
+    CODE_JUDGE_RUNNER_TIMEOUT_MS = int(_env('CODE_JUDGE_RUNNER_TIMEOUT_MS') or '15000')
+    CODE_JUDGE_ALLOW_LOCAL_FALLBACK = (
+        False
+        if IS_PRODUCTION
+        else _as_bool(os.getenv('CODE_JUDGE_ALLOW_LOCAL_FALLBACK'), default=False)
+    )
+    METRICS_DEBUG = _as_bool(os.getenv('METRICS_DEBUG'), default=not IS_PRODUCTION)
 
-    GIGACHAT_AUTH_KEY = (os.getenv('GIGACHAT_AUTH_KEY') or '').strip() or None
-    GIGACHAT_SCOPE = os.getenv('GIGACHAT_SCOPE', 'GIGACHAT_API_PERS').strip() or 'GIGACHAT_API_PERS'
-    GIGACHAT_MODEL = os.getenv('GIGACHAT_MODEL', 'GigaChat').strip() or 'GigaChat'
-    GIGACHAT_AUTH_URL = os.getenv('GIGACHAT_AUTH_URL', 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth').strip()
-    GIGACHAT_API_URL = os.getenv('GIGACHAT_API_URL', 'https://gigachat.devices.sberbank.ru/api/v1').strip().rstrip('/')
-    GIGACHAT_TIMEOUT_MS = int(os.getenv('GIGACHAT_TIMEOUT_MS', '30000'))
+    GIGACHAT_AUTH_KEY = _env('GIGACHAT_AUTH_KEY')
+    GIGACHAT_SCOPE = _env('GIGACHAT_SCOPE') or 'GIGACHAT_API_PERS'
+    GIGACHAT_MODEL = _env('GIGACHAT_MODEL') or 'GigaChat'
+    GIGACHAT_AUTH_URL = _env('GIGACHAT_AUTH_URL') or 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
+    GIGACHAT_API_URL = (_env('GIGACHAT_API_URL') or 'https://gigachat.devices.sberbank.ru/api/v1').rstrip('/')
+    GIGACHAT_TIMEOUT_MS = int(_env('GIGACHAT_TIMEOUT_MS') or '30000')
     GIGACHAT_VERIFY_SSL = _as_bool(os.getenv('GIGACHAT_VERIFY_SSL'), default=True)
-    GIGACHAT_CA_BUNDLE = (os.getenv('GIGACHAT_CA_BUNDLE') or '').strip() or None
+    GIGACHAT_CA_BUNDLE = _env('GIGACHAT_CA_BUNDLE')
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(_env('LOGIN_RATE_LIMIT_WINDOW_SECONDS') or '900')
+    LOGIN_RATE_LIMIT_MAX_FAILURES = int(_env('LOGIN_RATE_LIMIT_MAX_FAILURES') or '8')
+    LOGIN_RATE_LIMIT_BLOCK_SECONDS = int(_env('LOGIN_RATE_LIMIT_BLOCK_SECONDS') or '900')
+    PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS = int(_env('PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS') or '600')
+    PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES = int(_env('PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES') or '20')
+    PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS = int(_env('PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS') or '900')

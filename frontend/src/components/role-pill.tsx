@@ -8,12 +8,18 @@ const labelMap: Record<UserRole, string> = {
 }
 
 const colorMap: Record<UserRole, string> = {
-  student: 'bg-sky-100 text-sky-700',
-  teacher: 'bg-emerald-100 text-emerald-700',
-  admin: 'bg-violet-100 text-violet-700',
-  superadmin: 'bg-rose-100 text-rose-700',
+  student: 'border-sky-200 bg-sky-50 text-sky-700',
+  teacher: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  admin: 'border-violet-200 bg-violet-50 text-violet-700',
+  superadmin: 'border-rose-200 bg-rose-50 text-rose-700',
 }
 
 export function RolePill({ role }: { role: UserRole }) {
-  return <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${colorMap[role]}`}>{labelMap[role]}</span>
+  return (
+    <span
+      className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${colorMap[role]}`}
+    >
+      {labelMap[role]}
+    </span>
+  )
 }

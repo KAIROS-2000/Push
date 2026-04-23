@@ -252,7 +252,10 @@ def request_lesson_chat_completion(
         ],
     }
 
-    api_url = f"{current_app.config.get('GIGACHAT_API_URL', 'https://gigachat.devices.sberbank.ru/api/v1').rstrip('/')}/chat/completions"
+    api_base_url = (current_app.config.get('GIGACHAT_API_URL') or '').rstrip('/')
+    if not api_base_url:
+        raise GigaChatConfigurationError('Set GIGACHAT_API_URL in the environment before using GigaChat.')
+    api_url = f'{api_base_url}/chat/completions'
 
     for attempt in range(2):
         access_token = _get_access_token()

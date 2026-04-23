@@ -2,22 +2,28 @@ from __future__ import annotations
 
 import re
 
-from flask import Blueprint, request
+from flask import Blueprint, make_response, request
 
 from ..core.achievements import sync_achievements_for_user
 from ..core.db import db
 from ..core.security import (
     auth_required,
+    clear_auth_cookies,
+    clear_login_failures,
     create_token_pair,
     decode_token,
     hash_password,
+    login_attempt_allowed,
     password_strength,
-    validate_password,
-    register_failed_attempt,
+    refresh_token_from_request,
+    register_login_failure,
+    set_auth_cookies,
     revoke_refresh_token,
+    token_matches_user_session,
+    validate_password,
     verify_password,
 )
-from ..models.user import RefreshToken, User, UserRole
+from ..models.user import RefreshToken, User, UserRole, USERNAME_MAX_LENGTH
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -50,12 +56,14 @@ def register():
     password = data.get('password') or ''
     role = data.get('role', UserRole.STUDENT.value)
     age_group = normalize_age_group(data.get('age_group'))
-    password_error = validate_password(password, minimum_length=6)
+    password_error = validate_password(password)
 
     if role not in {UserRole.STUDENT.value, UserRole.TEACHER.value}:
         return {'message': 'Самостоятельная регистрация доступна только ученикам и учителям.'}, 400
     if not email or not username or not password:
         return {'message': 'Заполните email, username и пароль.'}, 400
+    if len(username) > USERNAME_MAX_LENGTH:
+        return {'message': f'Логин должен содержать не более {USERNAME_MAX_LENGTH} символов.'}, 400
     if password_error:
         return {'message': password_error}, 400
     if not is_valid_email(email):
@@ -76,43 +84,50 @@ def register():
     )
     user.touch_login()
     db.session.add(user)
-    db.session.commit()
+    db.session.flush()
     tokens = create_token_pair(user)
-    return {
+    db.session.commit()
+    response = make_response({
         'message': 'Регистрация успешна',
         'password_strength': password_strength(password),
         'user': user.to_dict(),
-        **tokens,
-    }, 201
+    }, 201)
+    return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
 
 
 @auth_bp.post('/login')
 def login():
-    ip = request.headers.get('X-Forwarded-For', request.remote_addr or 'local')
-    if not register_failed_attempt(ip):
-        return {'message': 'Слишком много попыток входа. Повторите через минуту.'}, 429
-
+    ip = request.remote_addr or 'unknown'
     data = request.get_json() or {}
     login_value = (data.get('login') or data.get('email') or data.get('username') or '').strip().lower()
+    if login_value and not login_attempt_allowed(login_value, ip):
+        return {'message': 'Слишком много попыток входа. Повторите через минуту.'}, 429
+
     password = data.get('password') or ''
     if not login_value or not password:
         return {'message': 'Укажите email или username и пароль.'}, 400
     user = User.query.filter((User.email == login_value) | (User.username == login_value)).first()
     if not user or not verify_password(password, user.password_hash):
+        register_login_failure(login_value or 'unknown', ip)
+        db.session.commit()
         return {'message': 'Неверный логин или пароль.'}, 401
     if not user.is_active:
+        register_login_failure(login_value, ip)
+        db.session.commit()
         return {'message': 'Пользователь заблокирован.'}, 403
 
+    clear_login_failures(login_value, ip)
     user.touch_login()
     sync_achievements_for_user(user)
-    db.session.commit()
     tokens = create_token_pair(user)
-    return {'message': 'Вход выполнен', 'user': user.to_dict(), **tokens}
+    db.session.commit()
+    response = make_response({'message': 'Вход выполнен', 'user': user.to_dict()})
+    return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
 
 
 @auth_bp.post('/refresh')
 def refresh():
-    token = (request.get_json() or {}).get('refresh_token', '')
+    token = ((request.get_json(silent=True) or {}).get('refresh_token') or refresh_token_from_request()).strip()
     try:
         payload = decode_token(token)
         if payload.get('type') != 'refresh':
@@ -121,21 +136,32 @@ def refresh():
         return {'message': 'Недействительный refresh token'}, 401
 
     refresh_row = RefreshToken.query.filter_by(token_id=payload.get('jti')).first()
-    user = User.query.get(int(payload['sub'])) if payload.get('sub') else None
-    if not refresh_row or not user or not user.is_active:
-        return {'message': 'Refresh token отозван или пользователь недоступен'}, 401
+    user = db.session.get(User, int(payload['sub'])) if payload.get('sub') else None
+    if not refresh_row or not user:
+        return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
+    if not user.is_active:
+        db.session.delete(refresh_row)
+        db.session.commit()
+        return {'message': 'Пользователь заблокирован.', 'code': 'user_blocked'}, 401
+    if not token_matches_user_session(payload, user):
+        db.session.delete(refresh_row)
+        db.session.commit()
+        return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
 
     db.session.delete(refresh_row)
-    db.session.commit()
     tokens = create_token_pair(user)
-    return {'user': user.to_dict(), **tokens}
+    db.session.commit()
+    response = make_response({'user': user.to_dict()})
+    return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
 
 
 @auth_bp.post('/logout')
 def logout():
-    token = (request.get_json() or {}).get('refresh_token', '')
+    token = ((request.get_json(silent=True) or {}).get('refresh_token') or refresh_token_from_request()).strip()
     revoke_refresh_token(token)
-    return {'message': 'Сессия завершена'}
+    db.session.commit()
+    response = make_response({'message': 'Сессия завершена'})
+    return clear_auth_cookies(response)
 
 
 @auth_bp.get('/me')

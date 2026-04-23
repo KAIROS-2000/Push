@@ -14,26 +14,24 @@ interface MascotStep {
 	message: string
 }
 
-const API_URL =
-	process.env.NEXT_PUBLIC_API_URL || 'https://push-lt9u.onrender.com/api'
-const STEP_DELAY_MS = 5000
+const STEP_DELAY_MS = 3000
 
 const SCENARIOS: Record<MascotScenario, MascotStep[]> = {
 	post_register_intro: [
 		{
 			image: 'Взволнованный.png',
-			mood: 'Коди',
+			mood: 'Проги',
 			message:
-				'Привет! Меня зовут Коди. Я живу на этом сайте и мне срочно нужна твоя помощь!!!',
+				'Привет! Меня зовут Проги. Я живу на этом сайте и мне срочно нужна твоя помощь!!!',
 		},
 		{
 			image: 'Нейтральный.png',
-			mood: 'Коди',
+			mood: 'Проги',
 			message: 'Мне не хватает XP, которые нужны мне для зарядки магии',
 		},
 		{
 			image: 'Радостный 1.png',
-			mood: 'Коди',
+			mood: 'Проги',
 			message:
 				'Скорее переходи в раздел с уроками, зарабатывай XP и помоги мне одолеть зло!',
 		},
@@ -41,7 +39,7 @@ const SCENARIOS: Record<MascotScenario, MascotStep[]> = {
 	first_lesson_complete: [
 		{
 			image: 'Радостный 2.png',
-			mood: 'Коди',
+			mood: 'Проги',
 			message:
 				'Это было потрясающе! Большое тебе спасибо, буду рад видеть тебя снова!',
 		},
@@ -49,7 +47,7 @@ const SCENARIOS: Record<MascotScenario, MascotStep[]> = {
 }
 
 function spriteUrl(filename: string) {
-	return `${API_URL}/mascot/${encodeURIComponent(filename)}`
+	return `/api/mascot/${encodeURIComponent(filename)}`
 }
 
 export function MascotOverlay() {
@@ -131,7 +129,7 @@ export function MascotOverlay() {
 			}}
 			role='button'
 			tabIndex={0}
-			aria-label='Диалог с Коди'
+			aria-label='Диалог с Проги'
 		>
 			<div className='grid h-full w-full gap-6 bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.28),_rgba(15,23,42,0.94)_56%)] px-5 py-6 sm:px-8 sm:py-8 lg:grid-cols-[minmax(320px,460px)_minmax(0,1fr)] lg:items-center lg:px-14 lg:py-12'>
 				<div className='flex min-h-[38vh] items-end justify-center overflow-hidden rounded-[32px] border border-white/15 bg-white/10 p-5 shadow-2xl shadow-slate-950/30 backdrop-blur-md lg:min-h-[78vh] lg:p-8'>
@@ -148,7 +146,7 @@ export function MascotOverlay() {
 				<div className='flex items-center'>
 					<div className='w-full rounded-[36px] border border-white/15 bg-white/92 p-7 shadow-2xl shadow-slate-950/25 backdrop-blur-xl sm:p-10 lg:min-h-[56vh] lg:p-14'>
 						<p className='text-xs font-bold uppercase tracking-[0.28em] text-sky-600'>
-							Коди
+							Проги
 						</p>
 						<h2 className='mt-4 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl lg:text-6xl'>
 							{currentStep.mood}

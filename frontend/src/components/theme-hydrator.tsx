@@ -1,9 +1,17 @@
 'use client'
 
 import { useEffect, useLayoutEffect } from 'react'
-import { applyTheme, DEFAULT_THEME, getStoredTheme } from '@/lib/theme'
+import { usePathname } from 'next/navigation'
+import { fetchSessionUser } from '@/lib/auth-session'
+import { isAuthRoutePath, isProtectedRoutePath } from '@/lib/auth-routes'
+import { getSessionSnapshot, subscribeSessionSnapshot } from '@/lib/session-store'
+import { applyTheme, DEFAULT_THEME, getStoredTheme, setTheme } from '@/lib/theme'
+
+const SESSION_REVALIDATION_INTERVAL_MS = 30_000
 
 export function ThemeHydrator() {
+  const pathname = usePathname()
+
   useLayoutEffect(() => {
     applyTheme(getStoredTheme() || DEFAULT_THEME)
   }, [])
@@ -46,6 +54,72 @@ export function ThemeHydrator() {
       delete root.dataset.phoneLayout
     }
   }, [])
+
+  useEffect(() => {
+    const snapshot = getSessionSnapshot()
+    if (snapshot.user?.theme) {
+      setTheme(snapshot.user.theme)
+    }
+
+    let cancelled = false
+
+    fetchSessionUser({ auth: 'optional' })
+      .then((user) => {
+        if (!cancelled && user?.theme) {
+          setTheme(user.theme)
+        }
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const revalidateSession = () => {
+      const snapshot = getSessionSnapshot()
+      if (snapshot.status === 'anonymous') {
+        return
+      }
+      void fetchSessionUser({ auth: 'optional', force: true }).catch(() => undefined)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        revalidateSession()
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        revalidateSession()
+      }
+    }, SESSION_REVALIDATION_INTERVAL_MS)
+
+    window.addEventListener('focus', revalidateSession)
+    window.addEventListener('pageshow', revalidateSession)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', revalidateSession)
+      window.removeEventListener('pageshow', revalidateSession)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    return subscribeSessionSnapshot((snapshot) => {
+      if (snapshot.status !== 'anonymous') {
+        return
+      }
+      if (!pathname || isAuthRoutePath(pathname) || !isProtectedRoutePath(pathname)) {
+        return
+      }
+      window.location.replace('/auth/login')
+    })
+  }, [pathname])
 
   return null
 }

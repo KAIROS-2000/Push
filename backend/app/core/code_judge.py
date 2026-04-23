@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import json
 import math
 import os
-import json
 import shutil
-import subprocess
-import tempfile
-import time
 from typing import Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from flask import current_app
+
+from shared.judge import JudgeExecutionRequest, coerce_test_cases, execute_stdio_submission
 
 from ..models.learning import Task
 
@@ -26,21 +25,6 @@ class CodeJudgeConfigurationError(CodeJudgeError):
 
 class CodeJudgeUnavailableError(CodeJudgeError):
     """Raised when the isolated runner is temporarily unavailable."""
-
-
-def _truncate(value: str | None, limit: int) -> str:
-    text = (value or '').replace('\r\n', '\n').replace('\r', '\n')
-    if len(text) <= limit:
-        return text
-    return f'{text[:limit].rstrip()}\n...'
-
-
-def _normalize_output(value: str | None) -> str:
-    normalized = (value or '').replace('\r\n', '\n').replace('\r', '\n')
-    lines = [line.rstrip() for line in normalized.split('\n')]
-    while lines and lines[-1] == '':
-        lines.pop()
-    return '\n'.join(lines)
 
 
 def _python_command(script_path: str) -> list[str]:
@@ -105,146 +89,37 @@ def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language:
     return apply_limits
 
 
-def _looks_like_compile_error(stderr: str) -> bool:
-    lowered = stderr.lower()
-    return 'syntaxerror' in lowered or 'unexpected token' in lowered
-
-
-def _run_stdio_test(
-    *,
-    command: list[str],
-    workdir: str,
-    test_input: str,
-    expected: str,
-    label: str,
-    time_limit_ms: int,
-    memory_limit_mb: int,
-    max_output_chars: int,
-    language: str,
-) -> dict:
-    started_at = time.perf_counter()
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=workdir,
-            input=test_input,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=time_limit_ms / 1000,
-            env=_build_env(),
-            preexec_fn=_preexec_resource_limits(memory_limit_mb, time_limit_ms, language),
-        )
-    except subprocess.TimeoutExpired as exc:
-        duration_ms = int((time.perf_counter() - started_at) * 1000)
-        return {
-            'label': label,
-            'input': test_input,
-            'expected': expected,
-            'actual': _truncate(exc.stdout or '', max_output_chars),
-            'stderr': 'Превышен лимит времени.',
-            'passed': False,
-            'duration_ms': duration_ms,
-            'error_type': 'timeout',
-        }
-
-    duration_ms = int((time.perf_counter() - started_at) * 1000)
-    actual = _truncate(completed.stdout, max_output_chars)
-    stderr = _truncate(completed.stderr, max_output_chars)
-    if completed.returncode != 0:
-        return {
-            'label': label,
-            'input': test_input,
-            'expected': expected,
-            'actual': actual,
-            'stderr': stderr or f'Процесс завершился с кодом {completed.returncode}.',
-            'passed': False,
-            'duration_ms': duration_ms,
-            'error_type': 'compile_error' if _looks_like_compile_error(stderr) else 'runtime_error',
-        }
-
-    passed = _normalize_output(actual) == _normalize_output(expected)
-    return {
-        'label': label,
-        'input': test_input,
-        'expected': expected,
-        'actual': actual,
-        'stderr': stderr or None,
-        'passed': passed,
-        'duration_ms': duration_ms,
-        'error_type': None,
-    }
-
-
-def _judge_stdio_submission_local(task: Task, code: str, validation: dict) -> dict:
-    tests = validation['tests']
-    if not tests:
-        raise CodeJudgeConfigurationError('Для этой задачи не настроены тесты. Добавьте хотя бы один кейс в конструкторе урока.')
-
-    language = validation['language'] or 'python'
-    extension = 'py' if language == 'python' else 'js'
-    max_output_chars = int(current_app.config.get('CODE_JUDGE_MAX_OUTPUT_CHARS', 4000))
-    time_limit_ms = validation['time_limit_ms'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS', 2000))
-    memory_limit_mb = validation['memory_limit_mb'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB', 128))
-
-    with tempfile.TemporaryDirectory(prefix='codejudge-') as workdir:
-        script_path = os.path.join(workdir, f'main.{extension}')
-        with open(script_path, 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(code)
-        command = _resolve_command(
+class FlaskJudgeRuntime:
+    def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:
+        return _resolve_command(
             _python_command(script_path)
             if language == 'python'
             else _javascript_command(script_path, memory_limit_mb)
         )
 
-        results = [
-            _run_stdio_test(
-                command=command,
-                workdir=workdir,
-                test_input=str(test.get('input') or ''),
-                expected=str(test.get('expected') or ''),
-                label=str(test.get('label') or f'Тест {index}'),
-                time_limit_ms=time_limit_ms,
-                memory_limit_mb=memory_limit_mb,
-                max_output_chars=max_output_chars,
-                language=language,
-            )
-            for index, test in enumerate(tests, start=1)
-        ]
+    def build_env(self) -> dict[str, str]:
+        return _build_env()
 
-    passed_count = len([row for row in results if row['passed']])
-    total_count = len(results)
-    score = int((passed_count / max(total_count, 1)) * 100)
-    first_failed = next((row for row in results if not row['passed']), None)
-    compile_error = first_failed['stderr'] if first_failed and first_failed.get('error_type') == 'compile_error' else None
-    runtime_error = first_failed['stderr'] if first_failed and first_failed.get('error_type') in {'runtime_error', 'timeout'} else None
-    if passed_count == total_count:
-        feedback = f'Автопроверка пройдена: {passed_count}/{total_count} тестов.'
-    elif first_failed and first_failed.get('error_type') == 'timeout':
-        feedback = f'Лимит времени превышен на кейсе «{first_failed["label"]}».'
-    elif first_failed and first_failed.get('error_type') == 'compile_error':
-        feedback = f'Код не запустился из-за синтаксической ошибки на кейсе «{first_failed["label"]}».'
-    elif first_failed and first_failed.get('error_type') == 'runtime_error':
-        feedback = f'Код завершился с ошибкой на кейсе «{first_failed["label"]}».'
-    else:
-        feedback = f'Пройдено {passed_count} из {total_count} тестов. Проверь вывод на первом непройденном кейсе.'
+    def preexec_fn(self, memory_limit_mb: int, time_limit_ms: int, language: str) -> Callable[[], None] | None:
+        return _preexec_resource_limits(memory_limit_mb, time_limit_ms, language)
 
-    return {
-        'mode': 'stdin_stdout',
-        'runner': 'stdin_stdout',
-        'language': language,
-        'passed': passed_count == total_count,
-        'score': score,
-        'feedback': feedback,
-        'tests_passed': passed_count,
-        'tests_total': total_count,
-        'results': results,
-        'compile_error': compile_error,
-        'runtime_error': runtime_error,
-        'time_limit_ms': time_limit_ms,
-        'memory_limit_mb': memory_limit_mb,
-    }
+
+def _judge_stdio_submission_local(task: Task, code: str, validation: dict) -> dict:
+    tests = coerce_test_cases(validation['tests'])
+    if not tests:
+        raise CodeJudgeConfigurationError('Для этой задачи не настроены тесты. Добавьте хотя бы один кейс в конструкторе урока.')
+
+    language = validation['language'] or 'python'
+    request = JudgeExecutionRequest(
+        language=language,
+        code=code,
+        tests=tests,
+        time_limit_ms=validation['time_limit_ms'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS', 2000)),
+        memory_limit_mb=validation['memory_limit_mb'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB', 128)),
+        max_output_chars=int(current_app.config.get('CODE_JUDGE_MAX_OUTPUT_CHARS', 4000)),
+        tempdir_prefix='codejudge-',
+    )
+    return execute_stdio_submission(request, FlaskJudgeRuntime())
 
 
 def _runner_url() -> str | None:
@@ -257,6 +132,14 @@ def _runner_timeout_seconds() -> float:
     return max(timeout_ms / 1000, 1)
 
 
+def _runner_headers() -> dict[str, str]:
+    headers = {'Content-Type': 'application/json'}
+    runner_token = current_app.config.get('CODE_JUDGE_RUNNER_TOKEN')
+    if isinstance(runner_token, str) and runner_token.strip():
+        headers['Authorization'] = f'Bearer {runner_token.strip()}'
+    return headers
+
+
 def _post_to_runner(payload: dict) -> dict:
     runner_url = _runner_url()
     if not runner_url:
@@ -266,7 +149,7 @@ def _post_to_runner(payload: dict) -> dict:
     request = urllib_request.Request(
         runner_url,
         data=request_body,
-        headers={'Content-Type': 'application/json'},
+        headers=_runner_headers(),
         method='POST',
     )
     try:
@@ -295,14 +178,17 @@ def _post_to_runner(payload: dict) -> dict:
 
 
 def _judge_stdio_submission_remote(task: Task, code: str, validation: dict) -> dict:
-    tests = validation['tests']
+    tests = coerce_test_cases(validation['tests'])
     if not tests:
         raise CodeJudgeConfigurationError('Для этой задачи не настроены тесты. Добавьте хотя бы один кейс в конструкторе урока.')
     return _post_to_runner(
         {
             'language': validation['language'] or 'python',
             'code': code,
-            'tests': tests,
+            'tests': [
+                {'label': test.label, 'input': test.input, 'expected': test.expected}
+                for test in tests
+            ],
             'time_limit_ms': validation['time_limit_ms'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS', 2000)),
             'memory_limit_mb': validation['memory_limit_mb'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB', 128)),
             'max_output_chars': int(current_app.config.get('CODE_JUDGE_MAX_OUTPUT_CHARS', 4000)),
@@ -352,7 +238,7 @@ def judge_task_submission(task: Task, code: str) -> dict:
             try:
                 return _judge_stdio_submission_remote(task, code, validation)
             except CodeJudgeUnavailableError:
-                if not current_app.config.get('CODE_JUDGE_ALLOW_LOCAL_FALLBACK', True):
+                if not current_app.config.get('CODE_JUDGE_ALLOW_LOCAL_FALLBACK', False):
                     raise
         return _judge_stdio_submission_local(task, code, validation)
     if evaluation_mode == 'keywords':

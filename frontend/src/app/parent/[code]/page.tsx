@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { ParentDashboard } from '@/components/parent-dashboard'
-import { SiteHeader } from '@/components/site-header'
 import { api } from '@/lib/api'
 import { ParentAccessData } from '@/types'
 
@@ -19,9 +18,8 @@ export default function ParentCodePage() {
   }, [params.code])
 
   return (
-    <main>
-      <SiteHeader />
-      <div className="page-shell mx-auto max-w-7xl">
+    <main className="brand-parent-shell">
+      <div className="page-shell mx-auto w-full max-w-[96rem]">
         {error ? <div className="codequest-card p-6 text-rose-700">{error}</div> : data ? <ParentDashboard data={data} /> : <div className="codequest-card p-6">Загружаем кабинет родителя…</div>}
       </div>
     </main>

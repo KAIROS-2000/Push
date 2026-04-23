@@ -6,11 +6,123 @@ on:
   pull_request:
 
 jobs:
-  backend-syntax:
+  backend-checks:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: development
+      SECRET_KEY: UnitTestSecretKey123!UnitTestSecretKey123!
+      DATABASE_URL: postgresql://codequest:codequest@localhost:5432/codequest_ci
+      CLIENT_URL: http://localhost:3000
+      ENABLE_DEMO_DATA: "false"
+      SUPERADMIN_BOOTSTRAP: "false"
+      SESSION_COOKIE_SECURE: "false"
+      GIGACHAT_VERIFY_SSL: "true"
+      METRICS_DEBUG: "false"
+    services:
+      postgres:
+        # pin: postgres:17 (replace with digest in prod; see docs/operations/image-pinning.md)
+        image: postgres:17
+        env:
+          POSTGRES_USER: codequest
+          POSTGRES_PASSWORD: codequest
+          POSTGRES_DB: codequest_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codequest -d codequest_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m compileall backend
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Compile backend sources
+        run: python -m compileall backend
+      - name: Smoke backend migrations
+        run: |
+          cd backend
+          python -m flask --app run.py upgrade-db
+      - name: Run backend regression tests
+        run: python -m unittest discover -s backend/tests -v
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: production
+      NEXT_PUBLIC_APP_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api
+      INTERNAL_API_URL: http://localhost:8000/api
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Typecheck frontend
+        run: npm run typecheck
+      - name: Build frontend
+        run: npm run build
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    needs:
+      - backend-checks
+      - frontend-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare environment
+        run: cp .env.example .env
+      - name: Build and start services
+        run: docker compose up -d --build db judge-runner backend-init backend frontend
+      - name: Wait for backend health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/api/health > /tmp/backend-health.json; then
+              cat /tmp/backend-health.json
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Backend health check did not pass in time" >&2
+          docker compose logs backend
+          exit 1
+      - name: Wait for judge runner health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8090/health > /tmp/judge-health.json; then
+              cat /tmp/judge-health.json
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Judge runner health check did not pass in time" >&2
+          docker compose logs judge-runner
+          exit 1
+      - name: Wait for frontend
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/auth/login > /tmp/frontend-health.html; then
+              head -n 5 /tmp/frontend-health.html
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Frontend did not become reachable in time" >&2
+          docker compose logs frontend
+          exit 1
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop services
+        if: always()
+        run: docker compose down -v

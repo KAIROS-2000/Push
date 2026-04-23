@@ -1,8 +1,10 @@
-from .user import RefreshToken, User, UserRole
+from .user import AdminAuditLog, RefreshToken, SecurityThrottle, User, UserRole
+from .messaging import Conversation, ConversationReadState, Message
 from .learning import (
     Achievement,
     Assignment,
     AssignmentSubmission,
+    ClassJoinRequest,
     ClassMembership,
     Classroom,
     Lesson,
@@ -15,12 +17,18 @@ from .learning import (
 )
 
 __all__ = [
+    'AdminAuditLog',
     'RefreshToken',
+    'SecurityThrottle',
     'User',
     'UserRole',
+    'Conversation',
+    'ConversationReadState',
+    'Message',
     'Achievement',
     'Assignment',
     'AssignmentSubmission',
+    'ClassJoinRequest',
     'ClassMembership',
     'Classroom',
     'Lesson',

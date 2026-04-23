@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import json
+import hmac
 import math
 import os
 import shutil
-import subprocess
-import tempfile
+import sys
+import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Callable
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from shared.judge import JudgeExecutionRequest, coerce_test_cases, execute_stdio_submission
 
 
 HOST = os.getenv('JUDGE_RUNNER_HOST', '0.0.0.0')
@@ -18,9 +26,13 @@ MAX_REQUEST_BYTES = int(os.getenv('JUDGE_RUNNER_MAX_REQUEST_BYTES', '1048576'))
 DEFAULT_TIME_LIMIT_MS = int(os.getenv('JUDGE_RUNNER_DEFAULT_TIME_LIMIT_MS', '2000'))
 DEFAULT_MEMORY_LIMIT_MB = int(os.getenv('JUDGE_RUNNER_DEFAULT_MEMORY_LIMIT_MB', '128'))
 MAX_OUTPUT_CHARS = int(os.getenv('JUDGE_RUNNER_MAX_OUTPUT_CHARS', '4000'))
+MAX_CONCURRENCY = max(1, int(os.getenv('JUDGE_RUNNER_MAX_CONCURRENCY', '4')))
 PYTHON_BIN = os.getenv('JUDGE_RUNNER_PYTHON_BIN', 'python')
 NODE_BIN = os.getenv('JUDGE_RUNNER_NODE_BIN', 'node')
+AUTH_TOKEN = (os.getenv('JUDGE_RUNNER_AUTH_TOKEN') or '').strip()
+ALLOW_UNAUTHENTICATED = (os.getenv('JUDGE_RUNNER_ALLOW_UNAUTHENTICATED') or '').strip().lower() in {'1', 'true', 'yes', 'on'}
 SUPPORTED_LANGUAGES = {'python', 'javascript'}
+RUNNER_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENCY)
 
 
 def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -35,24 +47,19 @@ def _safe_int(value, default: int, minimum: int | None = None, maximum: int | No
     return parsed
 
 
-def _normalize_output(value: str | None) -> str:
-    normalized = (value or '').replace('\r\n', '\n').replace('\r', '\n')
-    lines = [line.rstrip() for line in normalized.split('\n')]
-    while lines and lines[-1] == '':
-        lines.pop()
-    return '\n'.join(lines)
+def _bearer_token(value: str | None) -> str:
+    header = (value or '').strip()
+    if not header.lower().startswith('bearer '):
+        return ''
+    return header[7:].strip()
 
 
-def _truncate(value: str | None, limit: int) -> str:
-    text = (value or '').replace('\r\n', '\n').replace('\r', '\n')
-    if len(text) <= limit:
-        return text
-    return f'{text[:limit].rstrip()}\n...'
-
-
-def _looks_like_compile_error(stderr: str) -> bool:
-    lowered = stderr.lower()
-    return 'syntaxerror' in lowered or 'unexpected token' in lowered
+def request_authorized(headers) -> bool:
+    if ALLOW_UNAUTHENTICATED:
+        return True
+    if not AUTH_TOKEN:
+        return False
+    return hmac.compare_digest(_bearer_token(headers.get('Authorization')), AUTH_TOKEN)
 
 
 def _resolve_executable(executable: str) -> str:
@@ -94,170 +101,50 @@ def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language:
     return apply_limits
 
 
-def _normalized_tests(value) -> list[dict]:
-    if not isinstance(value, list):
-        return []
-    rows: list[dict] = []
-    for index, item in enumerate(value, start=1):
-        if not isinstance(item, dict):
-            continue
-        label = str(item.get('label') or f'Тест {index}').strip() or f'Тест {index}'
-        test_input = str(item.get('input') or '')
-        expected = str(item.get('expected') or '')
-        if not test_input and not expected:
-            continue
-        rows.append({'label': label, 'input': test_input, 'expected': expected})
-    return rows
+class RunnerRuntime:
+    def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:
+        if language == 'python':
+            return [_resolve_executable(PYTHON_BIN), '-I', script_path]
+        heap_limit_mb = max(96, min(memory_limit_mb, 2048))
+        return [_resolve_executable(NODE_BIN), f'--max-old-space-size={heap_limit_mb}', script_path]
+
+    def build_env(self) -> dict[str, str]:
+        return _build_env()
+
+    def preexec_fn(self, memory_limit_mb: int, time_limit_ms: int, language: str) -> Callable[[], None] | None:
+        return _preexec_resource_limits(memory_limit_mb, time_limit_ms, language)
 
 
-def _command_for(language: str, script_path: str, memory_limit_mb: int) -> list[str]:
-    if language == 'python':
-        return [_resolve_executable(PYTHON_BIN), '-I', script_path]
-    heap_limit_mb = max(96, min(memory_limit_mb, 2048))
-    return [_resolve_executable(NODE_BIN), f'--max-old-space-size={heap_limit_mb}', script_path]
-
-
-def _run_test(
-    *,
-    command: list[str],
-    workdir: str,
-    test_input: str,
-    expected: str,
-    label: str,
-    time_limit_ms: int,
-    memory_limit_mb: int,
-    max_output_chars: int,
-    language: str,
-) -> dict:
-    started_at = time.perf_counter()
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=workdir,
-            input=test_input,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=time_limit_ms / 1000,
-            env=_build_env(),
-            preexec_fn=_preexec_resource_limits(memory_limit_mb, time_limit_ms, language),
-        )
-    except subprocess.TimeoutExpired as exc:
-        duration_ms = int((time.perf_counter() - started_at) * 1000)
-        return {
-            'label': label,
-            'input': test_input,
-            'expected': expected,
-            'actual': _truncate(exc.stdout or '', max_output_chars),
-            'stderr': 'Превышен лимит времени.',
-            'passed': False,
-            'duration_ms': duration_ms,
-            'error_type': 'timeout',
-        }
-
-    duration_ms = int((time.perf_counter() - started_at) * 1000)
-    actual = _truncate(completed.stdout, max_output_chars)
-    stderr = _truncate(completed.stderr, max_output_chars)
-    if completed.returncode != 0:
-        return {
-            'label': label,
-            'input': test_input,
-            'expected': expected,
-            'actual': actual,
-            'stderr': stderr or f'Процесс завершился с кодом {completed.returncode}.',
-            'passed': False,
-            'duration_ms': duration_ms,
-            'error_type': 'compile_error' if _looks_like_compile_error(stderr) else 'runtime_error',
-        }
-
-    passed = _normalize_output(actual) == _normalize_output(expected)
-    return {
-        'label': label,
-        'input': test_input,
-        'expected': expected,
-        'actual': actual,
-        'stderr': stderr or None,
-        'passed': passed,
-        'duration_ms': duration_ms,
-        'error_type': None,
-    }
-
-
-def execute_stdio_submission(payload: dict) -> dict:
+def execute_submission_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError('Ожидается JSON-объект.')
+
     language = str(payload.get('language') or 'python').strip().lower()
     if language not in SUPPORTED_LANGUAGES:
         raise ValueError('Поддерживаются только Python и JavaScript.')
+
     code = str(payload.get('code') or '')
     if not code.strip():
         raise ValueError('Код не передан.')
-    tests = _normalized_tests(payload.get('tests'))
+
+    tests = coerce_test_cases(payload.get('tests'))
     if not tests:
         raise ValueError('Для запуска нужны тесты.')
 
-    time_limit_ms = _safe_int(payload.get('time_limit_ms'), DEFAULT_TIME_LIMIT_MS, minimum=500, maximum=10000)
-    memory_limit_mb = _safe_int(payload.get('memory_limit_mb'), DEFAULT_MEMORY_LIMIT_MB, minimum=32, maximum=1024)
-    max_output_chars = _safe_int(payload.get('max_output_chars'), MAX_OUTPUT_CHARS, minimum=256, maximum=20000)
-    extension = 'py' if language == 'python' else 'js'
-
-    with tempfile.TemporaryDirectory(prefix='judge-') as workdir:
-        script_path = os.path.join(workdir, f'main.{extension}')
-        with open(script_path, 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(code)
-        command = _command_for(language, script_path, memory_limit_mb)
-        results = [
-            _run_test(
-                command=command,
-                workdir=workdir,
-                test_input=str(test.get('input') or ''),
-                expected=str(test.get('expected') or ''),
-                label=str(test.get('label') or f'Тест {index}'),
-                time_limit_ms=time_limit_ms,
-                memory_limit_mb=memory_limit_mb,
-                max_output_chars=max_output_chars,
-                language=language,
-            )
-            for index, test in enumerate(tests, start=1)
-        ]
-
-    passed_count = len([row for row in results if row['passed']])
-    total_count = len(results)
-    score = int((passed_count / max(total_count, 1)) * 100)
-    first_failed = next((row for row in results if not row['passed']), None)
-    compile_error = first_failed['stderr'] if first_failed and first_failed.get('error_type') == 'compile_error' else None
-    runtime_error = first_failed['stderr'] if first_failed and first_failed.get('error_type') in {'runtime_error', 'timeout'} else None
-    if passed_count == total_count:
-        feedback = f'Автопроверка пройдена: {passed_count}/{total_count} тестов.'
-    elif first_failed and first_failed.get('error_type') == 'timeout':
-        feedback = f'Лимит времени превышен на кейсе «{first_failed["label"]}».'
-    elif first_failed and first_failed.get('error_type') == 'compile_error':
-        feedback = f'Код не запустился из-за синтаксической ошибки на кейсе «{first_failed["label"]}».'
-    elif first_failed and first_failed.get('error_type') == 'runtime_error':
-        feedback = f'Код завершился с ошибкой на кейсе «{first_failed["label"]}».'
-    else:
-        feedback = f'Пройдено {passed_count} из {total_count} тестов. Проверь вывод на первом непройденном кейсе.'
-
-    return {
-        'mode': 'stdin_stdout',
-        'runner': 'stdin_stdout',
-        'language': language,
-        'passed': passed_count == total_count,
-        'score': score,
-        'feedback': feedback,
-        'tests_passed': passed_count,
-        'tests_total': total_count,
-        'results': results,
-        'compile_error': compile_error,
-        'runtime_error': runtime_error,
-        'time_limit_ms': time_limit_ms,
-        'memory_limit_mb': memory_limit_mb,
-    }
+    request = JudgeExecutionRequest(
+        language=language,
+        code=code,
+        tests=tests,
+        time_limit_ms=_safe_int(payload.get('time_limit_ms'), DEFAULT_TIME_LIMIT_MS, minimum=500, maximum=10000),
+        memory_limit_mb=_safe_int(payload.get('memory_limit_mb'), DEFAULT_MEMORY_LIMIT_MB, minimum=32, maximum=1024),
+        max_output_chars=_safe_int(payload.get('max_output_chars'), MAX_OUTPUT_CHARS, minimum=256, maximum=20000),
+        tempdir_prefix='judge-',
+    )
+    return execute_stdio_submission(request, RunnerRuntime())
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'CodeJudgeRunner/1.0'
+    server_version = 'CodeJudgeRunner/1.1'
 
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
@@ -269,13 +156,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == '/health':
-            self._send_json(HTTPStatus.OK, {'status': 'ok'})
+            self._send_json(HTTPStatus.OK, {'status': 'ok', 'max_concurrency': MAX_CONCURRENCY})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {'message': 'Not found'})
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != '/execute':
             self._send_json(HTTPStatus.NOT_FOUND, {'message': 'Not found'})
+            return
+        if not request_authorized(self.headers):
+            self._send_json(HTTPStatus.FORBIDDEN, {'message': 'Runner authentication required.'})
             return
 
         content_length = _safe_int(self.headers.get('Content-Length'), 0, minimum=0)
@@ -293,8 +183,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {'message': 'Некорректный JSON.'})
             return
 
+        if not RUNNER_SEMAPHORE.acquire(blocking=False):
+            self._send_json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {'message': 'Runner перегружен. Повторите попытку через несколько секунд.'},
+            )
+            return
+
+        started_at = time.perf_counter()
+        language = str(payload.get('language') or 'python').strip().lower()
+        tests_total = len(payload.get('tests') or []) if isinstance(payload.get('tests'), list) else 0
         try:
-            report = execute_stdio_submission(payload)
+            report = execute_submission_payload(payload)
         except ValueError as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {'message': str(exc)})
             return
@@ -304,6 +204,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {'message': 'Runner не смог выполнить код.'})
             return
+        finally:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            print(
+                f'judge_execution language={language} tests_total={tests_total} duration_ms={duration_ms}',
+                flush=True,
+            )
+            RUNNER_SEMAPHORE.release()
 
         self._send_json(HTTPStatus.OK, report)
 
@@ -313,5 +220,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f'Judge runner listening on http://{HOST}:{PORT}', flush=True)
+    print(
+        f'Judge runner listening on http://{HOST}:{PORT} (max_concurrency={MAX_CONCURRENCY})',
+        flush=True,
+    )
     server.serve_forever()

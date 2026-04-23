@@ -1,35 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+import { AUTH_ROUTE_PREFIXES, pathMatches } from '@/lib/auth-routes'
+import { INTERNAL_API_URL } from '@/lib/server-env'
+
 type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
-
-interface JwtHeader {
-	alg?: string
-}
-
-interface JwtPayload {
-	role?: string
-	type?: string
-	exp?: number
-}
 
 const ACCESS_COOKIE = 'codequest_access_token'
 const REFRESH_COOKIE = 'codequest_refresh_token'
-const ACCESS_TTL_FALLBACK_SECONDS = 30 * 60
-const REFRESH_TTL_FALLBACK_SECONDS = 14 * 24 * 60 * 60
-const API_URLS = Array.from(
-	new Set(
-		[
-			process.env.INTERNAL_API_URL,
-			process.env.NEXT_PUBLIC_API_URL,
-			'https://push-lt9u.onrender.com/api',
-			'https://push-lt9u.onrender.com/api',
-		].filter((value): value is string => Boolean(value)),
-	),
-)
+const ACCESS_EXPIRES_AT_COOKIE = 'codequest_access_expires_at'
 const KNOWN_ROLES: UserRole[] = ['student', 'teacher', 'admin', 'superadmin']
-const AUTH_ROUTES = ['/auth/login', '/auth/register']
 const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/dashboard', roles: KNOWN_ROLES },
+	{ path: '/messages', roles: ['student', 'teacher'] },
 	{ path: '/roadmap', roles: KNOWN_ROLES },
 	{ path: '/lessons', roles: KNOWN_ROLES },
 	{ path: '/leaderboard', roles: KNOWN_ROLES },
@@ -39,94 +21,8 @@ const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/superadmin', roles: ['superadmin'] },
 ]
 
-function pathMatches(pathname: string, target: string) {
-	return pathname === target || pathname.startsWith(`${target}/`)
-}
-
-function parseBase64Url(value: string): string | null {
-	const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
-	const paddingLength = (4 - (normalized.length % 4)) % 4
-	const padded = `${normalized}${'='.repeat(paddingLength)}`
-	try {
-		return atob(padded)
-	} catch {
-		return null
-	}
-}
-
-function parseBase64UrlBytes(value: string): Uint8Array | null {
-	const decoded = parseBase64Url(value)
-	if (!decoded) return null
-	const bytes = new Uint8Array(decoded.length)
-	for (let index = 0; index < decoded.length; index += 1) {
-		bytes[index] = decoded.charCodeAt(index)
-	}
-	return bytes
-}
-
-function toArrayBuffer(view: Uint8Array): ArrayBuffer {
-	return view.buffer.slice(
-		view.byteOffset,
-		view.byteOffset + view.byteLength,
-	) as ArrayBuffer
-}
-
-function parseTokenPart<T>(value: string): T | null {
-	const decoded = parseBase64Url(value)
-	if (!decoded) return null
-	try {
-		return JSON.parse(decoded) as T
-	} catch {
-		return null
-	}
-}
-
 function isKnownRole(value: string | undefined): value is UserRole {
 	return !!value && KNOWN_ROLES.includes(value as UserRole)
-}
-
-async function verifyAccessToken(token: string): Promise<JwtPayload | null> {
-	const secret = process.env.SECRET_KEY
-	if (!secret) return null
-
-	const parts = token.split('.')
-	if (parts.length !== 3) return null
-	const [headerPart, payloadPart, signaturePart] = parts
-	if (!headerPart || !payloadPart || !signaturePart) return null
-
-	const header = parseTokenPart<JwtHeader>(headerPart)
-	if (!header || header.alg !== 'HS256') return null
-
-	const payload = parseTokenPart<JwtPayload>(payloadPart)
-	if (
-		!payload ||
-		payload.type !== 'access' ||
-		!isKnownRole(payload.role) ||
-		typeof payload.exp !== 'number'
-	) {
-		return null
-	}
-	if (payload.exp * 1000 <= Date.now()) return null
-
-	const signatureBytes = parseBase64UrlBytes(signaturePart)
-	if (!signatureBytes) return null
-
-	const key = await crypto.subtle.importKey(
-		'raw',
-		new TextEncoder().encode(secret),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['verify'],
-	)
-	const isValid = await crypto.subtle.verify(
-		'HMAC',
-		key,
-		toArrayBuffer(signatureBytes),
-		toArrayBuffer(new TextEncoder().encode(`${headerPart}.${payloadPart}`)),
-	)
-	if (!isValid) return null
-
-	return payload
 }
 
 function loginUrl(request: NextRequest) {
@@ -137,116 +33,129 @@ function dashboardUrl(request: NextRequest) {
 	return new URL('/dashboard', request.url)
 }
 
-function tokenMaxAge(token: string, fallbackSeconds: number) {
-	const payload = parseTokenPart<JwtPayload>(token.split('.')[1] || '')
-	if (typeof payload?.exp !== 'number') return fallbackSeconds
-	return Math.max(payload.exp - Math.floor(Date.now() / 1000), 0)
-}
-
-function applyAuthCookies(
-	response: NextResponse,
-	request: NextRequest,
-	accessToken: string,
-	refreshToken: string,
-) {
-	const secure = request.nextUrl.protocol === 'https:'
-	response.cookies.set({
-		name: ACCESS_COOKIE,
-		value: accessToken,
-		path: '/',
-		sameSite: 'lax',
-		secure,
-		maxAge: tokenMaxAge(accessToken, ACCESS_TTL_FALLBACK_SECONDS),
-	})
-	response.cookies.set({
-		name: REFRESH_COOKIE,
-		value: refreshToken,
-		path: '/',
-		sameSite: 'lax',
-		secure,
-		maxAge: tokenMaxAge(refreshToken, REFRESH_TTL_FALLBACK_SECONDS),
-	})
-	return response
+function authCookieHeader(request: NextRequest) {
+	const parts = [ACCESS_COOKIE, REFRESH_COOKIE]
+		.map((name) => {
+			const value = request.cookies.get(name)?.value
+			return value ? `${name}=${encodeURIComponent(value)}` : ''
+		})
+		.filter(Boolean)
+	return parts.join('; ')
 }
 
 function clearAuthCookies(response: NextResponse) {
 	response.cookies.delete(ACCESS_COOKIE)
 	response.cookies.delete(REFRESH_COOKIE)
+	response.cookies.delete(ACCESS_EXPIRES_AT_COOKIE)
 	return response
 }
 
-async function refreshSession(refreshToken: string) {
-	for (const apiUrl of API_URLS) {
-		try {
-			const response = await fetch(`${apiUrl}/auth/refresh`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ refresh_token: refreshToken }),
-				cache: 'no-store',
-			})
-			const data = await response.json().catch(() => ({}))
-			if (!response.ok) {
-				return null
-			}
-			if (
-				typeof data.access_token !== 'string' ||
-				typeof data.refresh_token !== 'string'
-			) {
-				return null
-			}
+function decodeBase64Url(value: string) {
+	const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+	const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4)
+	const binary = atob(padded)
+	const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+	return new TextDecoder().decode(bytes)
+}
 
-			const payload = await verifyAccessToken(data.access_token)
-			if (!payload || !isKnownRole(payload.role)) {
-				return null
-			}
-
-			return {
-				accessToken: data.access_token as string,
-				refreshToken: data.refresh_token as string,
-				role: payload.role,
-			}
-		} catch {
-			continue
-		}
+function upstreamSetCookies(response: Response) {
+	const headers = response.headers as Headers & {
+		getSetCookie?: () => string[]
 	}
-	return null
+	if (typeof headers.getSetCookie === 'function') {
+		return headers.getSetCookie()
+	}
+	const fallback = response.headers.get('set-cookie')
+	return fallback ? [fallback] : []
+}
+
+function applyUpstreamAuthCookies(target: NextResponse, upstream: Response) {
+	for (const cookie of upstreamSetCookies(upstream)) {
+		target.headers.append('set-cookie', cookie)
+	}
+	return target
+}
+
+function accessRoleFromRequest(request: NextRequest) {
+	const accessToken = request.cookies.get(ACCESS_COOKIE)?.value?.trim()
+	if (!accessToken) return null
+
+	try {
+		const [, payloadSegment] = accessToken.split('.')
+		if (!payloadSegment) {
+			return null
+		}
+
+		const payload = JSON.parse(decodeBase64Url(payloadSegment)) as {
+			role?: string
+			type?: string
+			exp?: number
+		}
+
+		if (payload.type !== 'access' || !isKnownRole(payload.role) || typeof payload.exp !== 'number') {
+			return null
+		}
+
+		return payload.exp > Math.floor(Date.now() / 1000) ? payload.role : null
+	} catch {
+		return null
+	}
+}
+
+async function refreshSession(request: NextRequest) {
+	const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value
+	if (!refreshToken) return null
+
+	try {
+		const response = await fetch(`${INTERNAL_API_URL}/auth/refresh`, {
+			method: 'POST',
+			headers: {
+				accept: 'application/json',
+				cookie: authCookieHeader(request),
+			},
+			cache: 'no-store',
+		})
+		const data = (await response.json().catch(() => ({}))) as {
+			user?: { role?: string }
+		}
+		if (!response.ok || !isKnownRole(data.user?.role)) {
+			return null
+		}
+		return {
+			role: data.user.role,
+			response,
+		}
+	} catch {
+		return null
+	}
 }
 
 export async function proxy(request: NextRequest) {
 	const pathname = request.nextUrl.pathname
-	const isAuthRoute = AUTH_ROUTES.some(route => pathMatches(pathname, route))
-	const roleRule = ROLE_RULES.find(rule => pathMatches(pathname, rule.path))
+	const isAuthRoute = AUTH_ROUTE_PREFIXES.some((route) => pathMatches(pathname, route))
+	const roleRule = ROLE_RULES.find((rule) => pathMatches(pathname, rule.path))
 
 	if (!isAuthRoute && !roleRule) {
 		return NextResponse.next()
 	}
 
-	const accessToken = request.cookies.get(ACCESS_COOKIE)?.value || ''
-	const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value || ''
-
-	const payload = accessToken ? await verifyAccessToken(accessToken) : null
-	if (payload && isKnownRole(payload.role)) {
+	const currentRole = accessRoleFromRequest(request)
+	if (currentRole) {
 		if (isAuthRoute) {
 			return NextResponse.redirect(dashboardUrl(request))
 		}
-
-		if (roleRule && !roleRule.roles.includes(payload.role)) {
+		if (roleRule && !roleRule.roles.includes(currentRole)) {
 			return NextResponse.redirect(dashboardUrl(request))
 		}
-
 		return NextResponse.next()
 	}
 
-	const refreshedSession = refreshToken
-		? await refreshSession(refreshToken)
-		: null
+	const refreshedSession = await refreshSession(request)
 	if (refreshedSession) {
 		if (isAuthRoute) {
-			return applyAuthCookies(
+			return applyUpstreamAuthCookies(
 				NextResponse.redirect(dashboardUrl(request)),
-				request,
-				refreshedSession.accessToken,
-				refreshedSession.refreshToken,
+				refreshedSession.response,
 			)
 		}
 
@@ -254,16 +163,11 @@ export async function proxy(request: NextRequest) {
 			roleRule && !roleRule.roles.includes(refreshedSession.role)
 				? NextResponse.redirect(dashboardUrl(request))
 				: NextResponse.next()
-		return applyAuthCookies(
-			response,
-			request,
-			refreshedSession.accessToken,
-			refreshedSession.refreshToken,
-		)
+		return applyUpstreamAuthCookies(response, refreshedSession.response)
 	}
 
 	if (isAuthRoute) {
-		return accessToken || refreshToken
+		return request.cookies.get(ACCESS_COOKIE) || request.cookies.get(REFRESH_COOKIE)
 			? clearAuthCookies(NextResponse.next())
 			: NextResponse.next()
 	}
@@ -274,6 +178,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
 	matcher: [
 		'/dashboard/:path*',
+		'/messages/:path*',
 		'/roadmap/:path*',
 		'/lessons/:path*',
 		'/leaderboard/:path*',
