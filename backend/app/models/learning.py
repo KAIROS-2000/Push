@@ -606,6 +606,9 @@ class Classroom(db.Model):
     members = db.relationship(
         "ClassMembership", back_populates="classroom", cascade="all, delete-orphan"
     )
+    join_requests = db.relationship(
+        "ClassJoinRequest", back_populates="classroom", cascade="all, delete-orphan"
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -637,6 +640,59 @@ class ClassMembership(db.Model):
 
     classroom = db.relationship("Classroom", back_populates="members")
     student = db.relationship("User", back_populates="memberships")
+
+
+class ClassJoinRequest(db.Model):
+    __tablename__ = "class_join_requests"
+    __table_args__ = (
+        Index(
+            "ix_class_join_request_classroom_status",
+            "classroom_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_class_join_request_student_status",
+            "student_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    classroom_id = db.Column(db.Integer, db.ForeignKey("classrooms.id"), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    created_at = db.Column(
+        db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    decided_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    classroom = db.relationship("Classroom", back_populates="join_requests")
+    student = db.relationship("User", foreign_keys=[student_id])
+    decided_by = db.relationship("User", foreign_keys=[decided_by_id])
+
+    def to_dict(self) -> dict:
+        student_name = None
+        student_username = None
+        if self.student:
+            student_name = self.student.full_name
+            student_username = self.student.username
+
+        return {
+            "id": self.id,
+            "classroom_id": self.classroom_id,
+            "classroom_name": self.classroom.name if self.classroom else None,
+            "classroom_code": self.classroom.code if self.classroom else None,
+            "student_id": self.student_id,
+            "student_full_name": student_name,
+            "student_username": student_username,
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "decided_by_id": self.decided_by_id,
+        }
 
 
 class Assignment(db.Model):

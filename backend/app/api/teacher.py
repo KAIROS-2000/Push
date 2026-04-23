@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from flask import Blueprint, request
 from sqlalchemy import or_
 
@@ -9,6 +11,8 @@ from ..core.security import auth_required
 from ..models.learning import (
     Assignment,
     AssignmentSubmission,
+    ClassJoinRequest,
+    ClassMembership,
     Classroom,
     Lesson,
     Module,
@@ -32,6 +36,7 @@ teacher_bp = Blueprint('teacher', __name__)
 VALID_AGE_GROUPS = {'junior', 'middle', 'senior'}
 VALID_DIFFICULTIES = {'easy', 'medium', 'hard'}
 VALID_SUBMISSION_REVIEW_STATUSES = {'checked', 'needs_revision'}
+VALID_JOIN_REQUEST_STATUSES = {'pending', 'approved', 'rejected'}
 ASSIGNMENT_TYPE_DEFAULT_TITLES = {
     'lesson_practice': 'Практика по уроку',
     'mini_project': 'Мини-проект',
@@ -54,10 +59,35 @@ ASSIGNMENT_REQUIRED_FIELD_LABELS = {
     'success_criteria': 'критерии успеха',
     'description': 'описание задания',
 }
+CLASS_REQUIRED_FIELD_LABELS = {
+    'name': 'название класса',
+}
+LESSON_REQUIRED_FIELD_LABELS = {
+    'title': 'название урока',
+    'summary': 'краткое описание урока',
+    'duration_minutes': 'длительность урока',
+    'passing_score': 'минимальный результат для прохождения',
+    'theory_text': 'объяснение темы',
+    'key_points': 'ключевые идеи',
+    'interactive_steps': 'маршрут урока',
+    'task_title': 'название практики',
+    'task_prompt': 'формулировка задания',
+    'starter_code': 'стартовый код',
+    'answer_keywords': 'ключевые слова для автопроверки',
+    'judge_tests': 'автотесты',
+}
 
 
 def _teacher_classes(current_user: User) -> list[Classroom]:
     return Classroom.query.filter_by(teacher_id=current_user.id).order_by(Classroom.created_at.desc()).all()
+
+
+def _teacher_join_request_or_404(current_user: User, request_id: int) -> ClassJoinRequest:
+    return (
+        ClassJoinRequest.query.join(Classroom)
+        .filter(ClassJoinRequest.id == request_id, Classroom.teacher_id == current_user.id)
+        .first_or_404()
+    )
 
 
 def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -78,6 +108,21 @@ def _parse_positive_int(value) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _parse_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_text(value) -> bool:
+    return bool(str(value or '').strip())
+
+
+def _has_int_value(value) -> bool:
+    return _parse_int(value) is not None
 
 
 def _normalize_age_group(value: str | None) -> str:
@@ -106,6 +151,65 @@ def _normalize_due_date(value: str | None) -> str | None:
 def _normalize_submission_review_status(value: str | None) -> str:
     normalized = (value or 'checked').strip().lower()
     return normalized if normalized in VALID_SUBMISSION_REVIEW_STATUSES else 'checked'
+
+
+def _complete_judge_tests(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+
+    tests: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        test_input = str(
+            item.get('input')
+            if item.get('input') is not None
+            else item.get('stdin') or ''
+        ).strip()
+        expected = str(
+            item.get('expected')
+            if item.get('expected') is not None
+            else item.get('stdout') or ''
+        ).strip()
+        if test_input and expected:
+            tests.append(item)
+    return tests
+
+
+def _has_partial_judge_test(value) -> bool:
+    if not isinstance(value, list):
+        return False
+
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        test_input = str(
+            item.get('input')
+            if item.get('input') is not None
+            else item.get('stdin') or ''
+        ).strip()
+        expected = str(
+            item.get('expected')
+            if item.get('expected') is not None
+            else item.get('stdout') or ''
+        ).strip()
+        if bool(test_input) != bool(expected):
+            return True
+    return False
+
+
+def _lesson_practice_requested(data: dict) -> bool:
+    if 'practice_enabled' in data:
+        return bool(data.get('practice_enabled'))
+    return any(
+        [
+            _has_text(data.get('task_title')),
+            _has_text(data.get('task_prompt')),
+            _has_text(data.get('starter_code')),
+            bool(_split_csv(data.get('answer_keywords'))),
+            bool(data.get('judge_tests')),
+        ]
+    )
 
 
 def _compose_assignment_description(data: dict, assignment_type: str) -> str:
@@ -151,6 +255,50 @@ def _missing_assignment_fields(data: dict) -> list[str]:
     lesson_id = data.get('lesson_id')
     if lesson_id is None or (isinstance(lesson_id, str) and not lesson_id.strip()):
         missing.append('lesson_id')
+
+    return missing
+
+
+def _missing_class_fields(data: dict) -> list[str]:
+    return ['name'] if not _has_text(data.get('name')) else []
+
+
+def _missing_lesson_fields(data: dict) -> list[str]:
+    missing: list[str] = []
+
+    for field in ('title', 'summary', 'theory_text'):
+        if not _has_text(data.get(field)):
+            missing.append(field)
+
+    if not _has_int_value(data.get('duration_minutes')):
+        missing.append('duration_minutes')
+    if not _has_int_value(data.get('passing_score')):
+        missing.append('passing_score')
+    if len(_split_lines(data.get('key_points')) or _split_csv(data.get('key_points'))) < 2:
+        missing.append('key_points')
+    if len(_split_lines(data.get('interactive_steps'))) < 2:
+        missing.append('interactive_steps')
+
+    if not _lesson_practice_requested(data):
+        return missing
+
+    requested_task_type = 'code' if (data.get('task_type') or '').strip().lower() == 'code' else 'text'
+    evaluation_mode = (data.get('evaluation_mode') or '').strip().lower()
+    needs_tests = requested_task_type == 'code' or evaluation_mode == 'stdin_stdout'
+
+    if not _has_text(data.get('task_title')):
+        missing.append('task_title')
+    if not _has_text(data.get('task_prompt')):
+        missing.append('task_prompt')
+    if requested_task_type == 'code' and not _has_text(data.get('starter_code')):
+        missing.append('starter_code')
+    if evaluation_mode == 'keywords' and not _split_csv(data.get('answer_keywords')):
+        missing.append('answer_keywords')
+    if needs_tests and (
+        not _complete_judge_tests(data.get('judge_tests'))
+        or _has_partial_judge_test(data.get('judge_tests'))
+    ):
+        missing.append('judge_tests')
 
     return missing
 
@@ -214,9 +362,17 @@ def teacher_overview(current_user: User):
 @auth_required([UserRole.TEACHER])
 def create_class(current_user: User):
     data = request.get_json() or {}
+    missing_fields = _missing_class_fields(data)
+    if missing_fields:
+        labels = ', '.join(CLASS_REQUIRED_FIELD_LABELS[field] for field in missing_fields)
+        return {
+            'message': f'Заполните обязательные поля: {labels}.',
+            'fields': missing_fields,
+        }, 400
+
     classroom = Classroom(
-        name=data.get('name', 'Новый класс'),
-        description=data.get('description'),
+        name=str(data.get('name') or '').strip(),
+        description=(data.get('description') or '').strip() or None,
         code=generate_code(),
         teacher_id=current_user.id,
     )
@@ -230,6 +386,69 @@ def create_class(current_user: User):
 def list_classes(current_user: User):
     classes = _teacher_classes(current_user)
     return {'classes': [item.to_dict() for item in classes]}
+
+
+@teacher_bp.get('/join-requests')
+@auth_required([UserRole.TEACHER])
+def list_join_requests(current_user: User):
+    status = (request.args.get('status') or 'pending').strip().lower()
+    if status != 'all' and status not in VALID_JOIN_REQUEST_STATUSES:
+        return {'message': 'Некорректный статус заявки.'}, 400
+
+    query = ClassJoinRequest.query.join(Classroom).filter(
+        Classroom.teacher_id == current_user.id
+    )
+    if status != 'all':
+        query = query.filter(ClassJoinRequest.status == status)
+
+    join_requests = query.order_by(ClassJoinRequest.created_at.desc()).all()
+    return {'requests': [item.to_dict() for item in join_requests]}
+
+
+@teacher_bp.post('/join-requests/<int:request_id>/approve')
+@auth_required([UserRole.TEACHER])
+def approve_join_request(current_user: User, request_id: int):
+    join_request = _teacher_join_request_or_404(current_user, request_id)
+    if join_request.status != 'pending':
+        return {'message': 'Заявка уже обработана.'}, 400
+
+    existing_membership = ClassMembership.query.filter_by(
+        classroom_id=join_request.classroom_id,
+        student_id=join_request.student_id,
+    ).first()
+    if not existing_membership:
+        db.session.add(
+            ClassMembership(
+                classroom_id=join_request.classroom_id,
+                student_id=join_request.student_id,
+            )
+        )
+
+    join_request.status = 'approved'
+    join_request.decided_at = datetime.now(UTC)
+    join_request.decided_by_id = current_user.id
+    db.session.commit()
+    return {
+        'message': 'Ученик добавлен в класс.',
+        'request': join_request.to_dict(),
+    }
+
+
+@teacher_bp.post('/join-requests/<int:request_id>/reject')
+@auth_required([UserRole.TEACHER])
+def reject_join_request(current_user: User, request_id: int):
+    join_request = _teacher_join_request_or_404(current_user, request_id)
+    if join_request.status != 'pending':
+        return {'message': 'Заявка уже обработана.'}, 400
+
+    join_request.status = 'rejected'
+    join_request.decided_at = datetime.now(UTC)
+    join_request.decided_by_id = current_user.id
+    db.session.commit()
+    return {
+        'message': 'Заявка отклонена.',
+        'request': join_request.to_dict(),
+    }
 
 
 @teacher_bp.get('/classes/<int:classroom_id>')
@@ -264,10 +483,16 @@ def _sync_lesson_progress_from_review(submission: AssignmentSubmission) -> None:
 def create_class_lesson(current_user: User, classroom_id: int):
     classroom = Classroom.query.filter_by(id=classroom_id, teacher_id=current_user.id).first_or_404()
     data = request.get_json() or {}
+    missing_fields = _missing_lesson_fields(data)
+    if missing_fields:
+        labels = ', '.join(LESSON_REQUIRED_FIELD_LABELS[field] for field in missing_fields)
+        return {
+            'message': f'Заполните обязательные поля: {labels}.',
+            'fields': missing_fields,
+        }, 400
+
     title = (data.get('title') or '').strip()
     summary = (data.get('summary') or '').strip()
-    if not title or not summary:
-        return {'message': 'Укажите название и краткое описание урока.'}, 400
 
     age_group = _normalize_age_group(data.get('age_group'))
     module = _get_or_create_custom_module(classroom, age_group)
@@ -308,6 +533,7 @@ def create_class_lesson(current_user: User, classroom_id: int):
     starter_code = data.get('starter_code') or ''
     requested_task_type = 'code' if (data.get('task_type') or '').strip().lower() == 'code' else 'text'
     requested_is_code_task = requested_task_type == 'code' or bool(starter_code.strip())
+    practice_enabled = _lesson_practice_requested(data)
     answer_keywords = _split_csv(data.get('answer_keywords'))
     explicit_code_intent = has_explicit_code_task_intent(
         title=task_title,
@@ -333,7 +559,7 @@ def create_class_lesson(current_user: User, classroom_id: int):
             'Проверь, есть ли в ответе ключевые слова темы.',
         ]
     )
-    if task_title or task_prompt or starter_code or answer_keywords or judge_tests:
+    if practice_enabled:
         task_validation = normalize_task_validation(
             {
                 'evaluation_mode': data.get('evaluation_mode'),

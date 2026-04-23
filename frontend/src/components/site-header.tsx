@@ -61,6 +61,7 @@ export function SiteHeader() {
 
 		const secured = [
 			{ href: '/dashboard', label: 'Кабинет' },
+			{ href: '/messages', label: 'Сообщения' },
 			{ href: '/roadmap', label: 'Уроки' },
 			{ href: '/leaderboard', label: 'Рейтинг' },
 			{ href: '/profile', label: 'Профиль' },
@@ -79,13 +80,13 @@ export function SiteHeader() {
 
 		if (role === 'admin') {
 			return [
-				{ href: '/admin', label: 'Админ' },
+				{ href: '/admin/users', label: 'Админ' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		} else if (role === 'superadmin') {
 			return [
-				{ href: '/superadmin', label: 'Суперадмин' },
+				{ href: '/superadmin/users', label: 'Суперадмин' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/profile', label: 'Профиль' },
 			]
@@ -93,6 +94,7 @@ export function SiteHeader() {
 			return [
 				{ href: '/dashboard', label: 'Кабинет' },
 				{ href: '/teacher', label: 'Учитель' },
+				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/leaderboard', label: 'Рейтинг' },
 				{ href: '/profile', label: 'Профиль' },

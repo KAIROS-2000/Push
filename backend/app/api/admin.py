@@ -21,11 +21,16 @@ from ..models.learning import (
     has_explicit_code_task_intent,
     normalize_task_validation,
 )
-from ..models.user import User, UserRole, USERNAME_MAX_LENGTH
+from ..models.user import AdminAuditLog, User, UserRole, USERNAME_MAX_LENGTH
 from ..seed.bootstrap import generate_code
 
 
 admin_bp = Blueprint('admin', __name__)
+DEFAULT_DIRECTORY_PAGE_SIZE = 20
+MAX_DIRECTORY_PAGE_SIZE = 100
+VISIBLE_USER_ROLES = (UserRole.STUDENT, UserRole.TEACHER)
+MANAGED_ADMIN_ROLES = (UserRole.ADMIN,)
+VALID_STATUS_FILTERS = {'all', 'active', 'blocked'}
 
 
 def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -98,6 +103,94 @@ def _normalize_module_order() -> list[Module]:
     return roadmap_modules
 
 
+def _normalize_status_filter(value: str | None) -> str:
+    normalized = (value or 'all').strip().lower()
+    return normalized if normalized in VALID_STATUS_FILTERS else 'all'
+
+
+def _pagination_payload(total: int, page: int, page_size: int) -> dict:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        'page': page,
+        'page_size': page_size,
+        'total': total,
+        'total_pages': total_pages,
+    }
+
+
+def _serialize_admin_user(user: User) -> dict:
+    return {
+        **user.to_dict(),
+        'created_at': user.created_at.isoformat() if user.created_at else None,
+        'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
+    }
+
+
+def _list_users_for_roles(role_filters: tuple[UserRole, ...]) -> tuple[list[User], dict, dict]:
+    username_filter = (request.args.get('username') or '').strip().lower()
+    status_filter = _normalize_status_filter(request.args.get('status'))
+    page = _safe_int(request.args.get('page'), 1, minimum=1)
+    page_size = _safe_int(
+        request.args.get('page_size'),
+        DEFAULT_DIRECTORY_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_DIRECTORY_PAGE_SIZE,
+    )
+
+    query = User.query.filter(User.role.in_(role_filters))
+    if username_filter:
+        query = query.filter(User.username.ilike(f'%{username_filter}%'))
+    if status_filter == 'active':
+        query = query.filter(User.is_active.is_(True))
+    elif status_filter == 'blocked':
+        query = query.filter(User.is_active.is_(False))
+
+    query = query.order_by(User.created_at.desc(), User.id.desc())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return items, _pagination_payload(total, page, page_size), {
+        'username': username_filter,
+        'status': status_filter,
+    }
+
+
+def _log_admin_action(
+    actor: User,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: int | None,
+    entity_label: str,
+    details: dict | None = None,
+) -> None:
+    payload = details.copy() if isinstance(details, dict) else {}
+    payload.setdefault('actor_name', actor.full_name)
+    payload.setdefault('actor_username', actor.username)
+    db.session.add(
+        AdminAuditLog(
+            actor_user_id=actor.id,
+            actor_role=actor.role.value,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_label=entity_label,
+            details_json=payload,
+        )
+    )
+
+
+def _ensure_managed_user_target(user: User) -> tuple[dict, int] | None:
+    if user.role not in VISIBLE_USER_ROLES:
+        return {'message': 'Через этот раздел можно управлять только учениками и учителями.'}, 400
+    return None
+
+
+def _ensure_admin_target(user: User) -> tuple[dict, int] | None:
+    if user.role not in MANAGED_ADMIN_ROLES:
+        return {'message': 'Можно управлять только обычными администраторами.'}, 400
+    return None
+
+
 def _build_theory_blocks(title: str, summary: str, theory_text: str, key_points: list[str]) -> list[dict]:
     blocks = [{'type': 'hero', 'title': title, 'text': summary}]
     if theory_text:
@@ -131,6 +224,11 @@ def _build_task(lesson: Lesson, raw_task, lesson_title: str) -> Task | None:
         raise ValueError('Для Junior-модуля кодовая практика недоступна. Выберите текстовое задание или квиз.')
 
     evaluation_mode = str(raw_task.get('evaluation_mode') or '').strip().lower()
+    if evaluation_mode == 'manual':
+        raise ValueError(
+            'Админ и суперадмин не могут создавать уроки с ручной проверкой. '
+            'Используйте ключевые слова или автотесты.'
+        )
     keywords = _split_csv(raw_task.get('keywords'))
     tests = _normalized_test_cases(raw_task.get('tests'))
     explicit_code_intent = has_explicit_code_task_intent(
@@ -173,6 +271,8 @@ def _build_task(lesson: Lesson, raw_task, lesson_title: str) -> Task | None:
         hints=hints,
         xp_reward=_safe_int(raw_task.get('xp_reward'), 30, minimum=0, maximum=500),
     )
+
+
 @admin_bp.get('/overview')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def overview(current_user: User):
@@ -190,8 +290,75 @@ def overview(current_user: User):
 @admin_bp.get('/users')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def users(current_user: User):
-    payload = [user.to_dict() for user in User.query.order_by(User.created_at.desc()).all()]
-    return {'users': payload}
+    items, pagination, filters = _list_users_for_roles(VISIBLE_USER_ROLES)
+    return {
+        'users': [_serialize_admin_user(user) for user in items],
+        'pagination': pagination,
+        'filters': filters,
+    }
+
+
+@admin_bp.patch('/users/<int:user_id>/block')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def block_user(current_user: User, user_id: int):
+    user = User.query.get_or_404(user_id)
+    error = _ensure_managed_user_target(user)
+    if error:
+        return error
+    user.is_active = False
+    user.bump_session_version()
+    revoke_refresh_tokens_for_user(user.id)
+    _log_admin_action(
+        current_user,
+        action='user_blocked',
+        entity_type='user',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'status': 'blocked',
+        },
+    )
+    db.session.commit()
+    return {'user': _serialize_admin_user(user)}
+
+
+@admin_bp.patch('/users/<int:user_id>/unblock')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def unblock_user(current_user: User, user_id: int):
+    user = User.query.get_or_404(user_id)
+    error = _ensure_managed_user_target(user)
+    if error:
+        return error
+    user.is_active = True
+    _log_admin_action(
+        current_user,
+        action='user_unblocked',
+        entity_type='user',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'status': 'active',
+        },
+    )
+    db.session.commit()
+    return {'user': _serialize_admin_user(user)}
+
+
+@admin_bp.get('/admins')
+@auth_required([UserRole.SUPERADMIN])
+def admins(current_user: User):
+    items, pagination, filters = _list_users_for_roles(MANAGED_ADMIN_ROLES)
+    return {
+        'admins': [_serialize_admin_user(user) for user in items],
+        'pagination': pagination,
+        'filters': filters,
+    }
 
 
 @admin_bp.get('/modules')
@@ -216,6 +383,19 @@ def create_module(current_user: User):
         is_published=bool(data.get('is_published', False)),
     )
     db.session.add(module)
+    db.session.flush()
+    _log_admin_action(
+        current_user,
+        action='module_created',
+        entity_type='module',
+        entity_id=module.id,
+        entity_label=module.title,
+        details={
+            'module_slug': module.slug,
+            'age_group': module.age_group,
+            'is_published': module.is_published,
+        },
+    )
     db.session.commit()
     return {'module': module.to_dict()}, 201
 
@@ -225,11 +405,25 @@ def create_module(current_user: User):
 def update_module(current_user: User, module_id: int):
     module = Module.query.get_or_404(module_id)
     data = request.get_json() or {}
+    was_published = bool(module.is_published)
     for field in ['title', 'description', 'age_group', 'icon', 'color']:
         if field in data:
             setattr(module, field, data[field])
     if 'is_published' in data:
         module.is_published = bool(data['is_published'])
+    if was_published != bool(module.is_published):
+        _log_admin_action(
+            current_user,
+            action='module_published' if module.is_published else 'module_unpublished',
+            entity_type='module',
+            entity_id=module.id,
+            entity_label=module.title,
+            details={
+                'module_slug': module.slug,
+                'previous_state': 'published' if was_published else 'hidden',
+                'next_state': 'published' if module.is_published else 'hidden',
+            },
+        )
     db.session.commit()
     return {'module': module.to_dict()}
 
@@ -256,6 +450,17 @@ def delete_module(current_user: User, module_id: int):
         if module.slug in whitelist:
             invite.modules_whitelist = [slug for slug in whitelist if slug != module.slug]
 
+    _log_admin_action(
+        current_user,
+        action='module_deleted',
+        entity_type='module',
+        entity_id=module.id,
+        entity_label=module.title,
+        details={
+            'module_slug': module.slug,
+            'age_group': module.age_group,
+        },
+    )
     db.session.delete(module)
     db.session.flush()
     _normalize_module_order()
@@ -280,8 +485,9 @@ def create_module_lesson(current_user: User, module_id: int):
     key_points = _string_list(data.get('key_points'))
     interactive_steps = _build_interactive_steps(data.get('interactive_steps'))
     order_index = _insert_position(module, data.get('insert_position'))
+    module_was_hidden = not module.is_published
 
-    if bool(data.get('publish_module_if_needed')) and not module.is_published:
+    if bool(data.get('publish_module_if_needed')) and module_was_hidden:
         module.is_published = True
 
     lesson = Lesson(
@@ -311,6 +517,34 @@ def create_module_lesson(current_user: User, module_id: int):
         db.session.rollback()
         return {'message': str(exc)}, 400
 
+    if module_was_hidden and module.is_published:
+        _log_admin_action(
+            current_user,
+            action='module_published',
+            entity_type='module',
+            entity_id=module.id,
+            entity_label=module.title,
+            details={
+                'module_slug': module.slug,
+                'previous_state': 'hidden',
+                'next_state': 'published',
+                'reason': 'publish_module_if_needed',
+            },
+        )
+
+    _log_admin_action(
+        current_user,
+        action='lesson_created',
+        entity_type='lesson',
+        entity_id=lesson.id,
+        entity_label=lesson.title,
+        details={
+            'module_id': module.id,
+            'module_title': module.title,
+            'module_slug': module.slug,
+            'publish_module_if_needed': bool(data.get('publish_module_if_needed')),
+        },
+    )
     db.session.commit()
     return {
         'lesson': lesson.to_dict(include_private=True),
@@ -346,6 +580,21 @@ def create_admin(current_user: User):
         xp=2000,
     )
     db.session.add(admin)
+    db.session.flush()
+    _log_admin_action(
+        current_user,
+        action='admin_created',
+        entity_type='admin',
+        entity_id=admin.id,
+        entity_label=admin.username,
+        details={
+            'target_name': admin.full_name,
+            'target_username': admin.username,
+            'target_role': admin.role.value,
+            'email': admin.email,
+            'status': 'active',
+        },
+    )
     db.session.commit()
     return {'user': admin.to_dict()}, 201
 
@@ -354,11 +603,25 @@ def create_admin(current_user: User):
 @auth_required([UserRole.SUPERADMIN])
 def block_admin(current_user: User, user_id: int):
     user = User.query.get_or_404(user_id)
-    if user.role != UserRole.ADMIN:
-        return {'message': 'Можно блокировать только обычных админов'}, 400
+    error = _ensure_admin_target(user)
+    if error:
+        return error
     user.is_active = False
     user.bump_session_version()
     revoke_refresh_tokens_for_user(user.id)
+    _log_admin_action(
+        current_user,
+        action='admin_blocked',
+        entity_type='admin',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'status': 'blocked',
+        },
+    )
     db.session.commit()
     return {'user': user.to_dict()}
 
@@ -367,9 +630,23 @@ def block_admin(current_user: User, user_id: int):
 @auth_required([UserRole.SUPERADMIN])
 def unblock_admin(current_user: User, user_id: int):
     user = User.query.get_or_404(user_id)
-    if user.role != UserRole.ADMIN:
-        return {'message': 'Можно разблокировать только обычных админов'}, 400
+    error = _ensure_admin_target(user)
+    if error:
+        return error
     user.is_active = True
+    _log_admin_action(
+        current_user,
+        action='admin_unblocked',
+        entity_type='admin',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'status': 'active',
+        },
+    )
     db.session.commit()
     return {'user': user.to_dict()}
 
@@ -378,9 +655,60 @@ def unblock_admin(current_user: User, user_id: int):
 @auth_required([UserRole.SUPERADMIN])
 def delete_admin(current_user: User, user_id: int):
     user = User.query.get_or_404(user_id)
-    if user.role != UserRole.ADMIN:
-        return {'message': 'Можно удалять только обычных админов'}, 400
+    error = _ensure_admin_target(user)
+    if error:
+        return error
     revoke_refresh_tokens_for_user(user.id)
+    _log_admin_action(
+        current_user,
+        action='admin_deleted',
+        entity_type='admin',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'email': user.email,
+            'status': 'deleted',
+        },
+    )
     db.session.delete(user)
     db.session.commit()
     return {'message': 'Админ удалён'}
+
+
+@admin_bp.get('/audit-logs')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def audit_logs(current_user: User):
+    action_filter = (request.args.get('action') or '').strip().lower()
+    actor_role_filter = (request.args.get('actor_role') or '').strip().lower()
+    target_filter = (request.args.get('target') or '').strip().lower()
+    page = _safe_int(request.args.get('page'), 1, minimum=1)
+    page_size = _safe_int(
+        request.args.get('page_size'),
+        DEFAULT_DIRECTORY_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_DIRECTORY_PAGE_SIZE,
+    )
+
+    query = AdminAuditLog.query
+    if action_filter and action_filter != 'all':
+        query = query.filter(AdminAuditLog.action == action_filter)
+    if actor_role_filter in {UserRole.ADMIN.value, UserRole.SUPERADMIN.value}:
+        query = query.filter(AdminAuditLog.actor_role == actor_role_filter)
+    if target_filter:
+        query = query.filter(AdminAuditLog.entity_label.ilike(f'%{target_filter}%'))
+
+    query = query.order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'audit_logs': [item.to_dict() for item in items],
+        'pagination': _pagination_payload(total, page, page_size),
+        'filters': {
+            'action': action_filter or 'all',
+            'actor_role': actor_role_filter or 'all',
+            'target': target_filter,
+        },
+    }

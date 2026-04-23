@@ -20,6 +20,84 @@ export interface UserItem {
   is_active: boolean
 }
 
+export interface PaginationMeta {
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
+export interface AdminOverviewData {
+  stats: {
+    users: number
+    students: number
+    teachers: number
+    modules: number
+    lessons: number
+  }
+}
+
+export interface AdminUserListItem extends UserItem {
+  created_at: string | null
+  last_login_at: string | null
+}
+
+export interface AdminUserDirectoryResponse {
+  users: AdminUserListItem[]
+  pagination: PaginationMeta
+  filters: {
+    username: string
+    status: 'all' | 'active' | 'blocked'
+  }
+}
+
+export interface AdminAdminDirectoryResponse {
+  admins: AdminUserListItem[]
+  pagination: PaginationMeta
+  filters: {
+    username: string
+    status: 'all' | 'active' | 'blocked'
+  }
+}
+
+export interface AdminAuditLogActor {
+  id: number | null
+  role: 'admin' | 'superadmin' | string
+  username: string | null
+  full_name: string | null
+}
+
+export interface AdminAuditLogTarget {
+  label: string
+  username: string | null
+  full_name: string | null
+  role: string | null
+}
+
+export interface AdminAuditLogItem {
+  id: number
+  actor_user_id: number | null
+  actor_role: 'admin' | 'superadmin' | string
+  action: string
+  entity_type: string
+  entity_id: number | null
+  entity_label: string
+  created_at: string | null
+  details: Record<string, string | number | boolean | null | undefined>
+  actor: AdminAuditLogActor
+  target: AdminAuditLogTarget
+}
+
+export interface AdminAuditLogResponse {
+  audit_logs: AdminAuditLogItem[]
+  pagination: PaginationMeta
+  filters: {
+    action: string
+    actor_role: string
+    target: string
+  }
+}
+
 export interface LessonSummary {
   id: number
   slug: string
@@ -250,6 +328,26 @@ export interface TeacherOverviewData {
   classes: ClassroomItem[]
 }
 
+export type ClassJoinRequestStatus = 'pending' | 'approved' | 'rejected'
+
+export interface ClassJoinRequestItem {
+  id: number
+  classroom_id: number
+  classroom_name: string | null
+  classroom_code: string | null
+  student_id: number
+  student_full_name: string | null
+  student_username: string | null
+  status: ClassJoinRequestStatus
+  created_at: string
+  decided_at: string | null
+  decided_by_id: number | null
+}
+
+export interface TeacherJoinRequestsResponse {
+  requests: ClassJoinRequestItem[]
+}
+
 export interface TeacherClassDetail {
   classroom: ClassroomItem
   students: Array<{
@@ -262,6 +360,90 @@ export interface TeacherClassDetail {
     average_score: number
   }>
   assignments: AssignmentItem[]
+}
+
+export type MessagingRole = 'student' | 'teacher'
+
+export interface MessagingConversationSummary {
+  id?: number | null
+  conversation_id: number | null
+  classroom_id: number
+  classroom_name: string
+  teacher_id?: number | null
+  teacher_name?: string | null
+  student_id?: number | null
+  student_name?: string | null
+  latest_message_at?: string | null
+  latest_message_preview?: string | null
+  unread_count: number
+}
+
+export interface MessagingSummaryStudent {
+  id?: number
+  student_id?: number
+  username?: string | null
+  full_name?: string | null
+  student_name?: string | null
+  conversation_id?: number | null
+  latest_message_at?: string | null
+  latest_message_preview?: string | null
+  unread_count?: number
+}
+
+export interface MessagingSummaryUser {
+  id: number
+  username?: string | null
+  full_name?: string | null
+  role?: UserRole | string
+}
+
+export interface MessagingSummaryClass {
+  id?: number
+  classroom_id?: number
+  name?: string
+  classroom_name?: string
+  classroom?: ClassroomItem
+  teacher?: MessagingSummaryUser | null
+  conversation_id?: number | null
+  conversation?: MessagingConversationSummary | null
+  latest_message_at?: string | null
+  latest_message_preview?: string | null
+  unread_count?: number
+  students?: MessagingSummaryStudent[]
+}
+
+export interface MessagingSummaryResponse {
+  role: MessagingRole
+  total_unread: number
+  conversations: MessagingConversationSummary[]
+  classes?: MessagingSummaryClass[]
+}
+
+export interface MessagingMessage {
+  id: number
+  conversation_id: number
+  sender_id: number
+  sender_name?: string | null
+  sender_role?: MessagingRole | null
+  body: string
+  created_at: string
+}
+
+export interface MessagingConversationDetailResponse {
+  conversation?: MessagingConversationSummary
+  conversation_id?: number | null
+  id?: number | null
+  messages: MessagingMessage[]
+}
+
+export interface MessagingChatTarget {
+  classroomId: number
+  classroomName: string
+  conversationId?: number | null
+  teacherId?: number | null
+  teacherName?: string | null
+  studentId?: number | null
+  studentName?: string | null
 }
 
 export interface ParentInvite {

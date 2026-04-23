@@ -137,12 +137,7 @@ export function LessonGigachatDrawer({
     if (!panel || !overlay) return
 
     const setClosedState = () => {
-      const isMobile = window.matchMedia('(max-width: 767px)').matches
-      if (isMobile) {
-        gsap.set(panel, { xPercent: 0, yPercent: 104 })
-      } else {
-        gsap.set(panel, { xPercent: 108, yPercent: 0 })
-      }
+      gsap.set(panel, { autoAlpha: 0, pointerEvents: 'none', xPercent: 0, yPercent: 0 })
     }
 
     setClosedState()
@@ -182,12 +177,14 @@ export function LessonGigachatDrawer({
     if (prefersReducedMotion) {
       if (isOpen) {
         gsap.set(overlay, { autoAlpha: 1, pointerEvents: 'auto' })
-        gsap.set(panel, { xPercent: 0, yPercent: 0 })
+        gsap.set(panel, { autoAlpha: 1, pointerEvents: 'auto', xPercent: 0, yPercent: 0 })
       } else {
         gsap.set(overlay, { autoAlpha: 0, pointerEvents: 'none' })
         gsap.set(panel, {
-          xPercent: isMobile ? 0 : 108,
-          yPercent: isMobile ? 104 : 0,
+          autoAlpha: 0,
+          pointerEvents: 'none',
+          xPercent: 0,
+          yPercent: 0,
         })
       }
 
@@ -198,11 +195,13 @@ export function LessonGigachatDrawer({
 
     if (isOpen) {
       gsap.set(overlay, { pointerEvents: 'auto' })
+      gsap.set(panel, { pointerEvents: 'auto', xPercent: 0, yPercent: 0 })
       timeline
         .to(overlay, { autoAlpha: 1, duration: 0.24 }, 0)
         .to(
           panel,
           {
+            autoAlpha: 1,
             xPercent: 0,
             yPercent: 0,
             duration: isMobile ? 0.42 : 0.48,
@@ -221,9 +220,13 @@ export function LessonGigachatDrawer({
         .to(
           panel,
           {
-            xPercent: isMobile ? 0 : 108,
-            yPercent: isMobile ? 104 : 0,
+            autoAlpha: 0,
+            xPercent: 0,
+            yPercent: 0,
             duration: isMobile ? 0.34 : 0.38,
+            onComplete: () => {
+              gsap.set(panel, { pointerEvents: 'none' })
+            },
           },
           0
         )
@@ -320,6 +323,7 @@ export function LessonGigachatDrawer({
 
       <aside
         ref={panelRef}
+        aria-hidden={!isOpen}
         className="lesson-chat-panel fixed bottom-0 left-0 right-0 z-50 flex h-[82dvh] max-h-[860px] flex-col overflow-hidden rounded-t-[30px] border border-white/80 bg-white/95 shadow-[0_-24px_80px_rgba(15,23,42,0.2)] backdrop-blur-xl md:inset-y-0 md:left-auto md:right-0 md:h-dvh md:w-[460px] md:max-h-none md:max-w-[460px] md:rounded-none md:border-y-0 md:border-r-0 md:border-l"
       >
         <div className="lesson-chat-header border-b border-slate-200/80 bg-[linear-gradient(135deg,rgba(14,165,233,0.14),rgba(34,197,94,0.1))] px-4 py-4 md:px-5">

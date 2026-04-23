@@ -5,6 +5,20 @@ import { api } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import {
+	ageGroupSupportsCodePractice,
+	hasMovementTarget,
+	hasQuizReviewData,
+	isQuestionAnswered,
+	lessonStatusLabel,
+	moveItemAroundFixed,
+	normalizeLessonPayload,
+	normalizeQuizText,
+	toNumberArray,
+	toStringArray,
+	toStringRecord,
+} from '@/components/lesson-player-helpers'
+import type { LessonPlayerPayload } from '@/components/lesson-player-helpers'
+import {
 	JudgeReport,
 	LessonDetail,
 	ProgressItem,
@@ -14,6 +28,8 @@ import {
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+
+export type { LessonPlayerPayload } from '@/components/lesson-player-helpers'
 
 const LazyLessonCodeEditor = dynamic(
 	() =>
@@ -36,136 +52,7 @@ const LazyLessonGigachatDrawer = dynamic(
 	{ ssr: false, loading: () => null },
 )
 
-function moveItem(list: string[], from: number, to: number) {
-	const next = [...list]
-	const [picked] = next.splice(from, 1)
-	next.splice(to, 0, picked)
-	return next
-}
-
-function normalizeQuizText(value: unknown) {
-	return String(value ?? '')
-		.trim()
-		.toLowerCase()
-		.split(/\s+/)
-		.filter(Boolean)
-		.join(' ')
-}
-
-function hasMovementTarget(
-	listLength: number,
-	from: number,
-	step: -1 | 1,
-	fixedIndexes: Set<number>,
-) {
-	let target = from + step
-
-	while (target >= 0 && target < listLength && fixedIndexes.has(target)) {
-		target += step
-	}
-
-	return target >= 0 && target < listLength
-}
-
-function moveItemAroundFixed(
-	list: string[],
-	from: number,
-	step: -1 | 1,
-	fixedIndexes: Set<number>,
-) {
-	let target = from + step
-
-	while (target >= 0 && target < list.length && fixedIndexes.has(target)) {
-		target += step
-	}
-
-	if (target < 0 || target >= list.length) {
-		return list
-	}
-
-	return moveItem(list, from, target)
-}
-
-function toStringArray(value: unknown): string[] {
-	if (!Array.isArray(value)) return []
-	return value.filter((item): item is string => typeof item === 'string')
-}
-
-function toNumberArray(value: unknown): number[] {
-	if (!Array.isArray(value)) return []
-	return value.filter((item): item is number => typeof item === 'number')
-}
-
-function toStringRecord(value: unknown): Record<string, string> {
-	if (!value || typeof value !== 'object') return {}
-	return Object.entries(value).reduce<Record<string, string>>(
-		(acc, [key, item]) => {
-			if (typeof item === 'string') {
-				acc[key] = item
-			}
-			return acc
-		},
-		{},
-	)
-}
-
-function isQuestionAnswered(question: QuizQuestion, answer: unknown) {
-	if (question.type === 'single') return typeof answer === 'number'
-	if (question.type === 'multiple') return toNumberArray(answer).length > 0
-	if (question.type === 'order') return toStringArray(answer).length > 0
-	if (question.type === 'match')
-		return Object.keys(toStringRecord(answer)).length > 0
-	if (question.type === 'text')
-		return typeof answer === 'string' && answer.trim().length > 0
-	return false
-}
-
-function hasQuizReviewData(quiz: QuizItem | null | undefined) {
-	return Boolean(
-		quiz?.questions.some(question => question.correct !== undefined),
-	)
-}
-
-function ageGroupSupportsCodePractice(ageGroup?: string | null) {
-	return ageGroup !== 'junior'
-}
-
 type ViewerRole = 'student' | 'teacher' | 'admin' | 'superadmin'
-
-export interface LessonPlayerPayload {
-	lesson: LessonDetail
-	progress: ProgressItem
-	viewer_role: ViewerRole
-}
-
-function normalizeLessonPayload(data: LessonPlayerPayload) {
-	const lesson = {
-		...data.lesson,
-		module: {
-			...data.lesson.module,
-			lessons: Array.isArray(data.lesson.module?.lessons)
-				? data.lesson.module.lessons
-				: [],
-		},
-	}
-	const isFinished =
-		data.progress.status === 'completed' ||
-		data.progress.status === 'pending_review'
-	return {
-		lesson,
-		progress: data.progress,
-		viewerRole: data.viewer_role,
-		isFinished,
-	}
-}
-
-function lessonStatusLabel(status?: ProgressItem['status']) {
-	if (status === 'completed') return 'Завершён'
-	if (status === 'pending_review') return 'Ожидает проверки'
-	if (status === 'needs_revision') return 'Нужно исправить'
-	if (status === 'in_progress') return 'В процессе'
-	return 'Не начат'
-}
 
 function OrderQuestion({
 	question,
@@ -808,7 +695,35 @@ export function LessonPlayer({
 	function jumpTo(id: string) {
 		if (typeof document === 'undefined') return
 		const element = document.getElementById(id)
-		element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		if (!element) return
+		const header = document.querySelector('.progyx-header')
+		const nav = document.querySelector('.brand-lesson-nav')
+		const headerHeight =
+			header instanceof HTMLElement ? header.getBoundingClientRect().height : 0
+		const headerPosition =
+			header instanceof HTMLElement ? window.getComputedStyle(header).position : ''
+		const headerOffset =
+			headerPosition === 'sticky' || headerPosition === 'fixed'
+				? headerHeight
+				: 0
+		const navHeight =
+			nav instanceof HTMLElement ? nav.getBoundingClientRect().height : 0
+		const navPosition =
+			nav instanceof HTMLElement ? window.getComputedStyle(nav).position : ''
+		const navOffset =
+			navPosition === 'sticky' || navPosition === 'fixed' ? navHeight : 0
+		const pageOffset = 20
+		const top =
+			window.scrollY +
+			element.getBoundingClientRect().top -
+			headerOffset -
+			navOffset -
+			pageOffset
+
+		window.scrollTo({
+			top: Math.max(top, 0),
+			behavior: 'smooth',
+		})
 	}
 
 	async function submitTask() {
@@ -1060,7 +975,7 @@ export function LessonPlayer({
 				</aside>
 
 				<section className='min-w-0 space-y-6 overflow-x-hidden'>
-					<div className='brand-lesson-nav scrollbar-hidden sticky top-20 z-20 flex gap-2 overflow-x-auto p-3'>
+					<div className='brand-lesson-nav scrollbar-hidden flex gap-2 overflow-x-auto p-3'>
 						{[
 							['theory', 'Теория'],
 							['interactive', 'Разбор'],
@@ -1080,7 +995,7 @@ export function LessonPlayer({
 
 					<article
 						id='theory'
-						className='brand-section-panel codequest-card min-w-0 overflow-hidden p-6'
+						className='brand-section-panel lesson-player__section-anchor codequest-card min-w-0 overflow-hidden p-6'
 						data-motion-reveal
 					>
 						<div className='flex flex-wrap items-center justify-between gap-3'>
@@ -1124,7 +1039,7 @@ export function LessonPlayer({
 
 					<article
 						id='interactive'
-						className='brand-section-panel codequest-card min-w-0 overflow-hidden p-6'
+						className='brand-section-panel lesson-player__section-anchor codequest-card min-w-0 overflow-hidden p-6'
 						data-motion-reveal
 					>
 						<div className='flex flex-wrap items-center justify-between gap-3'>
@@ -1167,7 +1082,7 @@ export function LessonPlayer({
 					{task ? (
 						<article
 							id='practice'
-							className='brand-tech-panel codequest-card min-w-0 overflow-hidden p-6'
+							className='brand-tech-panel lesson-player__section-anchor codequest-card min-w-0 overflow-hidden p-6'
 							data-motion-reveal
 						>
 							<div className='grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_18.75rem]'>
@@ -1382,7 +1297,7 @@ export function LessonPlayer({
 					) : (
 						<article
 							id='practice'
-							className='brand-tech-panel codequest-card p-6'
+							className='brand-tech-panel lesson-player__section-anchor codequest-card p-6'
 							data-motion-reveal
 						>
 							<p className='text-sm text-slate-500'>
@@ -1394,7 +1309,7 @@ export function LessonPlayer({
 					{quiz ? (
 						<article
 							id='quiz'
-							className='brand-section-panel codequest-card p-6'
+							className='brand-section-panel lesson-player__section-anchor codequest-card p-6'
 							data-motion-reveal
 						>
 							<div className='flex flex-wrap items-center justify-between gap-3'>
@@ -1443,7 +1358,7 @@ export function LessonPlayer({
 					) : (
 						<article
 							id='quiz'
-							className='brand-section-panel codequest-card p-6'
+							className='brand-section-panel lesson-player__section-anchor codequest-card p-6'
 							data-motion-reveal
 						>
 							<p className='text-sm text-slate-500'>

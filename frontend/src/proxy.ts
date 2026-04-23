@@ -11,6 +11,7 @@ const ACCESS_EXPIRES_AT_COOKIE = 'codequest_access_expires_at'
 const KNOWN_ROLES: UserRole[] = ['student', 'teacher', 'admin', 'superadmin']
 const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/dashboard', roles: KNOWN_ROLES },
+	{ path: '/messages', roles: ['student', 'teacher'] },
 	{ path: '/roadmap', roles: KNOWN_ROLES },
 	{ path: '/lessons', roles: KNOWN_ROLES },
 	{ path: '/leaderboard', roles: KNOWN_ROLES },
@@ -177,6 +178,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
 	matcher: [
 		'/dashboard/:path*',
+		'/messages/:path*',
 		'/roadmap/:path*',
 		'/lessons/:path*',
 		'/leaderboard/:path*',

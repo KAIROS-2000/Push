@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import { AppToaster } from '@/components/app-toaster'
 import { MascotOverlay } from '@/components/mascot-overlay'
 import { SiteChrome } from '@/components/site-chrome'
@@ -22,11 +23,14 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 }
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const headersList = await headers()
+  const nonce = headersList.get('x-nonce') ?? ''
+
   return (
     <html lang="ru" data-theme="light" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: getThemeInitScript() }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: getThemeInitScript() }} />
       </head>
       <body>
         <ThemeHydrator />

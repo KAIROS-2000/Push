@@ -221,6 +221,43 @@ class AdminLessonCreationTests(unittest.TestCase):
             self.assertEqual(questions[1]['id'], 'admin-q2')
             self.assertEqual(questions[1]['correct'], ['алгоритм', 'Алгоритм'])
 
+    def test_admin_cannot_create_lesson_with_manual_review(self):
+        app = self.create_app()
+        module_id = self.create_admin_fixture(app)
+
+        with app.test_client() as client:
+            login_response = self.login_admin(client)
+            self.assertEqual(login_response.status_code, 200)
+
+            response = client.post(
+                f'/api/admin/modules/{module_id}/lessons',
+                json={
+                    'title': 'Урок с ручной проверкой',
+                    'summary': 'Такой урок должен быть отклонён.',
+                    'theory_text': 'Немного теории.',
+                    'key_points': ['Пункт 1', 'Пункт 2'],
+                    'interactive_steps': ['Шаг 1', 'Шаг 2'],
+                    'duration_minutes': 30,
+                    'passing_score': 70,
+                    'insert_position': 3,
+                    'publish_module_if_needed': False,
+                    'task': {
+                        'enabled': True,
+                        'task_type': 'text',
+                        'title': 'Открытый ответ',
+                        'prompt': 'Опиши решение своими словами.',
+                        'evaluation_mode': 'manual',
+                        'keywords': '',
+                        'hints': [],
+                        'tests': [],
+                    },
+                    'quiz': {'enabled': False, 'questions': []},
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('не могут создавать уроки с ручной проверкой', response.get_json()['message'])
+
 
 if __name__ == '__main__':
     unittest.main()

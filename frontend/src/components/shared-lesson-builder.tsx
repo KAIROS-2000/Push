@@ -43,11 +43,13 @@ import {
   defaultLanguageForAgeGroup,
   foundationComplete,
   formatComplete,
+  hasCompleteJudgeTest,
   normalizeAgeGroup,
   parseLines,
   practiceComplete,
   questionHasContent,
   quizComplete,
+  type CheckMode,
   type CreatedLessonState,
   type JudgeTestCase,
   type LessonBuilderForm,
@@ -197,6 +199,8 @@ export function SharedLessonBuilder({
   submitLesson,
   onCreated,
 }: SharedLessonBuilderProps) {
+  const manualCheckAvailable = mode === 'teacher'
+  const textCheckFallback: CheckMode = manualCheckAvailable ? 'manual' : 'keywords'
   const moduleOptions = useMemo(
     () => targetConfig.kind === 'module' ? normalizeModuleList(targetConfig.modules) : [],
     [targetConfig],
@@ -205,7 +209,12 @@ export function SharedLessonBuilder({
     ? normalizeAgeGroup(moduleOptions[0]?.age_group)
     : 'junior'
 
-  const [form, setForm] = useState<LessonBuilderForm>(() => createInitialLessonBuilderForm(initialAgeGroup))
+  const [form, setForm] = useState<LessonBuilderForm>(() => {
+    const initialForm = createInitialLessonBuilderForm(initialAgeGroup)
+    return manualCheckAvailable
+      ? initialForm
+      : { ...initialForm, checkMode: 'keywords' }
+  })
   const [currentStep, setCurrentStep] = useState(0)
   const [selectedClassId, setSelectedClassId] = useState<number | null>(
     targetConfig.kind === 'classroom'
@@ -268,7 +277,8 @@ export function SharedLessonBuilder({
     if (!moduleOptions.length) {
       setSelectedModuleId('')
       setInsertPosition('1')
-      setForm(createInitialLessonBuilderForm('middle'))
+      const resetForm = createInitialLessonBuilderForm('middle')
+      setForm(manualCheckAvailable ? resetForm : { ...resetForm, checkMode: 'keywords' })
       return
     }
 
@@ -291,7 +301,9 @@ export function SharedLessonBuilder({
       const nextCheckMode = nextPracticeFormat === 'code'
         ? 'tests'
         : current.checkMode === 'tests'
-          ? 'manual'
+          ? textCheckFallback
+          : !manualCheckAvailable && current.checkMode === 'manual'
+            ? 'keywords'
           : current.checkMode
 
       if (
@@ -311,34 +323,41 @@ export function SharedLessonBuilder({
         checkMode: nextCheckMode,
       }
     })
-  }, [selectedModule, targetConfig.kind])
+  }, [manualCheckAvailable, selectedModule, targetConfig.kind, textCheckFallback])
 
   useEffect(() => {
     if (form.ageGroup === 'junior' && form.practiceFormat === 'code') {
       setForm(current => ({
         ...current,
         practiceFormat: 'text',
-        checkMode: current.checkMode === 'tests' ? 'manual' : current.checkMode,
+        checkMode: current.checkMode === 'tests' ? textCheckFallback : current.checkMode,
         programmingLanguage: defaultLanguageForAgeGroup('junior'),
       }))
     }
-  }, [form.ageGroup, form.practiceFormat, form.checkMode])
+  }, [form.ageGroup, form.practiceFormat, form.checkMode, textCheckFallback])
 
   useEffect(() => {
+    if (!manualCheckAvailable && form.checkMode === 'manual') {
+      setForm(current => ({ ...current, checkMode: 'keywords' }))
+      return
+    }
+
     if (form.practiceFormat === 'none') {
-      setForm(current => current.checkMode === 'manual' ? current : { ...current, checkMode: 'manual' })
+      setForm(current =>
+        current.checkMode === textCheckFallback ? current : { ...current, checkMode: textCheckFallback },
+      )
       return
     }
 
     if (form.practiceFormat === 'text' && form.checkMode === 'tests') {
-      setForm(current => ({ ...current, checkMode: 'manual' }))
+      setForm(current => ({ ...current, checkMode: textCheckFallback }))
       return
     }
 
     if (form.practiceFormat === 'code' && form.checkMode !== 'tests') {
       setForm(current => ({ ...current, checkMode: 'tests' }))
     }
-  }, [form.practiceFormat, form.checkMode])
+  }, [form.practiceFormat, form.checkMode, manualCheckAvailable, textCheckFallback])
 
   useEffect(() => {
     if (!features.drafts || targetConfig.kind !== 'classroom') return
@@ -649,8 +668,8 @@ export function SharedLessonBuilder({
       return
     }
 
-    if (form.practiceFormat === 'code' && !form.judgeTests.some(testCase => testCase.input.trim() || testCase.expected.trim())) {
-      showInfoToast('Для кодовой практики нужен хотя бы один автотест.')
+    if (form.practiceFormat === 'code' && !hasCompleteJudgeTest(form.judgeTests)) {
+      showInfoToast('Для кодовой практики нужен хотя бы один автотест с входными данными и ожидаемым результатом.')
       return
     }
 
@@ -1237,7 +1256,9 @@ export function SharedLessonBuilder({
         <header className='space-y-2'>
           <h2 className='text-[clamp(1.45rem,3vw,1.85rem)] font-bold text-slate-900'>Шаг 5. Проверка</h2>
           <p className='max-w-3xl text-sm leading-6 text-slate-600 md:text-base'>
-            Выберите, как проверять ответ: вручную, по ключевым словам или автотестами.
+            {manualCheckAvailable
+              ? 'Выберите, как проверять ответ: вручную, по ключевым словам или автотестами.'
+              : 'Выберите автоматический способ проверки: по ключевым словам или автотестами.'}
           </p>
         </header>
 
@@ -1251,7 +1272,7 @@ export function SharedLessonBuilder({
               {CHECK_OPTIONS.filter(option =>
                 form.practiceFormat === 'code'
                   ? option.value === 'tests'
-                  : option.value !== 'tests',
+                  : option.value !== 'tests' && (manualCheckAvailable || option.value !== 'manual'),
               ).map(option => (
                 <button
                   key={option.value}
@@ -1277,7 +1298,7 @@ export function SharedLessonBuilder({
               ))}
             </div>
 
-            {form.checkMode === 'manual' ? (
+            {manualCheckAvailable && form.checkMode === 'manual' ? (
               <div className='rounded-[24px] border border-slate-200 bg-slate-50/70 p-5 text-sm leading-7 text-slate-600'>
                 Это самый безопасный режим для открытых ответов и рассуждений. Итог подтверждается вручную.
               </div>
@@ -1622,7 +1643,7 @@ export function SharedLessonBuilder({
               </div>
             )}
 
-            <div className='rounded-[24px] border border-sky-100 bg-sky-50/70 p-5 text-sm leading-7 text-slate-700'>
+            <div className='lesson-builder__summary rounded-[24px] border border-sky-100 bg-sky-50/70 p-5 text-sm leading-7 text-slate-700'>
               Подготовлено вопросов: <span className='font-semibold text-slate-900'>{preparedQuestions}</span>.
               {quizPayload.error ? (
                 <span className='mt-2 block text-rose-700'>{quizPayload.error}</span>
@@ -1727,7 +1748,7 @@ export function SharedLessonBuilder({
                     {form.checkMode === 'keywords'
                       ? `Ключевые слова: ${form.answerKeywords || 'не добавлены'}`
                       : form.checkMode === 'tests'
-                        ? `Тестов добавлено: ${form.judgeTests.filter(test => test.input.trim() || test.expected.trim()).length}`
+                        ? `Тестов добавлено: ${form.judgeTests.filter(test => test.input.trim() && test.expected.trim()).length}`
                         : 'Учитель подтверждает результат вручную.'}
                   </p>
                 </div>

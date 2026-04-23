@@ -8,6 +8,31 @@ on:
 jobs:
   backend-checks:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: development
+      SECRET_KEY: UnitTestSecretKey123!UnitTestSecretKey123!
+      DATABASE_URL: postgresql://codequest:codequest@localhost:5432/codequest_ci
+      CLIENT_URL: http://localhost:3000
+      ENABLE_DEMO_DATA: "false"
+      SUPERADMIN_BOOTSTRAP: "false"
+      SESSION_COOKIE_SECURE: "false"
+      GIGACHAT_VERIFY_SSL: "true"
+      METRICS_DEBUG: "false"
+    services:
+      postgres:
+        # pin: postgres:17 (replace with digest in prod; see docs/operations/image-pinning.md)
+        image: postgres:17
+        env:
+          POSTGRES_USER: codequest
+          POSTGRES_PASSWORD: codequest
+          POSTGRES_DB: codequest_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codequest -d codequest_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,6 +42,10 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Compile backend sources
         run: python -m compileall backend
+      - name: Smoke backend migrations
+        run: |
+          cd backend
+          python -m flask --app run.py upgrade-db
       - name: Run backend regression tests
         run: python -m unittest discover -s backend/tests -v
 

@@ -36,6 +36,7 @@ class Config:
     CLIENT_URL = _env('CLIENT_URL') or (None if IS_PRODUCTION else 'http://localhost:3000')
     SESSION_COOKIE_SECURE = _as_bool(os.getenv('SESSION_COOKIE_SECURE'), default=IS_PRODUCTION)
     SESSION_COOKIE_SAMESITE = _env('SESSION_COOKIE_SAMESITE') or 'Lax'
+    TRUST_PROXY = _as_bool(os.getenv('TRUST_PROXY'), default=False)
     SUPERADMIN_BOOTSTRAP = _as_bool(os.getenv('SUPERADMIN_BOOTSTRAP'), default=not IS_PRODUCTION)
     SUPERADMIN_EMAIL = (_env('SUPERADMIN_EMAIL') or ('' if IS_PRODUCTION else 'superadmin@codequest.local')).lower()
     SUPERADMIN_PASSWORD = _env('SUPERADMIN_PASSWORD') or ('' if IS_PRODUCTION else 'LocalOnlySuperAdmin123!')
@@ -58,6 +59,7 @@ class Config:
     CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB = int(_env('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB') or '128')
     CODE_JUDGE_MAX_OUTPUT_CHARS = int(_env('CODE_JUDGE_MAX_OUTPUT_CHARS') or '4000')
     CODE_JUDGE_RUNNER_URL = _env('CODE_JUDGE_RUNNER_URL')
+    CODE_JUDGE_RUNNER_TOKEN = _env('CODE_JUDGE_RUNNER_TOKEN')
     CODE_JUDGE_RUNNER_TIMEOUT_MS = int(_env('CODE_JUDGE_RUNNER_TIMEOUT_MS') or '15000')
     CODE_JUDGE_ALLOW_LOCAL_FALLBACK = (
         False

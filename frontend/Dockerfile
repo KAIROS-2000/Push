@@ -1,4 +1,14 @@
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# Image pinning REQUIRED for production.
+# Replace each FROM node:22-alpine line below with a digest-pinned form, e.g.:
+#   FROM node:22-alpine@sha256:<digest> AS deps
+# All three stages MUST use the same digest. See
+# docs/operations/image-pinning.md and scripts/pin-images.sh.
+# ---------------------------------------------------------------------------
+
 FROM node:22-alpine AS deps
+# pin: node:22-alpine  (replace with @sha256:<digest> before prod build)
 
 WORKDIR /app
 
@@ -6,6 +16,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 FROM node:22-alpine AS builder
+# pin: node:22-alpine  (MUST match the deps stage digest)
 
 WORKDIR /app
 
@@ -24,6 +35,7 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine AS runner
+# pin: node:22-alpine  (MUST match the deps/builder stage digest)
 
 WORKDIR /app
 

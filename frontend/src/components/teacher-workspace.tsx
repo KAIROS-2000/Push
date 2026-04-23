@@ -4,16 +4,23 @@ import { api } from '@/lib/api'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import {
 	AssignmentItem,
+	ClassJoinRequestItem,
 	ClassroomItem,
 	CodeTaskLanguage,
 	LessonCatalogItem,
 	SubmissionItem,
 	TaskEvaluationMode,
 	TeacherClassDetail,
+	TeacherJoinRequestsResponse,
 	TeacherOverviewData,
 } from '@/types'
 import Link from 'next/link'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+	useEffect,
+	useMemo,
+	useState,
+	type FormEvent,
+} from 'react'
 
 type AssignmentType = AssignmentItem['assignment_type']
 type SubmissionFormat = AssignmentItem['submission_format']
@@ -21,6 +28,8 @@ type SubmissionFormat = AssignmentItem['submission_format']
 type Difficulty = 'easy' | 'medium' | 'hard'
 type LessonBlueprintKey = 'guided' | 'skills' | 'project' | 'revision'
 type LessonPracticeMode = 'none' | 'text' | 'code'
+type ClassRequiredField = 'name'
+type JoinRequestAction = 'approve' | 'reject'
 
 interface LessonJudgeTestCase {
 	input: string
@@ -228,6 +237,17 @@ const ASSIGNMENT_REQUIRED_FIELD_LABELS: Record<
 	work_steps: 'шаги выполнения',
 	success_criteria: 'критерии успеха',
 	description: 'описание задания',
+}
+
+const CLASS_REQUIRED_FIELD_LABELS: Record<ClassRequiredField, string> = {
+	name: 'название класса',
+}
+
+function getMissingClassFields(form: {
+	name: string
+	description: string
+}): ClassRequiredField[] {
+	return form.name.trim() ? [] : ['name']
 }
 
 function getMissingAssignmentFields(
@@ -520,6 +540,25 @@ async function copyToClipboard(value: string) {
 	document.body.removeChild(textarea)
 }
 
+function getJoinRequestStudentName(request: ClassJoinRequestItem) {
+	return (
+		request.student_full_name ||
+		request.student_username ||
+		`Ученик #${request.student_id}`
+	)
+}
+
+function formatJoinRequestDate(value: string) {
+	const date = new Date(value)
+	if (Number.isNaN(date.getTime())) return 'дата не указана'
+	return date.toLocaleString('ru-RU', {
+		day: '2-digit',
+		month: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+	})
+}
+
 export function TeacherWorkspace({
 	initialOverview = null,
 }: {
@@ -528,6 +567,13 @@ export function TeacherWorkspace({
 	const [overview, setOverview] = useState<TeacherOverviewData | null>(
 		initialOverview,
 	)
+	const [joinRequests, setJoinRequests] = useState<ClassJoinRequestItem[]>([])
+	const [joinRequestsLoading, setJoinRequestsLoading] = useState(false)
+	const [joinRequestConfirm, setJoinRequestConfirm] = useState<{
+		request: ClassJoinRequestItem
+		action: JoinRequestAction
+	} | null>(null)
+	const [joinRequestSubmitting, setJoinRequestSubmitting] = useState(false)
 	const [catalog, setCatalog] = useState<LessonCatalogItem[]>([])
 	const [selectedClassId, setSelectedClassId] = useState<number | null>(
 		initialOverview?.classes[0]?.id ?? null,
@@ -554,7 +600,6 @@ export function TeacherWorkspace({
 	const [lessonPracticeMode, setLessonPracticeMode] =
 		useState<LessonPracticeMode>('text')
 	const [lessonPage, setLessonPage] = useState(1)
-
 	const selectedClass = useMemo<ClassroomItem | undefined>(
 		() => overview?.classes.find(item => item.id === selectedClassId),
 		[overview, selectedClassId],
@@ -566,6 +611,11 @@ export function TeacherWorkspace({
 	const createLessonHref = selectedClassId
 		? `/teacher/lessons/create?classId=${selectedClassId}`
 		: '/teacher/lessons/create'
+	const missingClassFields = useMemo(
+		() => getMissingClassFields(classForm),
+		[classForm],
+	)
+	const canCreateClass = missingClassFields.length === 0
 	const missingAssignmentFields = useMemo(
 		() => getMissingAssignmentFields(assignmentForm),
 		[assignmentForm],
@@ -717,7 +767,6 @@ export function TeacherWorkspace({
 			),
 		[catalog, lessonPage],
 	)
-
 	async function handleCopyClassCode(code: string) {
 		try {
 			await copyToClipboard(code)
@@ -988,6 +1037,24 @@ export function TeacherWorkspace({
 		})
 	}
 
+	async function loadJoinRequests(options: { silent?: boolean } = {}) {
+		if (!options.silent) {
+			setJoinRequestsLoading(true)
+		}
+		try {
+			const data = await api<TeacherJoinRequestsResponse>(
+				'/teacher/join-requests',
+				undefined,
+				'required',
+			)
+			setJoinRequests(data.requests)
+		} finally {
+			if (!options.silent) {
+				setJoinRequestsLoading(false)
+			}
+		}
+	}
+
 	async function loadOverview() {
 		const data = await api<TeacherOverviewData>(
 			'/teacher/overview',
@@ -1057,6 +1124,37 @@ export function TeacherWorkspace({
 		setOverview(nextOverview)
 	}
 
+	async function confirmJoinRequestDecision() {
+		if (!joinRequestConfirm) return
+
+		const { request: joinRequest, action } = joinRequestConfirm
+		setJoinRequestSubmitting(true)
+		try {
+			await api(
+				`/teacher/join-requests/${joinRequest.id}/${action === 'approve' ? 'approve' : 'reject'}`,
+				{ method: 'POST' },
+				'required',
+			)
+			showSuccessToast(
+				action === 'approve'
+					? 'Ученик добавлен в класс.'
+					: 'Заявка отклонена.',
+			)
+			setJoinRequestConfirm(null)
+			if (selectedClassId) {
+				await Promise.all([loadJoinRequests(), loadClassDetails(selectedClassId)])
+			} else {
+				await Promise.all([loadJoinRequests(), loadOverview()])
+			}
+		} catch (error) {
+			showErrorToast(
+				error instanceof Error ? error.message : 'Не удалось обработать заявку.',
+			)
+		} finally {
+			setJoinRequestSubmitting(false)
+		}
+	}
+
 	useEffect(() => {
 		if (initialOverview) return
 		loadOverview().catch(() =>
@@ -1065,6 +1163,16 @@ export function TeacherWorkspace({
 			),
 		)
 	}, [initialOverview])
+
+	useEffect(() => {
+		loadJoinRequests().catch(() =>
+			showErrorToast('Не удалось загрузить заявки на вступление.'),
+		)
+		const intervalId = window.setInterval(() => {
+			loadJoinRequests({ silent: true }).catch(() => undefined)
+		}, 25000)
+		return () => window.clearInterval(intervalId)
+	}, [])
 
 	useEffect(() => {
 		if (!selectedClassId) {
@@ -1096,10 +1204,23 @@ export function TeacherWorkspace({
 
 	async function createClass(event: FormEvent) {
 		event.preventDefault()
+		if (missingClassFields.length > 0) {
+			showErrorToast(
+				`Заполните обязательные поля: ${missingClassFields.map(field => CLASS_REQUIRED_FIELD_LABELS[field]).join(', ')}.`,
+			)
+			return
+		}
+
 		try {
 			await api(
 				'/teacher/classes',
-				{ method: 'POST', body: JSON.stringify(classForm) },
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						name: classForm.name.trim(),
+						description: classForm.description.trim(),
+					}),
+				},
 				'required',
 			)
 			setClassForm({ name: '', description: '' })
@@ -1202,13 +1323,20 @@ export function TeacherWorkspace({
 						</p>
 						<div className='mt-4 space-y-3'>
 							<input
-								className='w-full rounded-2xl border border-slate-200 px-4 py-3'
+								required
+								aria-invalid={missingClassFields.includes('name')}
+								className={`w-full rounded-2xl border px-4 py-3 ${missingClassFields.includes('name') ? 'border-rose-300 bg-rose-50' : 'border-slate-200'}`}
 								placeholder='Название класса'
 								value={classForm.name}
 								onChange={e =>
 									setClassForm({ ...classForm, name: e.target.value })
 								}
 							/>
+							{missingClassFields.includes('name') ? (
+								<p className='text-sm font-semibold text-rose-600'>
+									Введите название класса.
+								</p>
+							) : null}
 							<textarea
 								className='min-h-28 w-full rounded-2xl border border-slate-200 px-4 py-3'
 								placeholder='Описание'
@@ -1217,16 +1345,21 @@ export function TeacherWorkspace({
 									setClassForm({ ...classForm, description: e.target.value })
 								}
 							/>
-							<button className='w-full rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white sm:w-auto'>
+							<button
+								disabled={!canCreateClass}
+								className='w-full rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto'
+							>
 								Создать класс
 							</button>
 						</div>
 					</form>
 
 					<div className='teacher-workspace__panel codequest-card p-6'>
-						<p className='text-sm font-bold uppercase tracking-[0.2em] text-emerald-600'>
-							Мои классы
-						</p>
+						<div className='flex flex-wrap items-center justify-between gap-3'>
+							<p className='text-sm font-bold uppercase tracking-[0.2em] text-emerald-600'>
+								Мои классы
+							</p>
+						</div>
 						<div className='mt-4 space-y-3'>
 							{overview?.classes.map(item => (
 								<div
@@ -1272,6 +1405,92 @@ export function TeacherWorkspace({
 							))}
 						</div>
 					</div>
+
+					<section className='teacher-workspace__panel codequest-card p-6'>
+						<div className='flex flex-wrap items-center justify-between gap-3'>
+							<div className='min-w-0'>
+								<p className='text-sm font-bold uppercase tracking-[0.2em] text-emerald-600'>
+									Заявки на вступление
+								</p>
+								<h2 className='mt-2 break-words text-2xl font-black text-slate-900'>
+									{joinRequests.length
+										? `${joinRequests.length} ожидают решения`
+										: 'Новых заявок нет'}
+								</h2>
+							</div>
+							<button
+								type='button'
+								onClick={() =>
+									loadJoinRequests().catch(() =>
+										showErrorToast('Не удалось обновить заявки.'),
+									)
+								}
+								className='rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700'
+							>
+								Обновить
+							</button>
+						</div>
+
+						<div className='mt-5 space-y-3'>
+							{joinRequestsLoading && joinRequests.length === 0 ? (
+								<div className='rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500'>
+									Загружаем заявки...
+								</div>
+							) : joinRequests.length ? (
+								joinRequests.map(joinRequest => (
+									<div
+										key={joinRequest.id}
+										className='teacher-workspace__item rounded-2xl border border-slate-200 bg-slate-50 p-4'
+									>
+										<div className='flex flex-wrap items-start justify-between gap-3'>
+											<div className='min-w-0'>
+												<p className='break-words text-lg font-black text-slate-900'>
+													{getJoinRequestStudentName(joinRequest)}
+												</p>
+												<p className='mt-1 text-sm text-slate-500'>
+													@{joinRequest.student_username || 'student'} ·{' '}
+													{joinRequest.classroom_name || 'класс без названия'}
+												</p>
+												<p className='mt-1 text-xs font-semibold text-slate-500'>
+													Отправлена {formatJoinRequestDate(joinRequest.created_at)}
+												</p>
+											</div>
+											<div className='flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end'>
+												<button
+													type='button'
+													onClick={() =>
+														setJoinRequestConfirm({
+															request: joinRequest,
+															action: 'approve',
+														})
+													}
+													className='rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white'
+												>
+													Принять
+												</button>
+												<button
+													type='button'
+													onClick={() =>
+														setJoinRequestConfirm({
+															request: joinRequest,
+															action: 'reject',
+														})
+													}
+													className='rounded-full bg-white px-4 py-2 text-sm font-semibold text-rose-700 shadow-sm'
+												>
+													Отклонить
+												</button>
+											</div>
+										</div>
+									</div>
+								))
+							) : (
+								<div className='rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500'>
+									Когда ученик введёт код класса, его заявка появится здесь.
+								</div>
+							)}
+						</div>
+					</section>
 
 					<section className='teacher-workspace__panel codequest-card p-6'>
 						<div className='flex flex-wrap items-center justify-between gap-3'>
@@ -1906,6 +2125,59 @@ export function TeacherWorkspace({
 					</section>
 				</div>
 			</section>
+			{joinRequestConfirm ? (
+				<div
+					className='fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm'
+					role='dialog'
+					aria-modal='true'
+					aria-labelledby='join-request-confirm-title'
+				>
+					<div className='w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl'>
+						<p className='text-sm font-bold uppercase tracking-[0.2em] text-emerald-600'>
+							Подтверждение
+						</p>
+						<h2
+							id='join-request-confirm-title'
+							className='mt-2 text-2xl font-black text-slate-900'
+						>
+							{joinRequestConfirm.action === 'approve'
+								? 'Принять ученика?'
+								: 'Отклонить заявку?'}
+						</h2>
+						<p className='mt-3 text-sm leading-6 text-slate-600'>
+							{joinRequestConfirm.action === 'approve'
+								? `Ученик ${getJoinRequestStudentName(joinRequestConfirm.request)} будет добавлен в класс «${joinRequestConfirm.request.classroom_name || 'без названия'}».`
+								: `Заявка ученика ${getJoinRequestStudentName(joinRequestConfirm.request)} в класс «${joinRequestConfirm.request.classroom_name || 'без названия'}» будет отклонена.`}
+						</p>
+						<div className='mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end'>
+							<button
+								type='button'
+								onClick={() => setJoinRequestConfirm(null)}
+								disabled={joinRequestSubmitting}
+								className='rounded-full bg-slate-100 px-5 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60'
+							>
+								Отмена
+							</button>
+							<button
+								type='button'
+								onClick={confirmJoinRequestDecision}
+								disabled={joinRequestSubmitting}
+								className={`rounded-full px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+									joinRequestConfirm.action === 'approve'
+										? 'bg-emerald-600'
+										: 'bg-rose-600'
+								}`}
+							>
+								{joinRequestSubmitting
+									? 'Сохраняем...'
+									: joinRequestConfirm.action === 'approve'
+										? 'Да, принять'
+										: 'Да, отклонить'}
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
 		</div>
 	)
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import math
 import os
 import shutil
@@ -28,6 +29,8 @@ MAX_OUTPUT_CHARS = int(os.getenv('JUDGE_RUNNER_MAX_OUTPUT_CHARS', '4000'))
 MAX_CONCURRENCY = max(1, int(os.getenv('JUDGE_RUNNER_MAX_CONCURRENCY', '4')))
 PYTHON_BIN = os.getenv('JUDGE_RUNNER_PYTHON_BIN', 'python')
 NODE_BIN = os.getenv('JUDGE_RUNNER_NODE_BIN', 'node')
+AUTH_TOKEN = (os.getenv('JUDGE_RUNNER_AUTH_TOKEN') or '').strip()
+ALLOW_UNAUTHENTICATED = (os.getenv('JUDGE_RUNNER_ALLOW_UNAUTHENTICATED') or '').strip().lower() in {'1', 'true', 'yes', 'on'}
 SUPPORTED_LANGUAGES = {'python', 'javascript'}
 RUNNER_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENCY)
 
@@ -42,6 +45,21 @@ def _safe_int(value, default: int, minimum: int | None = None, maximum: int | No
     if maximum is not None:
         parsed = min(parsed, maximum)
     return parsed
+
+
+def _bearer_token(value: str | None) -> str:
+    header = (value or '').strip()
+    if not header.lower().startswith('bearer '):
+        return ''
+    return header[7:].strip()
+
+
+def request_authorized(headers) -> bool:
+    if ALLOW_UNAUTHENTICATED:
+        return True
+    if not AUTH_TOKEN:
+        return False
+    return hmac.compare_digest(_bearer_token(headers.get('Authorization')), AUTH_TOKEN)
 
 
 def _resolve_executable(executable: str) -> str:
@@ -145,6 +163,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if self.path != '/execute':
             self._send_json(HTTPStatus.NOT_FOUND, {'message': 'Not found'})
+            return
+        if not request_authorized(self.headers):
+            self._send_json(HTTPStatus.FORBIDDEN, {'message': 'Runner authentication required.'})
             return
 
         content_length = _safe_int(self.headers.get('Content-Length'), 0, minimum=0)

@@ -32,6 +32,7 @@ from ..models.learning import (
     Achievement,
     Assignment,
     AssignmentSubmission,
+    ClassJoinRequest,
     ClassMembership,
     Classroom,
     Lesson,
@@ -67,6 +68,82 @@ PROGRESS_STATUS_LABELS = {
 
 MANUAL_REVIEW_PROGRESS_STATUSES = {"pending_review", "needs_revision"}
 VALID_AGE_GROUPS = {"junior", "middle", "senior"}
+LEADERBOARD_LIMIT = 50
+GLOBAL_LEADERBOARD_REFRESH_INTERVAL = timedelta(minutes=5)
+GLOBAL_LEADERBOARD_CACHE_KEY_ALL = "__all__"
+_global_leaderboard_cache: dict[
+    tuple[str, str], tuple[datetime, list[dict]]
+] = {}
+
+
+def _leaderboard_row(student: User, position: int) -> dict:
+    return {
+        "id": student.id,
+        "position": position,
+        "username": student.username,
+        "full_name": student.full_name,
+        "xp": student.xp,
+        "level": student.level,
+        "age_group": student.age_group,
+    }
+
+
+def _student_memberships(user: User) -> list[ClassMembership]:
+    if user.role != UserRole.STUDENT:
+        return []
+
+    return (
+        ClassMembership.query.join(Classroom)
+        .filter(ClassMembership.student_id == user.id)
+        .order_by(Classroom.name.asc(), Classroom.id.asc())
+        .all()
+    )
+
+
+def _classrooms_payload(memberships: list[ClassMembership]) -> list[dict]:
+    return [membership.classroom.to_dict() for membership in memberships]
+
+
+def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
+    now = datetime.now(UTC)
+    cache_key = (
+        str(db.engine.url),
+        (age_group or GLOBAL_LEADERBOARD_CACHE_KEY_ALL).strip().lower(),
+    )
+    cached = _global_leaderboard_cache.get(cache_key)
+    if cached and cached[0] > now:
+        return [row.copy() for row in cached[1]]
+
+    query = User.query.filter(User.role == UserRole.STUDENT, User.is_active.is_(True))
+    if age_group:
+        query = query.filter_by(age_group=age_group)
+
+    students = (
+        query.order_by(User.xp.desc(), User.created_at.asc())
+        .limit(LEADERBOARD_LIMIT)
+        .all()
+    )
+    rows = [_leaderboard_row(student, idx) for idx, student in enumerate(students, start=1)]
+    _global_leaderboard_cache[cache_key] = (
+        now + GLOBAL_LEADERBOARD_REFRESH_INTERVAL,
+        rows,
+    )
+    return [row.copy() for row in rows]
+
+
+def _class_leaderboard_rows(classroom_id: int) -> list[dict]:
+    students = (
+        User.query.join(ClassMembership, ClassMembership.student_id == User.id)
+        .filter(
+            ClassMembership.classroom_id == classroom_id,
+            User.role == UserRole.STUDENT,
+            User.is_active.is_(True),
+        )
+        .order_by(User.xp.desc(), User.created_at.asc())
+        .limit(LEADERBOARD_LIMIT)
+        .all()
+    )
+    return [_leaderboard_row(student, idx) for idx, student in enumerate(students, start=1)]
 
 
 def _get_or_create_progress(user_id: int, lesson_id: int) -> UserProgress:
@@ -871,23 +948,47 @@ def list_achievements(current_user: User):
 @auth_required()
 def leaderboard(current_user: User):
     age_group = request.args.get("age_group")
-    query = User.query.filter(User.role == UserRole.STUDENT, User.is_active.is_(True))
-    if age_group:
-        query = query.filter_by(age_group=age_group)
-    students = query.order_by(User.xp.desc(), User.created_at.asc()).limit(50).all()
-    payload = []
-    for idx, student in enumerate(students, start=1):
-        payload.append(
-            {
-                "position": idx,
-                "username": student.username,
-                "full_name": student.full_name,
-                "xp": student.xp,
-                "level": student.level,
-                "age_group": student.age_group,
-            }
-        )
-    return {"leaderboard": payload, "me": current_user.to_dict()}
+    scope = (request.args.get("scope") or "global").strip().lower()
+    memberships = _student_memberships(current_user)
+    classes = _classrooms_payload(memberships)
+
+    if scope == "class":
+        if not memberships:
+            return {"message": "Вы не состоите в классе."}, 403
+
+        classroom_id = request.args.get("classroom_id", type=int)
+        if classroom_id is not None:
+            selected_membership = next(
+                (
+                    membership
+                    for membership in memberships
+                    if membership.classroom_id == classroom_id
+                ),
+                None,
+            )
+            if selected_membership is None:
+                return {"message": "Этот класс недоступен."}, 403
+        else:
+            selected_membership = memberships[0]
+
+        classroom = selected_membership.classroom
+        return {
+            "leaderboard": _class_leaderboard_rows(classroom.id),
+            "me": current_user.to_dict(),
+            "classes": classes,
+            "scope": "class",
+            "classroom": classroom.to_dict(),
+            "refresh_seconds": 0,
+        }
+
+    return {
+        "leaderboard": _global_leaderboard_rows(age_group),
+        "me": current_user.to_dict(),
+        "classes": classes,
+        "scope": "global",
+        "classroom": None,
+        "refresh_seconds": int(GLOBAL_LEADERBOARD_REFRESH_INTERVAL.total_seconds()),
+    }
 
 
 @student_bp.post("/classes/join")
@@ -902,11 +1003,29 @@ def join_class(current_user: User):
         classroom_id=classroom.id, student_id=current_user.id
     ).first():
         return {"message": "Вы уже в этом классе.", "classroom": classroom.to_dict()}
-    db.session.add(
-        ClassMembership(classroom_id=classroom.id, student_id=current_user.id)
+
+    pending_request = ClassJoinRequest.query.filter_by(
+        classroom_id=classroom.id, student_id=current_user.id, status="pending"
+    ).first()
+    if pending_request:
+        return {
+            "message": "Заявка уже отправлена и ожидает подтверждения учителя.",
+            "classroom": classroom.to_dict(),
+            "request": pending_request.to_dict(),
+        }
+
+    join_request = ClassJoinRequest(
+        classroom_id=classroom.id,
+        student_id=current_user.id,
+        status="pending",
     )
+    db.session.add(join_request)
     db.session.commit()
-    return {"message": "Вы присоединились к классу.", "classroom": classroom.to_dict()}
+    return {
+        "message": "Заявка отправлена учителю. После подтверждения класс появится в кабинете.",
+        "classroom": classroom.to_dict(),
+        "request": join_request.to_dict(),
+    }, 202
 
 
 @student_bp.get("/classes/my")

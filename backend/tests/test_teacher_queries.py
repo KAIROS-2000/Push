@@ -170,6 +170,28 @@ class TeacherReadPathTests(unittest.TestCase):
     def login_teacher(self, client):
         return client.post('/api/auth/login', json={'login': 'teacher@example.com', 'password': 'TeacherPass123!'})
 
+    def test_teacher_cannot_create_class_without_name(self):
+        app = self.create_app()
+        self.create_teacher_fixture(app)
+
+        from app.models.learning import Classroom
+
+        with app.test_client() as client:
+            login_response = self.login_teacher(client)
+            self.assertEqual(login_response.status_code, 200)
+
+            response = client.post(
+                '/api/teacher/classes',
+                json={'name': '   ', 'description': 'Описание без названия'},
+            )
+            self.assertEqual(response.status_code, 400)
+            payload = response.get_json()
+            self.assertEqual(payload['fields'], ['name'])
+            self.assertIn('название класса', payload['message'])
+
+        with app.app_context():
+            self.assertEqual(Classroom.query.count(), 1)
+
     def test_teacher_read_endpoints_do_not_backfill_submissions(self):
         app = self.create_app()
         teacher_id, classroom_id, assignment_id = self.create_teacher_fixture(app)
@@ -269,6 +291,131 @@ class TeacherReadPathTests(unittest.TestCase):
 
         with app.app_context():
             self.assertEqual(Assignment.query.count(), 0)
+
+    def test_teacher_cannot_create_lesson_with_empty_required_fields(self):
+        app = self.create_app()
+        _, classroom_id, _ = self.create_teacher_fixture(app)
+
+        from app.models.learning import Lesson
+
+        with app.test_client() as client:
+            login_response = self.login_teacher(client)
+            self.assertEqual(login_response.status_code, 200)
+
+            response = client.post(
+                f'/api/teacher/classes/{classroom_id}/lessons',
+                json={
+                    'title': '   ',
+                    'summary': '',
+                    'duration_minutes': '',
+                    'passing_score': ' ',
+                    'theory_text': '   ',
+                    'key_points': 'Только один тезис',
+                    'interactive_steps': 'Один шаг',
+                    'practice_enabled': False,
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            payload = response.get_json()
+            self.assertCountEqual(
+                payload['fields'],
+                [
+                    'title',
+                    'summary',
+                    'duration_minutes',
+                    'passing_score',
+                    'theory_text',
+                    'key_points',
+                    'interactive_steps',
+                ],
+            )
+
+        with app.app_context():
+            self.assertEqual(Lesson.query.count(), 0)
+
+    def test_teacher_cannot_create_lesson_with_incomplete_practice(self):
+        app = self.create_app()
+        _, classroom_id, _ = self.create_teacher_fixture(app)
+
+        from app.models.learning import Lesson, Task
+
+        with app.test_client() as client:
+            login_response = self.login_teacher(client)
+            self.assertEqual(login_response.status_code, 200)
+
+            response = client.post(
+                f'/api/teacher/classes/{classroom_id}/lessons',
+                json={
+                    'title': 'Кодовая практика',
+                    'summary': 'Учимся читать входные данные и выводить результат.',
+                    'age_group': 'middle',
+                    'duration_minutes': 45,
+                    'passing_score': 70,
+                    'theory_text': 'Разберите ввод, обработку и вывод результата.',
+                    'key_points': 'Ввод\nВывод',
+                    'interactive_steps': 'Прочитать условие\nПроверить пример',
+                    'practice_enabled': True,
+                    'task_type': 'code',
+                    'task_title': '   ',
+                    'task_prompt': '',
+                    'starter_code': '   ',
+                    'evaluation_mode': 'stdin_stdout',
+                    'programming_language': 'python',
+                    'judge_tests': [{'input': '7', 'expected': ''}],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            payload = response.get_json()
+            self.assertCountEqual(
+                payload['fields'],
+                ['task_title', 'task_prompt', 'starter_code', 'judge_tests'],
+            )
+
+        with app.app_context():
+            self.assertEqual(Lesson.query.count(), 0)
+            self.assertEqual(Task.query.count(), 0)
+
+    def test_teacher_rejects_partial_lesson_judge_tests(self):
+        app = self.create_app()
+        _, classroom_id, _ = self.create_teacher_fixture(app)
+
+        from app.models.learning import Lesson, Task
+
+        with app.test_client() as client:
+            login_response = self.login_teacher(client)
+            self.assertEqual(login_response.status_code, 200)
+
+            response = client.post(
+                f'/api/teacher/classes/{classroom_id}/lessons',
+                json={
+                    'title': 'Кодовая практика',
+                    'summary': 'Учимся читать входные данные и выводить результат.',
+                    'age_group': 'middle',
+                    'duration_minutes': 45,
+                    'passing_score': 70,
+                    'theory_text': 'Разберите ввод, обработку и вывод результата.',
+                    'key_points': 'Ввод\nВывод',
+                    'interactive_steps': 'Прочитать условие\nПроверить пример',
+                    'practice_enabled': True,
+                    'task_type': 'code',
+                    'task_title': 'Напиши решение',
+                    'task_prompt': 'Считай число и выведи его.',
+                    'starter_code': 'print(input())',
+                    'evaluation_mode': 'stdin_stdout',
+                    'programming_language': 'python',
+                    'judge_tests': [
+                        {'input': '7', 'expected': '7'},
+                        {'input': '8', 'expected': ''},
+                    ],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            payload = response.get_json()
+            self.assertEqual(payload['fields'], ['judge_tests'])
+
+        with app.app_context():
+            self.assertEqual(Lesson.query.count(), 0)
+            self.assertEqual(Task.query.count(), 0)
 
     def test_teacher_can_create_lesson_with_quiz_and_read_player_payload(self):
         app = self.create_app()

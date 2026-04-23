@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Callable
@@ -16,6 +18,8 @@ from ..models.user import RefreshToken, SecurityThrottle, User, UserRole
 ACCESS_COOKIE_NAME = 'codequest_access_token'
 REFRESH_COOKIE_NAME = 'codequest_refresh_token'
 ACCESS_EXPIRES_AT_COOKIE_NAME = 'codequest_access_expires_at'
+CSRF_COOKIE_NAME = 'csrf_token'
+CSRF_HEADER_NAME = 'X-CSRF-Token'
 DEFAULT_PASSWORD_MIN_LENGTH = 10
 ADMIN_PASSWORD_MIN_LENGTH = 12
 LOGIN_THROTTLE_SCOPE = 'login'
@@ -288,9 +292,47 @@ def token_matches_user_session(payload: dict, user: User) -> bool:
     return session_version == int(user.session_version or 0)
 
 
-def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> Response:
+def _cookie_security_settings() -> tuple[bool, str]:
     secure = bool(current_app.config.get('SESSION_COOKIE_SECURE', current_app.config.get('IS_PRODUCTION', False)))
     same_site = current_app.config.get('SESSION_COOKIE_SAMESITE', 'Lax')
+    return secure, same_site
+
+
+def issue_csrf_cookie(response: Response) -> Response:
+    secure, _ = _cookie_security_settings()
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        secrets.token_urlsafe(32),
+        httponly=False,
+        secure=secure,
+        samesite='Lax',
+        path='/',
+    )
+    return response
+
+
+def clear_csrf_cookie(response: Response) -> Response:
+    secure, _ = _cookie_security_settings()
+    response.delete_cookie(CSRF_COOKIE_NAME, path='/', secure=secure, samesite='Lax')
+    return response
+
+
+def request_uses_cookie_auth() -> bool:
+    access_token = (request.cookies.get(ACCESS_COOKIE_NAME) or '').strip()
+    refresh_token = (request.cookies.get(REFRESH_COOKIE_NAME) or '').strip()
+    return bool(access_token or refresh_token)
+
+
+def verify_csrf_token() -> bool:
+    csrf_cookie = (request.cookies.get(CSRF_COOKIE_NAME) or '').strip()
+    csrf_header = (request.headers.get(CSRF_HEADER_NAME) or '').strip()
+    if not csrf_cookie or not csrf_header:
+        return False
+    return hmac.compare_digest(csrf_cookie, csrf_header)
+
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> Response:
+    secure, same_site = _cookie_security_settings()
     access_cookie_max_age = _token_max_age(access_token, int(current_app.config['ACCESS_TOKEN_MINUTES']) * 60)
     refresh_cookie_max_age = _token_max_age(refresh_token, int(current_app.config['REFRESH_TOKEN_DAYS']) * 24 * 60 * 60)
     access_expires_at = _token_expiration(access_token)
@@ -320,16 +362,15 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str) 
         samesite=same_site,
         path='/',
     )
-    return response
+    return issue_csrf_cookie(response)
 
 
 def clear_auth_cookies(response: Response) -> Response:
-    secure = bool(current_app.config.get('SESSION_COOKIE_SECURE', current_app.config.get('IS_PRODUCTION', False)))
-    same_site = current_app.config.get('SESSION_COOKIE_SAMESITE', 'Lax')
+    secure, same_site = _cookie_security_settings()
     response.delete_cookie(ACCESS_COOKIE_NAME, path='/', secure=secure, httponly=True, samesite=same_site)
     response.delete_cookie(REFRESH_COOKIE_NAME, path='/', secure=secure, httponly=True, samesite=same_site)
     response.delete_cookie(ACCESS_EXPIRES_AT_COOKIE_NAME, path='/', secure=secure, samesite=same_site)
-    return response
+    return clear_csrf_cookie(response)
 
 
 def access_token_from_request() -> str:

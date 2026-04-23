@@ -4,8 +4,7 @@ import click
 from flask import Flask, current_app
 from flask.cli import with_appcontext
 
-from .core.db import db
-from .core.runtime_schema import ensure_runtime_schema
+from .core.migrations import upgrade_database
 
 
 def _ensure_models_loaded() -> None:
@@ -16,15 +15,20 @@ def register_commands(app: Flask) -> None:
     @app.cli.command("init-db")
     @with_appcontext
     def init_db_command() -> None:
-        _ensure_models_loaded()
-        db.create_all()
-        click.echo("Database schema ensured.")
+        applied = upgrade_database()
+        click.echo(f"Database migrated ({len(applied)} applied).")
+
+    @app.cli.command("upgrade-db")
+    @with_appcontext
+    def upgrade_db_command() -> None:
+        applied = upgrade_database()
+        click.echo(f"Database migrated ({len(applied)} applied).")
 
     @app.cli.command("sync-runtime-schema")
     @with_appcontext
     def sync_runtime_schema_command() -> None:
-        ensure_runtime_schema()
-        click.echo("Runtime schema ensured.")
+        applied = upgrade_database()
+        click.echo(f"Runtime schema migration compatibility completed ({len(applied)} applied).")
 
     @app.cli.command("seed-data")
     @click.option("--demo/--no-demo", default=None)
@@ -44,7 +48,6 @@ def register_commands(app: Flask) -> None:
 
         _ensure_models_loaded()
         enable_demo_data = current_app.config["ENABLE_DEMO_DATA"] if demo is None else demo
-        db.create_all()
-        ensure_runtime_schema()
+        upgrade_database()
         seed_all(enable_demo_data=enable_demo_data)
         click.echo(f"Bootstrap completed (demo={'on' if enable_demo_data else 'off'}).")

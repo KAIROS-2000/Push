@@ -4,6 +4,7 @@ import enum
 from datetime import UTC, datetime
 
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 
 from ..core.db import db
 from ..core.gamification import level_from_xp, rank_title, xp_to_next_level
@@ -17,6 +18,7 @@ class UserRole(enum.Enum):
 
 
 USERNAME_MAX_LENGTH = 10
+JSONType = JSONB().with_variant(db.JSON(), 'sqlite')
 
 
 class User(db.Model):
@@ -88,6 +90,46 @@ class User(db.Model):
             'age_group': self.age_group,
             'level': self.level,
             'rank_title': self.rank_title,
+        }
+
+
+class AdminAuditLog(db.Model):
+    __tablename__ = 'admin_audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    actor_user_id = db.Column(db.Integer, nullable=True, index=True)
+    actor_role = db.Column(db.String(32), nullable=False, index=True)
+    action = db.Column(db.String(64), nullable=False, index=True)
+    entity_type = db.Column(db.String(32), nullable=False, index=True)
+    entity_id = db.Column(db.Integer, nullable=True, index=True)
+    entity_label = db.Column(db.String(255), nullable=False, default='', index=True)
+    details_json = db.Column(JSONType, nullable=False, default=dict)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True)
+
+    def to_dict(self) -> dict:
+        details = self.details_json if isinstance(self.details_json, dict) else {}
+        return {
+            'id': self.id,
+            'actor_user_id': self.actor_user_id,
+            'actor_role': self.actor_role,
+            'action': self.action,
+            'entity_type': self.entity_type,
+            'entity_id': self.entity_id,
+            'entity_label': self.entity_label,
+            'details': details,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'actor': {
+                'id': self.actor_user_id,
+                'role': self.actor_role,
+                'username': details.get('actor_username'),
+                'full_name': details.get('actor_name'),
+            },
+            'target': {
+                'label': self.entity_label,
+                'username': details.get('target_username'),
+                'full_name': details.get('target_name'),
+                'role': details.get('target_role'),
+            },
         }
 
 

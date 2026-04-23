@@ -41,6 +41,8 @@ class SecurityRegressionTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'GIGACHAT_VERIFY_SSL': 'true',
+            'CODE_JUDGE_RUNNER_URL': '',
+            'CODE_JUDGE_RUNNER_TOKEN': '',
             'METRICS_DEBUG': 'false',
         }
         env.update(env_overrides)
@@ -98,9 +100,12 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertNotIn('access_token', payload)
             self.assertNotIn('refresh_token', payload)
             cookies = response.headers.getlist('Set-Cookie')
-            self.assertTrue(any('codequest_access_token=' in cookie for cookie in cookies))
-            self.assertTrue(any('codequest_refresh_token=' in cookie for cookie in cookies))
-            self.assertTrue(all('HttpOnly;' in cookie for cookie in cookies))
+            access_cookie = next(cookie for cookie in cookies if 'codequest_access_token=' in cookie)
+            refresh_cookie = next(cookie for cookie in cookies if 'codequest_refresh_token=' in cookie)
+            expires_cookie = next(cookie for cookie in cookies if 'codequest_access_expires_at=' in cookie)
+            self.assertIn('HttpOnly;', access_cookie)
+            self.assertIn('HttpOnly;', refresh_cookie)
+            self.assertNotIn('HttpOnly;', expires_cookie)
             self.assertTrue(all('SameSite=Lax' in cookie for cookie in cookies))
 
             me_response = client.get('/api/auth/me')

@@ -132,6 +132,14 @@ def _runner_timeout_seconds() -> float:
     return max(timeout_ms / 1000, 1)
 
 
+def _runner_headers() -> dict[str, str]:
+    headers = {'Content-Type': 'application/json'}
+    runner_token = current_app.config.get('CODE_JUDGE_RUNNER_TOKEN')
+    if isinstance(runner_token, str) and runner_token.strip():
+        headers['Authorization'] = f'Bearer {runner_token.strip()}'
+    return headers
+
+
 def _post_to_runner(payload: dict) -> dict:
     runner_url = _runner_url()
     if not runner_url:
@@ -141,7 +149,7 @@ def _post_to_runner(payload: dict) -> dict:
     request = urllib_request.Request(
         runner_url,
         data=request_body,
-        headers={'Content-Type': 'application/json'},
+        headers=_runner_headers(),
         method='POST',
     )
     try:

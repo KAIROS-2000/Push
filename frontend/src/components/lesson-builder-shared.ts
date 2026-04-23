@@ -264,6 +264,10 @@ export function createEmptyTest(): JudgeTestCase {
   return { input: '', expected: '' }
 }
 
+export function hasCompleteJudgeTest(tests: JudgeTestCase[]) {
+  return tests.some(testCase => testCase.input.trim() && testCase.expected.trim())
+}
+
 export function createChoiceOption(): ChoiceOptionDraft {
   return { id: createLocalId('option'), text: '', correct: false }
 }
@@ -359,7 +363,7 @@ export function checkComplete(form: LessonBuilderForm) {
   if (form.practiceFormat === 'code' && form.checkMode !== 'tests') return false
   if (form.checkMode === 'manual') return true
   if (form.checkMode === 'keywords') return Boolean(form.answerKeywords.trim())
-  return form.judgeTests.some(testCase => testCase.input.trim() || testCase.expected.trim())
+  return hasCompleteJudgeTest(form.judgeTests)
 }
 
 export function buildQuizPayload(form: LessonBuilderForm): { error: string; questions: QuizPayloadQuestion[] } {
@@ -489,7 +493,7 @@ export function quizComplete(form: LessonBuilderForm, enabled: boolean) {
 export function buildLessonSubmitData(form: LessonBuilderForm): LessonBuilderSubmitData {
   const judgeTests = form.checkMode === 'tests'
     ? form.judgeTests
-      .filter(item => item.input.trim() || item.expected.trim())
+      .filter(item => item.input.trim() && item.expected.trim())
       .map((item, index) => ({
         label: `Тест ${index + 1}`,
         input: item.input,

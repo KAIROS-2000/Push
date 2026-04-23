@@ -6,6 +6,12 @@ import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import { DashboardData } from '@/types'
+import {
+	BookOpenCheck,
+	ClipboardList,
+	Flame,
+	Trophy,
+} from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
@@ -57,12 +63,15 @@ export function DashboardView({
 			return
 		}
 		try {
-			await api(
+			const response = await api<{ message?: string }>(
 				'/classes/join',
 				{ method: 'POST', body: JSON.stringify({ code: classCode.trim() }) },
 				'required',
 			)
-			showSuccessToast('Класс успешно подключён.')
+			showSuccessToast(
+				response.message ||
+					'Заявка отправлена учителю. Класс появится после подтверждения.',
+			)
 			setClassCode('')
 			await loadDashboard()
 		} catch (e) {
@@ -104,20 +113,27 @@ export function DashboardView({
 	}
 
 	const firstName = data.user.full_name.split(' ')[0]
+	const lessonMomentum = Math.min(100, data.summary.completed_lessons * 12)
+	const assignmentFocus = data.summary.assignments_open
+		? Math.min(100, data.summary.assignments_open * 24)
+		: 8
+	const achievementGlow = Math.min(100, data.summary.achievements * 18)
+	const streakProgress = Math.min(100, (data.user.streak / 7) * 100)
+	const daysToWeeklyStreak = Math.max(0, 7 - data.user.streak)
 
 	return (
-		<div ref={rootRef} className='space-y-8'>
+		<div ref={rootRef} className='space-y-6'>
 			<section
-				className='dashboard-hero codequest-card overflow-hidden p-5 sm:p-8'
+				className='dashboard-hero codequest-card overflow-hidden p-4 sm:p-5'
 				data-motion-reveal
 			>
-				<div className='grid gap-6 xl:grid-cols-[1.08fr_0.92fr] xl:items-start'>
+				<div className='grid gap-4 xl:grid-cols-[1.08fr_0.92fr] xl:items-center'>
 					<div className='min-w-0' data-motion-hero-copy>
 						<RolePill role={data.user.role} />
-						<h2 className='mt-4 break-words text-4xl font-black leading-tight text-slate-900 sm:text-5xl'>
+						<h2 className='mt-3 break-words text-3xl font-black leading-tight text-slate-900 sm:text-4xl'>
 							{firstName}, двигаемся дальше по твоему маршруту.
 						</h2>
-						<p className='mt-4 max-w-3xl text-base leading-8 text-slate-600 sm:text-lg'>
+						<p className='mt-3 max-w-3xl text-sm leading-7 text-slate-600 sm:text-base'>
 							Ты уже на уровне{' '}
 							<span className='font-bold text-slate-900'>
 								{data.user.level}
@@ -133,7 +149,7 @@ export function DashboardView({
 							.
 						</p>
 
-						<div className='mt-6 flex flex-wrap gap-2'>
+						<div className='mt-4 flex flex-wrap gap-1.5'>
 							<span className='brand-chip brand-chip--soft'>
 								Серия: {data.user.streak} дней
 							</span>
@@ -147,21 +163,21 @@ export function DashboardView({
 					</div>
 
 					<div
-						className='dashboard-next w-full p-5 sm:p-6'
+						className='dashboard-next w-full p-4 sm:p-5'
 						data-motion-hero-visual
 					>
-						<p className='text-sm font-bold uppercase tracking-[0.22em] text-sky-100'>
+						<p className='text-xs font-bold uppercase tracking-[0.18em] text-sky-100'>
 							Следующий шаг
 						</p>
 						{data.continue_lesson ? (
 							<>
-								<h3 className='mt-3 break-words text-3xl font-black text-white'>
+								<h3 className='mt-2 break-words text-2xl font-black text-white'>
 									{data.continue_lesson.title}
 								</h3>
-								<p className='mt-2 text-sm leading-7 text-sky-50/90'>
+								<p className='mt-1.5 text-sm leading-6 text-sky-50/90'>
 									{data.continue_lesson.summary}
 								</p>
-								<div className='mt-4 flex flex-wrap gap-2'>
+								<div className='mt-3 flex flex-wrap gap-1.5'>
 									<span className='brand-chip brand-chip--dark'>
 										{data.continue_lesson.module_title}
 									</span>
@@ -169,7 +185,7 @@ export function DashboardView({
 										{data.continue_lesson.duration_minutes} мин
 									</span>
 								</div>
-								<div className='mt-6 flex flex-col gap-3 sm:flex-row'>
+								<div className='mt-4 flex flex-col gap-2 sm:flex-row'>
 									<Link
 										href={`/lessons/${data.continue_lesson.id}`}
 										className='brand-button-primary w-full sm:w-auto'
@@ -186,13 +202,13 @@ export function DashboardView({
 							</>
 						) : (
 							<>
-								<p className='mt-3 text-sm leading-7 text-sky-50/90'>
+								<p className='mt-2 text-sm leading-6 text-sky-50/90'>
 									Все доступные уроки сейчас пройдены. Открой карту модулей и
 									выбери новый шаг.
 								</p>
 								<Link
 									href='/roadmap'
-									className='brand-button-primary mt-6 w-full sm:w-auto'
+									className='brand-button-primary mt-4 w-full sm:w-auto'
 								>
 									Перейти к урокам
 								</Link>
@@ -203,28 +219,40 @@ export function DashboardView({
 			</section>
 
 			<section
-				className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'
+				className='student-metrics-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4'
 				data-motion-stagger
 			>
 				<StatCard
 					value={String(data.summary.completed_lessons)}
 					label='завершённых уроков'
-					accent='text-sky-700'
+					icon={BookOpenCheck}
+					kicker='уроки'
+					progress={lessonMomentum}
+					tone='sky'
 				/>
 				<StatCard
 					value={String(data.summary.assignments_open)}
 					label='активных заданий'
-					accent='text-emerald-700'
+					icon={ClipboardList}
+					kicker='фокус'
+					progress={assignmentFocus}
+					tone='emerald'
 				/>
 				<StatCard
 					value={String(data.summary.achievements)}
 					label='достижений'
-					accent='text-violet-700'
+					icon={Trophy}
+					kicker='награды'
+					progress={achievementGlow}
+					tone='violet'
 				/>
 				<StatCard
 					value={String(data.user.streak)}
 					label='дней подряд'
-					accent='text-amber-700'
+					icon={Flame}
+					kicker='ритм'
+					progress={streakProgress}
+					tone='amber'
 				/>
 			</section>
 
@@ -305,9 +333,11 @@ export function DashboardView({
 								Учительские группы и домашние задания
 							</h3>
 						</div>
-						<span className='brand-chip brand-chip--soft'>
-							{data.assignments_preview.length} активных заданий
-						</span>
+						<div className='flex flex-wrap gap-2'>
+							<span className='brand-chip brand-chip--soft'>
+								{data.assignments_preview.length} активных заданий
+							</span>
+						</div>
 					</div>
 
 					<div className='mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap'>
@@ -330,18 +360,21 @@ export function DashboardView({
 							data.my_classes.map(classroom => (
 								<div
 									key={classroom.id}
-									className='rounded-[24px] border border-slate-200 bg-slate-50 p-4'
+									className='teacher-workspace__item rounded-[24px] border border-slate-200 bg-slate-50 p-4'
+									data-motion-item
 								>
-									<p className='break-words text-lg font-black text-slate-900'>
-										{classroom.name}
-									</p>
-									<p className='mt-2 text-sm text-slate-600'>
-										Код: {classroom.code}
-									</p>
-									<p className='mt-1 text-sm text-slate-500'>
-										Заданий: {classroom.assignments_count} · Учеников:{' '}
-										{classroom.students_count}
-									</p>
+									<div className='min-w-0'>
+										<p className='break-words text-lg font-black text-slate-900'>
+											{classroom.name}
+										</p>
+										<p className='mt-2 text-sm text-slate-600'>
+											Код: {classroom.code}
+										</p>
+										<p className='mt-1 text-sm text-slate-500'>
+											Заданий: {classroom.assignments_count} · Учеников:{' '}
+											{classroom.students_count}
+										</p>
+									</div>
 								</div>
 							))
 						) : (

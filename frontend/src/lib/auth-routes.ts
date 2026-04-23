@@ -2,6 +2,7 @@ export const AUTH_ROUTE_PREFIXES = ['/auth/login', '/auth/register'] as const
 
 export const PROTECTED_ROUTE_PREFIXES = [
   '/dashboard',
+  '/messages',
   '/roadmap',
   '/lessons',
   '/leaderboard',
