@@ -80,12 +80,18 @@
       "args": [
         {
           "index": 0,
-          "value": 2147483648,
-          "valueTwo": 0,
+          "value": 268435456,
+          "valueTwo": 268435456,
           "op": "SCMP_CMP_MASKED_EQ",
-          "comment": "CLONE_NEWUSER = 0x10000000. Mask chosen here (0x80000000) is a placeholder; see sandbox.md. Docker's default profile also restricts CLONE_NEWUSER via an args filter - keep this entry disabled at the operator's discretion if it breaks runtimes."
+          "comment": "CLONE_NEWUSER = 0x10000000. Deny only user-namespace clone calls; ordinary clone/fork is required for subprocess-based Python/Node execution."
         }
       ]
+    },
+    {
+      "names": ["clone3"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38,
+      "comment": "clone3 passes flags through a pointer that seccomp cannot inspect, so deny it with ENOSYS to avoid CLONE_NEWUSER bypass while allowing runtimes to fall back to clone."
     }
   ]
 }

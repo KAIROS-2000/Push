@@ -100,15 +100,18 @@ pragmatic intermediate; it is materially stronger than the Docker default
 A follow-up task is to move to a strict whitelist once the runtime matrix
 is stable; `judge_runner/seccomp.json` is a good base for that work.
 
-### Caveat: `clone` filtering
+### Caveat: `clone` / `clone3` filtering
 
-The profile includes a disabled `clone` filter stanza intended to block
-`CLONE_NEWUSER`. The filter mask in the current profile is a placeholder —
-blocking `CLONE_NEWUSER` reliably requires architecture-specific arg
-inspection logic that mirrors Docker's default profile. Until that is
-validated on the target host, the operator SHOULD treat the `clone` filter
-as advisory: run the judge-runner under seccomp, then run the full judge
-test matrix, then decide whether to tighten the `clone` filter further.
+The profile blocks `clone` only when the `CLONE_NEWUSER` flag is present.
+Ordinary process creation must remain available because the runner uses
+subprocesses to execute Python and Node solutions. The profile also denies
+`clone3` with `ENOSYS`: seccomp cannot inspect the flags inside `clone3`'s
+pointer argument, and returning `ENOSYS` lets runtimes fall back to `clone`
+when they support that path.
+
+Operators SHOULD still validate this on the target host: run the
+judge-runner under seccomp, run the full judge test matrix, and confirm that
+user-namespace creation remains blocked.
 
 ## Verification checklist (required before enabling on a new host)
 

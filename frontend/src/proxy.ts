@@ -14,7 +14,9 @@ function buildContentSecurityPolicy() {
 	const csp = [
 		"default-src 'self'",
 		`script-src ${scriptSrc}`,
-		`style-src 'self' 'nonce-${nonce}' 'unsafe-inline'`,
+		// No nonce on style-src: with a nonce present, browsers ignore 'unsafe-inline', which blocks
+		// React style={{}} and other legitimate inline styles. Script nonce remains for script-src.
+		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: blob:",
 		"font-src 'self' data:",
 		"connect-src 'self'",
