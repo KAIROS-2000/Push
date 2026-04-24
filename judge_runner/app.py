@@ -62,11 +62,16 @@ def request_authorized(headers) -> bool:
     return hmac.compare_digest(_bearer_token(headers.get('Authorization')), AUTH_TOKEN)
 
 
-def _resolve_executable(executable: str) -> str:
-    resolved = shutil.which(executable)
-    if resolved:
-        return resolved
-    raise FileNotFoundError(f'На runner не найден рантайм "{executable}".')
+def _resolve_executable(primary: str, *fallbacks: str) -> str:
+    for candidate in (primary, *fallbacks):
+        if not candidate:
+            continue
+        if os.path.isabs(candidate) and os.path.isfile(candidate):
+            return candidate
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise FileNotFoundError(f'На runner не найден рантайм "{primary}".')
 
 
 def _build_env() -> dict[str, str]:
@@ -104,9 +109,13 @@ def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language:
 class RunnerRuntime:
     def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:
         if language == 'python':
-            return [_resolve_executable(PYTHON_BIN), '-I', script_path]
+            return [_resolve_executable(PYTHON_BIN, 'python3', 'python'), '-I', script_path]
         heap_limit_mb = max(96, min(memory_limit_mb, 2048))
-        return [_resolve_executable(NODE_BIN), f'--max-old-space-size={heap_limit_mb}', script_path]
+        return [
+            _resolve_executable(NODE_BIN, 'node', 'nodejs'),
+            f'--max-old-space-size={heap_limit_mb}',
+            script_path,
+        ]
 
     def build_env(self) -> dict[str, str]:
         return _build_env()
