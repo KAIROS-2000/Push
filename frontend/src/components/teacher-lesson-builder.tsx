@@ -1,7 +1,10 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
+
 import { api } from '@/lib/api'
 import type { ClassroomItem } from '@/types'
+
 import { SharedLessonBuilder } from './shared-lesson-builder'
 
 interface TeacherLessonBuilderProps {
@@ -15,6 +18,8 @@ export function TeacherLessonBuilder({
   initialClassId = null,
   sourceLessonId = null,
 }: TeacherLessonBuilderProps) {
+  const router = useRouter()
+
   return (
     <SharedLessonBuilder
       mode='teacher'
@@ -35,6 +40,9 @@ export function TeacherLessonBuilder({
         createTargetHref: '/teacher',
       }}
       cancelHref='/teacher'
+      onCreated={() => {
+        router.replace('/teacher')
+      }}
       submitLesson={async ({ target, lesson }) => {
         if (target.kind !== 'classroom') {
           throw new Error('Некорректная цель сохранения урока.')
