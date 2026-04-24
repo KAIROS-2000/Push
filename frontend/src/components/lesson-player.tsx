@@ -1,5 +1,6 @@
 'use client'
 
+import { useAppTheme } from '@/hooks/use-app-theme'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
@@ -31,16 +32,34 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 
 export type { LessonPlayerPayload } from '@/components/lesson-player-helpers'
 
+function LessonCodeEditorFallback() {
+	const theme = useAppTheme()
+	const shellClass =
+		theme === 'dark'
+			? 'border-slate-700/80 bg-slate-950/90 shadow-[0_20px_48px_rgba(2,6,23,0.45)]'
+			: 'border-slate-200/90 bg-white/95 shadow-[0_20px_40px_rgba(15,23,42,0.08)]'
+	const surfaceClass =
+		theme === 'dark'
+			? 'bg-[#0b1220] text-slate-400'
+			: 'bg-[#f8fbff] text-slate-500'
+
+	return (
+		<div className={`h-[420px] w-full rounded-[24px] border p-3 ${shellClass}`}>
+			<div
+				className={`flex h-full items-center justify-center rounded-[20px] text-sm font-medium ${surfaceClass}`}
+			>
+				Загружаем редактор…
+			</div>
+		</div>
+	)
+}
+
 const LazyLessonCodeEditor = dynamic(
 	() =>
 		import('@/components/lesson-code-editor').then(mod => mod.LessonCodeEditor),
 	{
 		ssr: false,
-		loading: () => (
-			<div className='flex h-[360px] items-center justify-center bg-slate-50 text-sm font-medium text-slate-500'>
-				Загружаем редактор…
-			</div>
-		),
+		loading: () => <LessonCodeEditorFallback />,
 	},
 )
 
@@ -901,7 +920,7 @@ export function LessonPlayer({
 		<>
 			<div
 				ref={rootRef}
-				className='grid w-full min-w-0 gap-6 overflow-x-hidden xl:grid-cols-[320px_minmax(0,1fr)]'
+				className='grid w-full min-w-0 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]'
 			>
 				<aside className='min-w-0 space-y-5 xl:sticky xl:top-24 xl:self-start'>
 					<section
@@ -974,7 +993,7 @@ export function LessonPlayer({
 					</section>
 				</aside>
 
-				<section className='min-w-0 space-y-6 overflow-x-hidden'>
+				<section className='min-w-0 space-y-6'>
 					<div className='brand-lesson-nav scrollbar-hidden flex gap-2 overflow-x-auto p-3'>
 						{[
 							['theory', 'Теория'],
@@ -1082,7 +1101,7 @@ export function LessonPlayer({
 					{task ? (
 						<article
 							id='practice'
-							className='brand-tech-panel lesson-player__section-anchor codequest-card min-w-0 overflow-hidden p-6'
+							className='brand-tech-panel lesson-player__section-anchor codequest-card min-w-0 p-6'
 							data-motion-reveal
 						>
 							<div className='grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_18.75rem]'>
@@ -1120,7 +1139,7 @@ export function LessonPlayer({
 										{task.prompt}
 									</p>
 									{usesCodeEditor ? (
-										<div className='brand-editor-shell mt-5'>
+										<div className='mt-5'>
 											<LazyLessonCodeEditor
 												language={editorLanguage}
 												value={answer}
