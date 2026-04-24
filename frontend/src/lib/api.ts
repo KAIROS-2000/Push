@@ -38,6 +38,26 @@ function buildHeaders(init?: RequestInit) {
   return headers
 }
 
+const SESSION_TERMINATION_CODES = new Set(['invalid_token', 'session_revoked'])
+
+function getAuthErrorCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const code = (payload as Record<string, unknown>).code
+  return typeof code === 'string' ? code : null
+}
+
+function shouldClearSessionAfterAuthFailure(
+  authMode: AuthMode,
+  status: number,
+  payload: unknown,
+): boolean {
+  const code = getAuthErrorCode(payload)
+  if (code && SESSION_TERMINATION_CODES.has(code)) {
+    return true
+  }
+  return authMode !== 'none' && status === 401
+}
+
 function extractErrorMessage(payload: unknown): string | null {
   if (typeof payload === 'string' && payload.trim()) {
     return payload.trim()
@@ -122,7 +142,8 @@ async function refreshSession() {
   return refreshRequest
 }
 
-async function clearSessionSilently() {
+/** Clears local session snapshot and asks the backend to drop HttpOnly auth cookies. */
+export async function clearSessionSilently() {
   setAnonymousSession()
 
   try {
@@ -159,7 +180,7 @@ export async function api<T>(path: string, init: RequestInit = {}, auth: ApiAuth
   }
 
   if (!response.ok) {
-    if (authMode !== 'none' && response.status === 401) {
+    if (shouldClearSessionAfterAuthFailure(authMode, response.status, payload)) {
       await clearSessionSilently()
     }
     throw new ApiError(

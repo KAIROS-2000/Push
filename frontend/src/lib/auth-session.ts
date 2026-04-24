@@ -1,11 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, clearSessionSilently } from '@/lib/api'
 import { getStoredTheme } from '@/lib/theme'
 import {
   getSessionSnapshot,
-  setAnonymousSession,
   setAuthenticatedSession,
   subscribeSessionSnapshot,
   type SessionSnapshot,
@@ -50,7 +49,7 @@ export async function fetchSessionUser({
     })
     .catch((error) => {
       if (error instanceof ApiError && error.status === 401) {
-        setAnonymousSession()
+        void clearSessionSilently()
         if (auth === 'optional') {
           return null
         }
