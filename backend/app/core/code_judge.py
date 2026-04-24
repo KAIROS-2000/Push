@@ -38,12 +38,18 @@ def _javascript_command(script_path: str, memory_limit_mb: int) -> list[str]:
     return [binary, f'--max-old-space-size={heap_limit_mb}', script_path]
 
 
-def _resolve_command(command: list[str]) -> list[str]:
+def _resolve_command(command: list[str], *executable_fallbacks: str) -> list[str]:
     executable = command[0]
-    if os.path.isabs(executable) and os.path.exists(executable):
+    if os.path.isabs(executable) and os.path.isfile(executable):
         return command
     if shutil.which(executable):
         return command
+    for alt in executable_fallbacks:
+        if not alt or alt == executable:
+            continue
+        resolved = shutil.which(alt)
+        if resolved:
+            return [resolved, *command[1:]]
     raise CodeJudgeConfigurationError(f'На сервере не найден рантайм "{executable}" для автопроверки.')
 
 
@@ -91,10 +97,12 @@ def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language:
 
 class FlaskJudgeRuntime:
     def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:
+        if language == 'python':
+            return _resolve_command(_python_command(script_path), 'python3', 'python')
         return _resolve_command(
-            _python_command(script_path)
-            if language == 'python'
-            else _javascript_command(script_path, memory_limit_mb)
+            _javascript_command(script_path, memory_limit_mb),
+            'node',
+            'nodejs',
         )
 
     def build_env(self) -> dict[str, str]:

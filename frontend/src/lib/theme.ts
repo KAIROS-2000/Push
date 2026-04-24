@@ -89,6 +89,12 @@ function clearThemeTransitionState(root: HTMLElement) {
   delete root.dataset.themeTransitionTarget
 }
 
+/** True while `setThemeWithTransition` runs — hydrator must not call applyTheme/setTheme (breaks the circular wipe). */
+export function isThemeViewTransitionRunning(): boolean {
+  if (typeof document === 'undefined') return false
+  return document.documentElement.dataset.themeTransition === 'running'
+}
+
 export async function setThemeWithTransition(
   theme: AppTheme,
   options?: ThemeTransitionOptions,
