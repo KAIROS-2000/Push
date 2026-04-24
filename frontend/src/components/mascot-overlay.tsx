@@ -119,7 +119,7 @@ export function MascotOverlay() {
 
 	return (
 		<div
-			className='fixed inset-0 z-[100] overflow-y-auto bg-slate-950/70 backdrop-blur-sm'
+			className='fixed inset-0 z-[100] flex h-[100dvh] w-screen items-center justify-center overflow-hidden bg-slate-950/70 backdrop-blur-sm'
 			onClick={handleAdvance}
 			onKeyDown={event => {
 				if (event.key === 'Enter' || event.key === ' ') {
@@ -131,31 +131,33 @@ export function MascotOverlay() {
 			tabIndex={0}
 			aria-label='Диалог с Проги'
 		>
-			<div className='grid h-full w-full gap-6 bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.28),_rgba(15,23,42,0.94)_56%)] px-5 py-6 sm:px-8 sm:py-8 lg:grid-cols-[minmax(320px,460px)_minmax(0,1fr)] lg:items-center lg:px-14 lg:py-12'>
-				<div className='flex min-h-[38vh] items-end justify-center overflow-hidden rounded-[32px] border border-white/15 bg-white/10 p-5 shadow-2xl shadow-slate-950/30 backdrop-blur-md lg:min-h-[78vh] lg:p-8'>
-					<div className='w-full overflow-hidden rounded-[28px] border border-white/50 bg-white/80 shadow-[0_20px_60px_rgba(15,23,42,0.18)]'>
+			<div className='pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.28),_rgba(15,23,42,0.94)_56%)]' />
+
+			<div className='relative flex h-full max-h-[100dvh] w-full flex-col gap-4 overflow-hidden px-4 py-4 sm:gap-6 sm:px-6 sm:py-6 lg:grid lg:grid-cols-[minmax(320px,460px)_minmax(0,1fr)] lg:gap-8 lg:px-12 lg:py-10'>
+				<div className='flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[32px] border border-white/15 bg-white/10 p-3 shadow-2xl shadow-slate-950/30 backdrop-blur-md sm:p-5 lg:flex-none lg:h-full lg:p-8'>
+					<div className='flex h-full max-h-full w-full items-center justify-center overflow-hidden rounded-[28px] border border-white/50 bg-white/80 shadow-[0_20px_60px_rgba(15,23,42,0.18)]'>
 						<img
 							key={currentStep.image}
 							src={spriteUrl(currentStep.image)}
 							alt={currentStep.mood}
-							className='mx-auto h-auto max-h-[72vh] w-full rounded-[28px] object-contain'
+							className='block h-auto max-h-full w-auto max-w-full rounded-[28px] object-contain'
 						/>
 					</div>
 				</div>
 
-				<div className='flex items-center'>
-					<div className='w-full rounded-[36px] border border-white/15 bg-white/92 p-7 shadow-2xl shadow-slate-950/25 backdrop-blur-xl sm:p-10 lg:min-h-[56vh] lg:p-14'>
+				<div className='flex min-h-0 shrink-0 items-center overflow-hidden lg:h-full'>
+					<div className='w-full max-h-full overflow-y-auto rounded-[36px] border border-white/15 bg-white/92 p-5 shadow-2xl shadow-slate-950/25 backdrop-blur-xl sm:p-8 lg:p-12'>
 						<p className='text-xs font-bold uppercase tracking-[0.28em] text-sky-600'>
 							Проги
 						</p>
-						<h2 className='mt-4 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl lg:text-6xl'>
+						<h2 className='mt-3 text-2xl font-black tracking-tight text-slate-900 sm:text-4xl lg:text-5xl'>
 							{currentStep.mood}
 						</h2>
-						<p className='mt-6 max-w-3xl text-xl leading-9 text-slate-700 sm:text-2xl sm:leading-10'>
+						<p className='mt-4 max-w-3xl text-base leading-7 text-slate-700 sm:mt-6 sm:text-xl sm:leading-9 lg:text-2xl lg:leading-10'>
 							{currentStep.message}
 						</p>
 						{canAdvance && (
-							<p className='mt-10 text-sm font-semibold uppercase tracking-[0.22em] text-slate-400'>
+							<p className='mt-6 text-xs font-semibold uppercase tracking-[0.22em] text-slate-400 sm:mt-8 sm:text-sm'>
 								Нажми в любое место экрана
 							</p>
 						)}

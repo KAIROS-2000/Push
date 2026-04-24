@@ -5,7 +5,14 @@ import { usePathname } from 'next/navigation'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { isAuthRoutePath, isProtectedRoutePath } from '@/lib/auth-routes'
 import { getSessionSnapshot, subscribeSessionSnapshot } from '@/lib/session-store'
-import { applyTheme, DEFAULT_THEME, getDocumentTheme, getStoredTheme, setTheme } from '@/lib/theme'
+import {
+  applyTheme,
+  DEFAULT_THEME,
+  getDocumentTheme,
+  getStoredTheme,
+  isThemeViewTransitionRunning,
+  setTheme,
+} from '@/lib/theme'
 
 const SESSION_REVALIDATION_INTERVAL_MS = 30_000
 
@@ -82,7 +89,7 @@ export function ThemeHydrator() {
 
     fetchSessionUser({ auth: 'optional' })
       .then((user) => {
-        if (cancelled || !user?.theme) return
+        if (cancelled || !user?.theme || isThemeViewTransitionRunning()) return
         const latestStored = getStoredTheme()
         if (latestStored) {
           if (getDocumentTheme() !== latestStored) {
@@ -146,6 +153,9 @@ export function ThemeHydrator() {
 
   useEffect(() => {
     return subscribeSessionSnapshot((snapshot) => {
+      if (isThemeViewTransitionRunning()) {
+        return
+      }
       const stored = getStoredTheme()
       if (stored === 'light' || stored === 'dark') {
         if (getDocumentTheme() !== stored) {
