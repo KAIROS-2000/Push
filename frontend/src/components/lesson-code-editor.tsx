@@ -105,6 +105,24 @@ async function formatEditor(editorInstance: editor.IStandaloneCodeEditor | null)
   await action.run()
 }
 
+function layoutMonacoToHost(
+  ed: editor.IStandaloneCodeEditor,
+  host: HTMLDivElement | null,
+) {
+  if (!host) {
+    ed.layout()
+    return
+  }
+  const { width, height } = host.getBoundingClientRect()
+  const w = Math.max(0, Math.floor(width))
+  const h = Math.max(0, Math.floor(height))
+  if (w > 0 && h > 0) {
+    ed.layout({ width: w, height: h })
+  } else {
+    ed.layout()
+  }
+}
+
 export function LessonCodeEditor({
   language,
   value,
@@ -161,6 +179,8 @@ export function LessonCodeEditor({
   const lineCount = useMemo(() => value.split(/\r?\n/).length, [value])
   const editorHostRef = useRef<HTMLDivElement | null>(null)
   const layoutObserverRef = useRef<ResizeObserver | null>(null)
+  const contentLayoutRafRef = useRef<number | null>(null)
+  const layoutDisposablesRef = useRef<Array<{ dispose: () => void }>>([])
   const editorOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
     () => ({
       automaticLayout: true,
@@ -262,11 +282,23 @@ export function LessonCodeEditor({
 
   useEffect(() => {
     if (!isReady) return
-    requestAnimationFrame(() => editorRef.current?.layout())
+    requestAnimationFrame(() => {
+      const ed = editorRef.current
+      if (!ed) return
+      layoutMonacoToHost(ed, editorHostRef.current)
+    })
   }, [isReady, theme])
 
   useEffect(() => {
     return () => {
+      if (contentLayoutRafRef.current !== null) {
+        cancelAnimationFrame(contentLayoutRafRef.current)
+        contentLayoutRafRef.current = null
+      }
+      for (const disposable of layoutDisposablesRef.current) {
+        disposable.dispose()
+      }
+      layoutDisposablesRef.current = []
       layoutObserverRef.current?.disconnect()
       layoutObserverRef.current = null
     }
@@ -281,6 +313,11 @@ export function LessonCodeEditor({
     monaco: typeof MonacoNamespace,
   ) {
     editorRef.current = ed
+    for (const disposable of layoutDisposablesRef.current) {
+      disposable.dispose()
+    }
+    layoutDisposablesRef.current = []
+
     defineEditorThemes(monaco)
     if (language === 'javascript') {
       ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -289,18 +326,33 @@ export function LessonCodeEditor({
     }
     ed.onDidFocusEditorText(() => setIsFocused(true))
     ed.onDidBlurEditorText(() => setIsFocused(false))
+    const layoutFromHost = () => layoutMonacoToHost(ed, editorHostRef.current)
     const scheduleLayout = () => {
-      requestAnimationFrame(() => ed.layout())
+      requestAnimationFrame(() => layoutFromHost())
+    }
+    const scheduleContentLayout = () => {
+      if (contentLayoutRafRef.current !== null) return
+      contentLayoutRafRef.current = requestAnimationFrame(() => {
+        contentLayoutRafRef.current = null
+        layoutFromHost()
+      })
     }
     scheduleLayout()
+    layoutDisposablesRef.current.push(
+      ed.onDidChangeModelContent(() => scheduleContentLayout()),
+    )
     if (editorHostRef.current && typeof ResizeObserver !== 'undefined') {
       layoutObserverRef.current?.disconnect()
-      const ro = new ResizeObserver(() => scheduleLayout())
+      const ro = new ResizeObserver(() => {
+        requestAnimationFrame(() => layoutFromHost())
+      })
       ro.observe(editorHostRef.current)
       layoutObserverRef.current = ro
     }
     for (const delay of [0, 80, 200, 400, 700]) {
-      window.setTimeout(scheduleLayout, delay)
+      window.setTimeout(() => {
+        requestAnimationFrame(() => layoutFromHost())
+      }, delay)
     }
   }
 
