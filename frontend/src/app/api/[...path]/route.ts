@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 
 import { INTERNAL_API_URL } from '@/lib/server-env'
 
-const AUTH_COOKIE_NAMES = ['codequest_access_token', 'codequest_refresh_token'] as const
+/** Must match backend `CSRF_COOKIE_NAME` / `CSRF_HEADER_NAME` (cookie + header double-submit). */
+const FORWARDED_COOKIE_NAMES = [
+  'codequest_access_token',
+  'codequest_refresh_token',
+  'csrf_token',
+] as const
+const CSRF_HEADER = 'X-CSRF-Token'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,12 +17,10 @@ function backendUrl(path: string, search: string) {
 }
 
 function proxiedCookieHeader(request: NextRequest) {
-  const parts = AUTH_COOKIE_NAMES
-    .map((name) => {
-      const value = request.cookies.get(name)?.value
-      return value ? `${name}=${encodeURIComponent(value)}` : ''
-    })
-    .filter(Boolean)
+  const parts = FORWARDED_COOKIE_NAMES.map((name) => {
+    const value = request.cookies.get(name)?.value
+    return value ? `${name}=${encodeURIComponent(value)}` : ''
+  }).filter(Boolean)
   return parts.join('; ')
 }
 
@@ -53,6 +57,16 @@ async function forwardRequest(
   }
   if (authorization) {
     upstreamHeaders.set('authorization', authorization)
+  }
+
+  const method = request.method.toUpperCase()
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    const csrfCookie = request.cookies.get('csrf_token')?.value?.trim()
+    const csrfFromClient = request.headers.get(CSRF_HEADER)?.trim()
+    const csrf = csrfCookie || csrfFromClient
+    if (csrf) {
+      upstreamHeaders.set(CSRF_HEADER, csrf)
+    }
   }
 
   const body =

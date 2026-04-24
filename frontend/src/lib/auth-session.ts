@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '@/lib/api'
+import { getStoredTheme } from '@/lib/theme'
 import {
   getSessionSnapshot,
   setAnonymousSession,
@@ -40,8 +41,12 @@ export async function fetchSessionUser({
 
   sessionRequest = api<{ user: UserItem }>('/auth/me', undefined, { auth })
     .then((result) => {
-      setAuthenticatedSession(result.user)
-      return result.user
+      const u = result.user
+      const stored = getStoredTheme()
+      const theme =
+        stored === 'light' || stored === 'dark' ? stored : u.theme
+      setAuthenticatedSession({ ...u, theme })
+      return { ...u, theme }
     })
     .catch((error) => {
       if (error instanceof ApiError && error.status === 401) {

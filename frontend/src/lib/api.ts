@@ -38,12 +38,61 @@ function buildHeaders(init?: RequestInit) {
   return headers
 }
 
-function extractErrorMessage(payload: unknown) {
-  if (!payload || typeof payload !== 'object' || !('message' in payload)) {
+function extractErrorMessage(payload: unknown): string | null {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload.trim()
+  }
+  if (!payload || typeof payload !== 'object') {
     return null
   }
-  const message = payload.message
-  return typeof message === 'string' && message.trim() ? message : null
+  const record = payload as Record<string, unknown>
+
+  const message = record.message
+  if (typeof message === 'string' && message.trim()) {
+    return message.trim()
+  }
+  if (Array.isArray(message)) {
+    const parts = message
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter(Boolean)
+    if (parts.length) return parts.join(' ')
+  }
+
+  const error = record.error
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim()
+  }
+
+  const errors = record.errors
+  if (errors && typeof errors === 'object' && !Array.isArray(errors)) {
+    const parts: string[] = []
+    for (const value of Object.values(errors as Record<string, unknown>)) {
+      if (typeof value === 'string' && value.trim()) parts.push(value.trim())
+      else if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === 'string' && item.trim()) parts.push(item.trim())
+        }
+      }
+    }
+    if (parts.length) return parts.join(' ')
+  }
+
+  return null
+}
+
+export function getApiErrorMessage(error: unknown, fallback = 'Произошла ошибка.'): string {
+  if (error instanceof ApiError) {
+    const direct = error.message?.trim()
+    if (direct) return direct
+    const parsed = extractErrorMessage(error.payload)
+    if (parsed) return parsed
+    return fallback
+  }
+  if (error instanceof Error) {
+    const m = error.message?.trim()
+    return m || fallback
+  }
+  return fallback
 }
 
 async function parsePayload(response: Response): Promise<unknown> {
@@ -113,7 +162,11 @@ export async function api<T>(path: string, init: RequestInit = {}, auth: ApiAuth
     if (authMode !== 'none' && response.status === 401) {
       await clearSessionSilently()
     }
-    throw new ApiError(extractErrorMessage(payload) || 'Ошибка запроса', response.status, payload)
+    throw new ApiError(
+      extractErrorMessage(payload) || 'Ошибка запроса',
+      response.status,
+      payload,
+    )
   }
 
   if (path === '/auth/logout') {

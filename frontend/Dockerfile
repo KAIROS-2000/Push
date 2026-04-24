@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
 # Image pinning REQUIRED for production.
 # Replace each FROM node:22-alpine line below with a digest-pinned form, e.g.:

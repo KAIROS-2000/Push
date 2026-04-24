@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
 # Image pinning REQUIRED for production.
 # This Dockerfile keeps a floating tag for local/dev builds. For production,

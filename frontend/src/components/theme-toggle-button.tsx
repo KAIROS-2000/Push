@@ -3,7 +3,7 @@
 import { type MouseEvent, useState } from 'react'
 import { Moon, SunMedium } from 'lucide-react'
 
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { setAuthenticatedSession } from '@/lib/session-store'
 import { showErrorToast } from '@/lib/toast'
 import {
@@ -81,9 +81,7 @@ export function ThemeToggleButton({
       await setThemeWithTransition(previousTheme, { origin })
       setAuthenticatedSession(user)
       showErrorToast(
-        error instanceof Error
-          ? error.message
-          : 'Не удалось сохранить тему интерфейса.',
+        getApiErrorMessage(error, 'Не удалось сохранить тему интерфейса.'),
       )
     } finally {
       setSaving(false)

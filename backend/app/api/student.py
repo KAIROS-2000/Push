@@ -1112,16 +1112,21 @@ def update_profile(current_user: User):
 @auth_required([UserRole.STUDENT])
 def create_parent_invite(current_user: User):
     data = request.get_json() or {}
-    existing = (
-        ParentInvite.query.filter_by(student_id=current_user.id, active=True)
-        .order_by(ParentInvite.created_at.desc())
-        .first()
-    )
-    if existing:
-        return {"invite": existing.to_dict(), "url": f"/parent/{existing.code}"}
+    # New invite replaces any active one so "create or refresh" always issues a new code.
+    for old in ParentInvite.query.filter_by(
+        student_id=current_user.id, active=True
+    ).all():
+        old.active = False
+    code = f"PAR-{generate_code(8)}"
+    for _ in range(5):
+        if not ParentInvite.query.filter_by(code=code).first():
+            break
+        code = f"PAR-{generate_code(8)}"
+    if ParentInvite.query.filter_by(code=code).first():
+        return {"message": "Не удалось сгенерировать уникальный код. Повторите попытку."}, 500
     invite = ParentInvite(
         student_id=current_user.id,
-        code=f"PAR-{generate_code(8)}",
+        code=code,
         label=data.get("label") or "Родительский доступ",
         weekly_limit_minutes=data.get("weekly_limit_minutes"),
         modules_whitelist=data.get("modules_whitelist") or [],

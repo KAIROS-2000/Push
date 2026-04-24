@@ -3,7 +3,7 @@
 import { RolePill } from '@/components/role-pill'
 import { StatCard } from '@/components/stat-card'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import { DashboardData } from '@/types'
 import {
@@ -75,9 +75,7 @@ export function DashboardView({
 			setClassCode('')
 			await loadDashboard()
 		} catch (e) {
-			showErrorToast(
-				e instanceof Error ? e.message : 'Не удалось вступить в класс.',
-			)
+			showErrorToast(getApiErrorMessage(e, 'Не удалось вступить в класс.'))
 		}
 	}
 
@@ -95,7 +93,7 @@ export function DashboardView({
 			await loadDashboard()
 		} catch (e) {
 			showErrorToast(
-				e instanceof Error ? e.message : 'Не удалось обновить семейную ссылку.',
+				getApiErrorMessage(e, 'Не удалось обновить семейную ссылку.'),
 			)
 		}
 	}
@@ -476,48 +474,51 @@ export function DashboardView({
 					</div>
 				</article>
 
-				<article className='codequest-card p-6' data-motion-item>
-					<p className='brand-eyebrow'>Семья</p>
-					<h3 className='mt-3 text-2xl font-black text-slate-900'>
-						Родительский кабинет и семейная ссылка
-					</h3>
-					<p className='mt-3 text-sm leading-7 text-slate-600'>
-						Подключите родителя к прогрессу ребёнка, чтобы он видел модули,
-						активность и общую динамику без лишней нагрузки на вас.
-					</p>
+				{data.user.role === 'student' ? (
+					<article className='codequest-card p-6' data-motion-item>
+						<p className='brand-eyebrow'>Семья</p>
+						<h3 className='mt-3 text-2xl font-black text-slate-900'>
+							Родительский кабинет и семейная ссылка
+						</h3>
+						<p className='mt-3 text-sm leading-7 text-slate-600'>
+							Подключите родителя к прогрессу ребёнка, чтобы он видел модули,
+							активность и общую динамику без лишней нагрузки на вас.
+						</p>
 
-					<div className='mt-5 rounded-[26px] bg-slate-50 p-5'>
-						{data.parent_invite ? (
-							<>
-								<p className='break-words font-bold text-slate-900'>
-									Активный код: {data.parent_invite.code}
-								</p>
-								<p className='mt-2 break-words text-sm text-slate-500'>
-									Открыть кабинет:{' '}
-									<Link
-										href={`/parent/${data.parent_invite.code}`}
-										className='break-all font-semibold text-sky-700'
-									>
-										/parent/{data.parent_invite.code}
-									</Link>
-								</p>
-								<p className='mt-2 text-sm text-slate-500'>
-									Лимит: {data.parent_invite.weekly_limit_minutes || 'не задан'}{' '}
-									мин/нед
-								</p>
-							</>
-						) : (
-							<p className='text-sm text-slate-500'>Ещё нет семейной ссылки.</p>
-						)}
-					</div>
+						<div className='mt-5 rounded-[26px] bg-slate-50 p-5'>
+							{data.parent_invite ? (
+								<>
+									<p className='break-words font-bold text-slate-900'>
+										Активный код: {data.parent_invite.code}
+									</p>
+									<p className='mt-2 break-words text-sm text-slate-500'>
+										Открыть кабинет:{' '}
+										<Link
+											href={`/parent/${data.parent_invite.code}`}
+											className='break-all font-semibold text-sky-700'
+										>
+											/parent/{data.parent_invite.code}
+										</Link>
+									</p>
+									<p className='mt-2 text-sm text-slate-500'>
+										Лимит: {data.parent_invite.weekly_limit_minutes || 'не задан'}{' '}
+										мин/нед
+									</p>
+								</>
+							) : (
+								<p className='text-sm text-slate-500'>Ещё нет семейной ссылки.</p>
+							)}
+						</div>
 
-					<button
-						onClick={generateParentInvite}
-						className='brand-button-primary mt-4 w-full sm:w-auto'
-					>
-						Создать или обновить семейную ссылку
-					</button>
-				</article>
+						<button
+							type='button'
+							onClick={generateParentInvite}
+							className='brand-button-primary mt-4 w-full sm:w-auto'
+						>
+							Создать или обновить семейную ссылку
+						</button>
+					</article>
+				) : null}
 			</section>
 		</div>
 	)

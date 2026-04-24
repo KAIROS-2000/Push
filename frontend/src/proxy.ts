@@ -45,6 +45,8 @@ type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
 const ACCESS_COOKIE = 'codequest_access_token'
 const REFRESH_COOKIE = 'codequest_refresh_token'
 const ACCESS_EXPIRES_AT_COOKIE = 'codequest_access_expires_at'
+const CSRF_COOKIE = 'csrf_token'
+const CSRF_HEADER = 'X-CSRF-Token'
 const KNOWN_ROLES: UserRole[] = ['student', 'teacher', 'admin', 'superadmin']
 const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/dashboard', roles: KNOWN_ROLES },
@@ -77,6 +79,10 @@ function authCookieHeader(request: NextRequest) {
 			return value ? `${name}=${encodeURIComponent(value)}` : ''
 		})
 		.filter(Boolean)
+	const csrf = request.cookies.get(CSRF_COOKIE)?.value
+	if (csrf) {
+		parts.push(`${CSRF_COOKIE}=${encodeURIComponent(csrf)}`)
+	}
 	return parts.join('; ')
 }
 
@@ -144,11 +150,13 @@ async function refreshSession(request: NextRequest) {
 	if (!refreshToken) return null
 
 	try {
+		const csrf = request.cookies.get(CSRF_COOKIE)?.value?.trim()
 		const response = await fetch(`${INTERNAL_API_URL}/auth/refresh`, {
 			method: 'POST',
 			headers: {
 				accept: 'application/json',
 				cookie: authCookieHeader(request),
+				...(csrf ? { [CSRF_HEADER]: csrf } : {}),
 			},
 			cache: 'no-store',
 		})

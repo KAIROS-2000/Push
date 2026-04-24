@@ -1,7 +1,7 @@
 'use client'
 
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
 import { setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
@@ -68,6 +68,10 @@ export function AuthForm({
 		event.preventDefault()
 		const normalizedCredential = form.email.trim().toLowerCase()
 		const normalizedUsername = form.username.trim()
+		if (mode === 'register' && !normalizedUsername) {
+			showErrorToast('Укажите username.')
+			return
+		}
 		if (mode === 'register' && !isValidEmail(normalizedCredential)) {
 			showErrorToast('Укажите корректный email.')
 			return
@@ -79,6 +83,10 @@ export function AuthForm({
 			showErrorToast(
 				`Логин должен содержать не более ${USERNAME_MAX_LENGTH} символов.`,
 			)
+			return
+		}
+		if (mode === 'register' && !form.password) {
+			showErrorToast('Укажите пароль.')
 			return
 		}
 		if (mode === 'register' && form.password.length < 10) {
@@ -126,7 +134,7 @@ export function AuthForm({
 			window.location.href = '/dashboard'
 		} catch (e) {
 			showErrorToast(
-				e instanceof Error ? e.message : 'Не удалось выполнить действие',
+				getApiErrorMessage(e, 'Не удалось выполнить действие.'),
 			)
 		} finally {
 			setLoading(false)
@@ -263,7 +271,7 @@ export function AuthForm({
 						</Link>
 					</div>
 
-					<form className='mt-8 space-y-5' onSubmit={handleSubmit}>
+					<form className='mt-8 space-y-5' noValidate onSubmit={handleSubmit}>
 						{mode === 'register' && (
 							<div className='grid gap-5 md:grid-cols-2'>
 								<label className='space-y-2'>
@@ -328,7 +336,10 @@ export function AuthForm({
 										value={form.role}
 										onChange={e => setForm({ ...form, role: e.target.value })}
 									>
-										{options?.roles?.map(role => (
+										{(options?.roles?.length
+											? options.roles
+											: ['student', 'teacher']
+										).map(role => (
 											<option key={role} value={role}>
 												{roleLabel(role)}
 											</option>

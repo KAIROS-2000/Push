@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
 # Image pinning REQUIRED for production.
 # Replace the FROM line with an explicit digest, e.g.:

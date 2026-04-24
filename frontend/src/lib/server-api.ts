@@ -2,7 +2,12 @@ import { cookies } from 'next/headers'
 
 import { INTERNAL_API_URL } from '@/lib/server-env'
 
-const AUTH_COOKIE_NAMES = ['codequest_access_token', 'codequest_refresh_token'] as const
+const FORWARDED_COOKIE_NAMES = [
+  'codequest_access_token',
+  'codequest_refresh_token',
+  'csrf_token',
+] as const
+const CSRF_HEADER = 'X-CSRF-Token'
 
 function normalizePath(path: string) {
   return path.startsWith('/') ? path : `/${path}`
@@ -17,13 +22,16 @@ function extractMessage(payload: unknown) {
 
 export async function serverApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cookieStore = await cookies()
-  const cookieHeader = AUTH_COOKIE_NAMES
-    .map((name) => {
-      const value = cookieStore.get(name)?.value
-      return value ? `${name}=${encodeURIComponent(value)}` : ''
-    })
+  const cookieHeader = FORWARDED_COOKIE_NAMES.map((name) => {
+    const value = cookieStore.get(name)?.value
+    return value ? `${name}=${encodeURIComponent(value)}` : ''
+  })
     .filter(Boolean)
     .join('; ')
+
+  const method = (init.method || 'GET').toUpperCase()
+  const csrf = cookieStore.get('csrf_token')?.value?.trim()
+  const needsCsrfHeader = !['GET', 'HEAD', 'OPTIONS'].includes(method)
 
   const response = await fetch(`${INTERNAL_API_URL}${normalizePath(path)}`, {
     ...init,
@@ -31,6 +39,7 @@ export async function serverApi<T>(path: string, init: RequestInit = {}): Promis
       accept: 'application/json',
       ...(init.headers || {}),
       ...(cookieHeader ? { cookie: cookieHeader } : {}),
+      ...(needsCsrfHeader && csrf ? { [CSRF_HEADER]: csrf } : {}),
     },
     cache: 'no-store',
   })

@@ -16,6 +16,7 @@ export function AppToaster() {
         top: 18,
         right: 18,
         left: 18,
+        zIndex: 200000,
       }}
       toastOptions={{
         duration: 3600,

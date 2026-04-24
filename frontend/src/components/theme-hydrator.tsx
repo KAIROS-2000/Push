@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { isAuthRoutePath, isProtectedRoutePath } from '@/lib/auth-routes'
 import { getSessionSnapshot, subscribeSessionSnapshot } from '@/lib/session-store'
-import { applyTheme, DEFAULT_THEME, getStoredTheme, setTheme } from '@/lib/theme'
+import { applyTheme, DEFAULT_THEME, getDocumentTheme, getStoredTheme, setTheme } from '@/lib/theme'
 
 const SESSION_REVALIDATION_INTERVAL_MS = 30_000
 
@@ -13,7 +13,19 @@ export function ThemeHydrator() {
   const pathname = usePathname()
 
   useLayoutEffect(() => {
-    applyTheme(getStoredTheme() || DEFAULT_THEME)
+    const stored = getStoredTheme()
+    if (stored) {
+      if (getDocumentTheme() !== stored) {
+        applyTheme(stored)
+      }
+      return
+    }
+    const sessionTheme = getSessionSnapshot().user?.theme
+    if (sessionTheme === 'light' || sessionTheme === 'dark') {
+      applyTheme(sessionTheme)
+    } else {
+      applyTheme(DEFAULT_THEME)
+    }
   }, [])
 
   useEffect(() => {
@@ -57,7 +69,12 @@ export function ThemeHydrator() {
 
   useEffect(() => {
     const snapshot = getSessionSnapshot()
-    if (snapshot.user?.theme) {
+    const stored = getStoredTheme()
+    if (stored) {
+      if (getDocumentTheme() !== stored) {
+        setTheme(stored, { persist: true })
+      }
+    } else if (snapshot.user?.theme) {
       setTheme(snapshot.user.theme)
     }
 
@@ -65,9 +82,15 @@ export function ThemeHydrator() {
 
     fetchSessionUser({ auth: 'optional' })
       .then((user) => {
-        if (!cancelled && user?.theme) {
-          setTheme(user.theme)
+        if (cancelled || !user?.theme) return
+        const latestStored = getStoredTheme()
+        if (latestStored) {
+          if (getDocumentTheme() !== latestStored) {
+            setTheme(latestStored, { persist: true })
+          }
+          return
         }
+        setTheme(user.theme)
       })
       .catch(() => undefined)
 
@@ -120,6 +143,28 @@ export function ThemeHydrator() {
       window.location.replace('/auth/login')
     })
   }, [pathname])
+
+  useEffect(() => {
+    return subscribeSessionSnapshot((snapshot) => {
+      const stored = getStoredTheme()
+      if (stored === 'light' || stored === 'dark') {
+        if (getDocumentTheme() !== stored) {
+          applyTheme(stored)
+        }
+        return
+      }
+      if (snapshot.status !== 'authenticated' || !snapshot.user?.theme) {
+        return
+      }
+      const t = snapshot.user.theme
+      if (t !== 'light' && t !== 'dark') {
+        return
+      }
+      if (getDocumentTheme() !== t) {
+        setTheme(t)
+      }
+    })
+  }, [])
 
   return null
 }

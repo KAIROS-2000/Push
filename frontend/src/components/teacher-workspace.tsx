@@ -1,6 +1,6 @@
 'use client'
 
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import {
 	AssignmentItem,
@@ -1192,9 +1192,15 @@ export function TeacherWorkspace({
 
 	useEffect(() => {
 		if (selectedAssignmentId) {
-			loadSubmissions(selectedAssignmentId).catch(() => {
+			loadSubmissions(selectedAssignmentId).catch((error) => {
 				setSubmissions([])
 				setFeedbackDrafts({})
+				showErrorToast(
+					getApiErrorMessage(
+						error,
+						'Не удалось загрузить ответы учеников по заданию.',
+					),
+				)
 			})
 			return
 		}

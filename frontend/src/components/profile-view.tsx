@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { RolePill } from '@/components/role-pill'
@@ -92,7 +92,7 @@ export function ProfileView() {
       setTheme(result.user.theme)
       showSuccessToast('Изменения профиля сохранены.')
     } catch (e) {
-      showErrorToast(e instanceof Error ? e.message : 'Не удалось сохранить профиль.')
+      showErrorToast(getApiErrorMessage(e, 'Не удалось сохранить профиль.'))
     } finally {
       setSaving(false)
     }
