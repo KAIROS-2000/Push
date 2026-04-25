@@ -1,0 +1,267 @@
+# ---------------------------------------------------------------------------
+# ProgHUB / Progyx compose stack.
+#
+# Image pinning (P0-6): every `image:` / `FROM` reference in this repo uses a
+# floating tag. For production builds replace each tag with a digest-pinned
+# form (`@sha256:<digest>`). The Dockerfiles under backend/, frontend/, and
+# judge_runner/ include matching instructions. See:
+#   - docs/operations/image-pinning.md  (operator playbook)
+#   - scripts/pin-images.sh             (digest resolver)
+# ---------------------------------------------------------------------------
+services:
+  db:
+    # pin: postgres:17  (replace with postgres:17@sha256:<digest> before prod)
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codequest
+      POSTGRES_USER: codequest
+      POSTGRES_PASSWORD: codequest
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codequest -d codequest"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    # pin: redis:7-alpine  (replace with redis:7-alpine@sha256:<digest> before prod; see docs/operations/image-pinning.md)
+    # Redis 7.4.x does not support requirepass-file; read secret in shell, then --requirepass (see docs/operations/redis.md).
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        REDIS_PASS=$$(cat /run/secrets/redis_password)
+        exec redis-server --requirepass "$$REDIS_PASS" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    secrets:
+      - redis_password
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # P0-8: nightly pg_dump sidecar. Runs the same postgres:17 image as `db`
+  # so pg_dump/pg_restore versions always match the server. See
+  # docs/operations/backup.md and docs/operations/dr.md.
+  # ---------------------------------------------------------------------------
+  db-backup:
+    # pin: postgres:17  (MUST match the `db` service digest)
+    image: postgres:17
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: codequest
+      PGUSER: codequest
+      # In production replace with a docker secret / orchestrator secret ref.
+      PGPASSWORD: codequest
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: "14"
+      BACKUP_INTERVAL_SECONDS: "86400"
+    volumes:
+      - postgres_backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./scripts/restore.sh:/usr/local/bin/restore.sh:ro
+    # Simple sleep-loop scheduler. Rationale for not using cron is in
+    # docs/operations/backup.md ("Why a loop and not cron?").
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh || true
+        echo "[db-backup] scheduler starting; interval=$${BACKUP_INTERVAL_SECONDS}s retention=$${BACKUP_RETENTION_DAYS}d"
+        while true; do
+          /usr/local/bin/backup.sh || echo "[db-backup] backup run failed (continuing)"
+          sleep "$${BACKUP_INTERVAL_SECONDS}"
+        done
+    networks:
+      - backend_net
+
+  judge-runner:
+    build:
+      context: .
+      dockerfile: judge_runner/Dockerfile
+    restart: unless-stopped
+    environment:
+      JUDGE_RUNNER_HOST: 0.0.0.0
+      JUDGE_RUNNER_PORT: "8090"
+      JUDGE_RUNNER_MAX_CONCURRENCY: ${JUDGE_RUNNER_MAX_CONCURRENCY:-4}
+      JUDGE_RUNNER_AUTH_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+    expose:
+      - "8090"
+    # -----------------------------------------------------------------------
+    # P0-4: judge-runner sandbox hardening. Full rationale + verification
+    # checklist lives in docs/operations/sandbox.md. Summary:
+    #   - read-only rootfs, tmpfs on /tmp with noexec,nosuid
+    #   - all Linux capabilities dropped, no-new-privileges
+    #   - custom seccomp profile (curated denylist; see seccomp.json)
+    #   - mem/cpu/pids/ulimit caps to contain resource-abuse
+    #   - attached only to `judge_net` (internal: true below) -> no egress
+    #   - non-root USER 1001 baked into the Dockerfile
+    # -----------------------------------------------------------------------
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+      # Custom seccomp profile. Operators MUST validate on the target host
+      # (run the judge integration tests) before promoting to production.
+      # If the profile rejects a legitimate syscall, comment this line out,
+      # file an issue, and fall back to Docker's default profile.
+      - seccomp=./judge_runner/seccomp.json
+      # AppArmor profile. `docker-default` is applied automatically on Linux
+      # hosts with AppArmor (Debian/Ubuntu) and is a no-op on Docker Desktop
+      # for macOS/Windows. Leaving this commented keeps dev on those hosts
+      # working; uncomment on Linux production hosts.
+      # - apparmor=docker-default
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1.0
+    ulimits:
+      nproc: 64
+      nofile:
+        soft: 256
+        hard: 256
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - judge_net
+
+  backend-init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: "no"
+    env_file:
+      - .env
+    secrets:
+      - redis_password
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
+      FLASK_DEBUG: ${FLASK_DEBUG:-0}
+      CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
+      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+      CODE_JUDGE_ALLOW_LOCAL_FALLBACK: ${CODE_JUDGE_ALLOW_LOCAL_FALLBACK:-false}
+      METRICS_DEBUG: ${METRICS_DEBUG:-0}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "flask", "--app", "run.py", "bootstrap-app"]
+    networks:
+      - backend_net
+      - judge_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    secrets:
+      - redis_password
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
+      FLASK_DEBUG: ${FLASK_DEBUG:-0}
+      CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
+      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+      CODE_JUDGE_ALLOW_LOCAL_FALLBACK: ${CODE_JUDGE_ALLOW_LOCAL_FALLBACK:-false}
+      METRICS_DEBUG: ${METRICS_DEBUG:-0}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
+      judge-runner:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+      - judge_net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        APP_ENV: ${APP_ENV:-development}
+        NEXT_PUBLIC_APP_ENV: ${NEXT_PUBLIC_APP_ENV:-development}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        INTERNAL_API_URL: http://backend:8000/api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV:-development}
+      NEXT_PUBLIC_APP_ENV: ${NEXT_PUBLIC_APP_ENV:-development}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_TELEMETRY_DISABLED: "1"
+      INTERNAL_API_URL: http://backend:8000/api
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+
+volumes:
+  postgres_data:
+  postgres_backups:
+  redis_data:
+
+secrets:
+  redis_password:
+    file: ./secrets/redis_password
+
+networks:
+  backend_net:
+  judge_net:
+    # No default gateway => no egress from the judge-runner. See
+    # docs/operations/sandbox.md layer 7.
+    internal: true
