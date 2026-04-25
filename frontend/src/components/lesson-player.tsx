@@ -468,6 +468,7 @@ export function LessonPlayer({
 	initialData?: LessonPlayerPayload | null
 }) {
 	const rootRef = useRef<HTMLDivElement | null>(null)
+	const startedLessonRef = useRef<number | null>(null)
 	const router = useRouter()
 	const normalizedInitialData = initialData
 		? normalizeLessonPayload(initialData)
@@ -546,6 +547,22 @@ export function LessonPlayer({
 				setError(getApiErrorMessage(e, 'Не удалось загрузить урок.'))
 			})
 	}, [initialData, lessonId])
+
+	useEffect(() => {
+		if (!lesson || currentUserRole !== 'student') return
+		if (startedLessonRef.current === lesson.id) return
+		startedLessonRef.current = lesson.id
+
+		api<{ progress: ProgressItem }>(
+			`/lessons/${lesson.id}/start`,
+			{ method: 'POST' },
+			'required',
+		)
+			.then(data => setProgress(data.progress))
+			.catch(() => {
+				startedLessonRef.current = null
+			})
+	}, [currentUserRole, lesson])
 
 	const quiz = useMemo<QuizItem | null>(
 		() => lesson?.quizzes?.[0] || null,
@@ -753,6 +770,25 @@ export function LessonPlayer({
 		})
 	}
 
+	function revealNextHint() {
+		if (!lesson || !task) return
+		const nextHintsUsed = Math.min(completedHints + 1, task.hints.length)
+		setShownHints(nextHintsUsed)
+
+		api<{ progress: ProgressItem }>(
+			`/lessons/${lesson.id}/hints`,
+			{
+				method: 'POST',
+				body: JSON.stringify({ hints_used: nextHintsUsed }),
+			},
+			'required',
+		)
+			.then(data => setProgress(data.progress))
+			.catch(error => {
+				showErrorToast(getApiErrorMessage(error, 'Не удалось сохранить подсказку.'))
+			})
+	}
+
 	async function submitTask() {
 		if (!task) return
 		setLoadingTask(true)
@@ -762,6 +798,7 @@ export function LessonPlayer({
 				score: number
 				passed: boolean
 				xp_awarded: number
+				xp_skipped?: boolean
 				progress: ProgressItem
 				judge_report?: JudgeReport | null
 				requires_teacher_review?: boolean
@@ -769,15 +806,20 @@ export function LessonPlayer({
 				`/tasks/${task.id}/submit`,
 				{
 					method: 'POST',
-					body: JSON.stringify({ answer }),
+					body: JSON.stringify({ answer, hints_used: completedHints }),
 				},
 				'required',
 			)
 			const requiresTeacherReview = Boolean(data.requires_teacher_review)
 			setJudgeReport(data.judge_report || null)
+			const xpNote = data.xp_awarded
+				? `+${data.xp_awarded} XP.`
+				: data.xp_skipped
+					? 'XP не начислено: урок для младшей возрастной группы.'
+					: ''
 			const resultMessage = requiresTeacherReview
 				? data.feedback
-				: `${data.feedback} Результат: ${data.score}%. ${data.xp_awarded ? `+${data.xp_awarded} XP.` : ''}`
+				: `${data.feedback} Результат: ${data.score}%. ${xpNote}`
 			if (data.passed) {
 				showSuccessToast(resultMessage)
 			} else {
@@ -805,6 +847,7 @@ export function LessonPlayer({
 				correct_answers: number
 				total_questions: number
 				xp_awarded: number
+				xp_skipped?: boolean
 				progress: ProgressItem
 				review_questions?: QuizQuestion[]
 			}>(
@@ -815,7 +858,12 @@ export function LessonPlayer({
 				},
 				'required',
 			)
-			const quizResultMessage = `Тест: ${data.correct_answers}/${data.total_questions}, ${data.score}%. ${data.passed ? 'Квиз пройден!' : 'Можно улучшить результат.'} ${data.xp_awarded ? `+${data.xp_awarded} XP.` : ''}`
+			const quizXpNote = data.xp_awarded
+				? `+${data.xp_awarded} XP.`
+				: data.xp_skipped
+					? 'XP не начислено: урок для младшей возрастной группы.'
+					: ''
+			const quizResultMessage = `Тест: ${data.correct_answers}/${data.total_questions}, ${data.score}%. ${data.passed ? 'Квиз пройден!' : 'Можно улучшить результат.'} ${quizXpNote}`
 			if (data.passed) {
 				showSuccessToast(quizResultMessage)
 				if (
@@ -1199,7 +1247,7 @@ export function LessonPlayer({
 										<button
 											type='button'
 											disabled={completedHints >= task.hints.length}
-											onClick={() => setShownHints(value => value + 1)}
+											onClick={revealNextHint}
 											className='w-full rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-50 sm:w-auto'
 										>
 											{completedHints >= task.hints.length

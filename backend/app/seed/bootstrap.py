@@ -60,18 +60,28 @@ def bootstrap_superadmin() -> None:
 
 
 def seed_achievements() -> None:
-    if Achievement.query.count() > 0:
-        return
+    existing_codes = {achievement.code for achievement in Achievement.query.all()}
     achievements = [
         ('first_code', 'Первый код', 'Написать первую программу', 'start', 'sparkles', 50),
         ('perfect_five', 'Безошибочный', 'Пройти 5 уроков подряд без ошибок', 'mastery', 'badge-check', 150),
         ('marathon', 'Марафонец', 'Заходить 30 дней подряд', 'persistence', 'flame', 500),
         ('explorer', 'Исследователь', 'Закрыть все модули возрастной группы', 'progress', 'map', 300),
         ('lightning', 'Молния', 'Решить задачу меньше чем за минуту', 'speed', 'zap', 75),
+        ('patience', 'Терпение', 'Решить задачу, потратив больше 10 минут, но без ошибок', 'persistence', 'clock', 200),
+        ('night_owl', 'Вечерний программист', 'Пройти урок после 23:00', 'time', 'moon', 50),
+        ('early_bird', 'Утренний старт', 'Пройти урок до 8:00', 'time', 'sunrise', 50),
+        ('golden_streak', 'Золотая серия', 'Пройти 10 уроков подряд без перерыва более 5 минут', 'persistence', 'trophy', 300),
+        ('sprinter', 'Спринтер', 'Пройти 5 уроков за 20 минут', 'speed', 'timer', 175),
+        ('no_hints', 'Без подсказок', 'Решить задачу, не используя встроенные подсказки', 'mastery', 'eye-off', 125),
+        ('revisitor', 'Повторитель', 'Вернуться к старому уроку и пройти его идеально', 'persistence', 'rotate-ccw', 80),
     ]
+    added = False
     for code, name, description, category, icon, xp in achievements:
-        db.session.add(Achievement(code=code, name=name, description=description, category=category, icon=icon, xp_reward=xp))
-    db.session.commit()
+        if code not in existing_codes:
+            db.session.add(Achievement(code=code, name=name, description=description, category=category, icon=icon, xp_reward=xp))
+            added = True
+    if added:
+        db.session.commit()
 
 
 def cleanup_deprecated_learning_artifacts() -> None:

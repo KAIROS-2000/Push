@@ -1,5 +1,6 @@
 'use client'
 
+import { AchievementShowcase } from '@/components/achievement-showcase'
 import { RolePill } from '@/components/role-pill'
 import { StatCard } from '@/components/stat-card'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
@@ -40,6 +41,7 @@ export function DashboardView({
 	const [data, setData] = useState<DashboardData | null>(initialData)
 	const [error, setError] = useState('')
 	const [classCode, setClassCode] = useState('')
+	const [showcaseOpen, setShowcaseOpen] = useState(false)
 
 	useUserPageMotion(rootRef, [Boolean(data)])
 
@@ -236,14 +238,27 @@ export function DashboardView({
 					progress={assignmentFocus}
 					tone='emerald'
 				/>
-				<StatCard
-					value={String(data.summary.achievements)}
-					label='достижений'
-					icon={Trophy}
-					kicker='награды'
-					progress={achievementGlow}
-					tone='violet'
-				/>
+				<div
+					role='button'
+					tabIndex={0}
+					className='cursor-pointer text-left'
+					onClick={() => setShowcaseOpen(true)}
+					onKeyDown={event => {
+						if (event.key === 'Enter' || event.key === ' ') {
+							event.preventDefault()
+							setShowcaseOpen(true)
+						}
+					}}
+				>
+					<StatCard
+						value={String(data.summary.achievements)}
+						label='достижений'
+						icon={Trophy}
+						kicker='награды'
+						progress={achievementGlow}
+						tone='violet'
+					/>
+				</div>
 				<StatCard
 					value={String(data.user.streak)}
 					label='дней подряд'
@@ -520,6 +535,10 @@ export function DashboardView({
 					</article>
 				) : null}
 			</section>
+
+			{showcaseOpen && (
+				<AchievementShowcase onClose={() => setShowcaseOpen(false)} />
+			)}
 		</div>
 	)
 }

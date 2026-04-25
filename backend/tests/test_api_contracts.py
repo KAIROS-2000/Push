@@ -189,8 +189,8 @@ class ApiContractTests(unittest.TestCase):
             task_payload = client.post(f"/api/tasks/{ids['task_id']}/submit", json={'answer': 'ok'}).get_json()
             quiz_payload = client.post(f"/api/quizzes/{ids['quiz_id']}/submit", json={'answers': {'q1': 0}}).get_json()
 
-        assert_has_keys(self, task_payload, {'passed', 'score', 'xp_awarded', 'feedback', 'judge_report', 'requires_teacher_review', 'progress', 'user'}, '/api/tasks/<id>/submit')
-        assert_has_keys(self, quiz_payload, {'passed', 'score', 'correct_answers', 'total_questions', 'xp_awarded', 'progress', 'user', 'review_questions'}, '/api/quizzes/<id>/submit')
+        assert_has_keys(self, task_payload, {'passed', 'score', 'xp_awarded', 'xp_skipped', 'feedback', 'judge_report', 'requires_teacher_review', 'progress', 'user'}, '/api/tasks/<id>/submit')
+        assert_has_keys(self, quiz_payload, {'passed', 'score', 'correct_answers', 'total_questions', 'xp_awarded', 'xp_skipped', 'progress', 'user', 'review_questions'}, '/api/quizzes/<id>/submit')
 
         with app.test_client() as client:
             self.login(client, 'admin@example.com', 'AdminPass123!')
@@ -198,6 +198,161 @@ class ApiContractTests(unittest.TestCase):
 
         assert_has_keys(self, users_payload, {'users', 'pagination', 'filters'}, '/api/admin/users')
         assert_has_keys(self, users_payload['pagination'], {'page', 'page_size', 'total', 'total_pages'}, '/api/admin/users.pagination')
+
+    def test_lesson_start_and_hint_tracking_contracts_match_achievements(self):
+        app = self.create_app()
+        ids = self.seed_fixture(app)
+
+        with app.app_context():
+            from app.seed.bootstrap import seed_achievements
+
+            seed_achievements()
+
+        with app.test_client() as client:
+            self.login(client, 'student@example.com', 'StudentPass123!')
+            start_payload = client.post(f"/api/lessons/{ids['lesson_id']}/start").get_json()
+            hints_payload = client.post(
+                f"/api/lessons/{ids['lesson_id']}/hints",
+                json={'hints_used': 2},
+            ).get_json()
+            reloaded_lesson_payload = client.get(f"/api/lessons/{ids['lesson_id']}").get_json()
+            client.post(f"/api/tasks/{ids['task_id']}/submit", json={'answer': 'ok'}).get_json()
+
+        assert_has_keys(self, start_payload, {'progress'}, '/api/lessons/<id>/start')
+        self.assertIsNotNone(start_payload['progress']['started_at'])
+        assert_has_keys(self, hints_payload, {'progress'}, '/api/lessons/<id>/hints')
+        self.assertEqual(hints_payload['progress']['hints_used'], 2)
+        self.assertIsNotNone(hints_payload['progress']['started_at'])
+        self.assertEqual(reloaded_lesson_payload['progress']['hints_used'], 2)
+        self.assertIsNotNone(reloaded_lesson_payload['progress']['started_at'])
+        with app.app_context():
+            from app.models.learning import Achievement, UserAchievement
+            from app.models.user import User
+
+            student = User.query.filter_by(username='student').one()
+            no_hints = Achievement.query.filter_by(code='no_hints').one()
+            earned_no_hints = UserAchievement.query.filter_by(
+                user_id=student.id,
+                achievement_id=no_hints.id,
+            ).first()
+        self.assertIsNone(earned_no_hints)
+
+    def test_student_outranking_lesson_age_group_can_complete_without_xp(self):
+        app = self.create_app()
+        self.seed_fixture(app)
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.learning import Lesson, Module, Quiz, Task
+            from app.models.user import User
+            from app.seed.bootstrap import seed_achievements
+
+            seed_achievements()
+
+            student = User.query.filter_by(username='student').one()
+            self.assertEqual(student.age_group, 'middle')
+            module = Module(
+                slug='junior-review',
+                title='Junior Review',
+                description='Review younger lessons',
+                age_group='junior',
+                icon='sparkles',
+                color='#4A90D9',
+                order_index=1,
+                is_published=True,
+            )
+            db.session.add(module)
+            db.session.flush()
+            task_lesson = Lesson(
+                module_id=module.id,
+                slug='junior-task',
+                title='Junior task',
+                summary='Task summary',
+                order_index=1,
+                passing_score=70,
+                theory_blocks=[],
+                interactive_steps=[],
+            )
+            quiz_lesson = Lesson(
+                module_id=module.id,
+                slug='junior-quiz',
+                title='Junior quiz',
+                summary='Quiz summary',
+                order_index=2,
+                passing_score=70,
+                theory_blocks=[],
+                interactive_steps=[],
+            )
+            db.session.add_all([task_lesson, quiz_lesson])
+            db.session.flush()
+            task = Task(
+                lesson_id=task_lesson.id,
+                task_type='text',
+                title='Junior text',
+                prompt='Explain',
+                starter_code='',
+                validation={'evaluation_mode': 'keywords', 'keywords': ['ok']},
+                hints=[],
+                xp_reward=30,
+            )
+            quiz = Quiz(
+                lesson_id=quiz_lesson.id,
+                title='Junior quiz',
+                questions=[{'id': 'q1', 'type': 'single', 'prompt': 'Pick', 'options': ['ok'], 'correct': [0]}],
+                passing_score=70,
+                xp_reward=40,
+            )
+            db.session.add_all([task, quiz])
+            db.session.commit()
+            task_id = task.id
+            quiz_id = quiz.id
+
+        with app.test_client() as client:
+            self.login(client, 'student@example.com', 'StudentPass123!')
+            task_payload = client.post(f'/api/tasks/{task_id}/submit', json={'answer': 'ok'}).get_json()
+            quiz_payload = client.post(f'/api/quizzes/{quiz_id}/submit', json={'answers': {'q1': 0}}).get_json()
+
+        with app.app_context():
+            from app.models.user import User
+
+            student_xp = User.query.filter_by(username='student').one().xp
+
+        self.assertTrue(task_payload['passed'])
+        self.assertEqual(task_payload['xp_awarded'], 0)
+        self.assertTrue(task_payload['xp_skipped'])
+        self.assertTrue(quiz_payload['passed'])
+        self.assertEqual(quiz_payload['xp_awarded'], 0)
+        self.assertTrue(quiz_payload['xp_skipped'])
+        self.assertEqual(student_xp, 0)
+
+    def test_seed_achievements_adds_new_codes_without_duplicates(self):
+        app = self.create_app()
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.learning import Achievement
+            from app.seed.bootstrap import seed_achievements
+
+            db.session.add(
+                Achievement(
+                    code='first_code',
+                    name='Existing First Code',
+                    description='Existing row',
+                    category='start',
+                    icon='sparkles',
+                    xp_reward=50,
+                )
+            )
+            db.session.commit()
+
+            seed_achievements()
+            seed_achievements()
+
+            codes = [achievement.code for achievement in Achievement.query.all()]
+
+        self.assertEqual(codes.count('first_code'), 1)
+        for code in {'patience', 'night_owl', 'early_bird', 'golden_streak', 'sprinter', 'no_hints', 'revisitor'}:
+            self.assertIn(code, codes)
 
     def test_leaderboard_supports_class_scope_and_global_cache(self):
         app = self.create_app()

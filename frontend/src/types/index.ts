@@ -122,6 +122,7 @@ export interface ProgressItem {
   score: number
   attempts: number
   hints_used: number
+  started_at: string | null
   completed_at: string | null
 }
 

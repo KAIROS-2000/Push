@@ -72,12 +72,25 @@ PROGRESS_STATUS_LABELS = {
 
 MANUAL_REVIEW_PROGRESS_STATUSES = {"pending_review", "needs_revision"}
 VALID_AGE_GROUPS = {"junior", "middle", "senior"}
+_AGE_GROUP_RANK = {"junior": 0, "middle": 1, "senior": 2}
 LEADERBOARD_LIMIT = 50
 GLOBAL_LEADERBOARD_REFRESH_INTERVAL = timedelta(minutes=5)
 GLOBAL_LEADERBOARD_CACHE_KEY_ALL = "__all__"
 _global_leaderboard_cache: dict[
     tuple[str, str], tuple[datetime, list[dict]]
 ] = {}
+
+
+def _user_outranks_lesson(user_age_group: str | None, lesson_age_group: str | None) -> bool:
+    user_rank = _AGE_GROUP_RANK.get((user_age_group or "").strip().lower(), 0)
+    lesson_rank = _AGE_GROUP_RANK.get((lesson_age_group or "").strip().lower(), 0)
+    return user_rank > lesson_rank
+
+
+def _student_outranks_lesson(user: User, lesson: Lesson | None) -> bool:
+    if user.role != UserRole.STUDENT or lesson is None or lesson.module is None:
+        return False
+    return _user_outranks_lesson(user.age_group, lesson.module.age_group)
 
 
 def _leaderboard_cache_age_key(age_group: str | None) -> str:
@@ -221,6 +234,14 @@ def _clamp_completion_percent(value) -> int:
     except (TypeError, ValueError):
         parsed = 0
     return max(0, min(parsed, 100))
+
+
+def _coerce_nonnegative_int(value) -> int:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        parsed = 0
+    return max(0, parsed)
 
 
 def _normalize_age_group(value: str | None, default: str = "middle") -> str:
@@ -806,7 +827,10 @@ def complete_lesson(current_user: User, lesson_id: int):
     else:
         progress.completed_at = None
 
-    sync_achievements_for_user(current_user)
+    sync_achievements_for_user(
+        current_user,
+        award_xp=not _student_outranks_lesson(current_user, lesson),
+    )
     completed_lessons_count = UserProgress.query.filter(
         UserProgress.user_id == current_user.id,
         UserProgress.status.in_(["completed", "pending_review"]),
@@ -844,6 +868,7 @@ def submit_task(current_user: User, task_id: int):
     data = request.get_json() or {}
     raw_answer = data.get("answer") or ""
     has_answer = bool(raw_answer.strip())
+    hints_used = _coerce_nonnegative_int(data.get("hints_used"))
     manual_review_required = task.requires_teacher_review()
     judge_report = None
     validation = task.normalized_validation(include_private=True)
@@ -870,8 +895,11 @@ def submit_task(current_user: User, task_id: int):
 
     progress = _get_or_create_progress(current_user.id, task.lesson_id)
     progress.attempts += 1
+    progress.hints_used = max(int(progress.hints_used or 0), hints_used)
     was_completed = progress.status == "completed"
     xp_awarded = 0
+    xp_skipped = False
+    outranks_lesson = _student_outranks_lesson(current_user, task.lesson)
     if manual_review_required:
         if progress.status != "completed":
             progress.status = "in_progress" if has_answer else progress.status
@@ -880,11 +908,15 @@ def submit_task(current_user: User, task_id: int):
     else:
         progress.score = max(progress.score, score)
         if passed:
+            _mark_progress_started(progress)
             progress.status = "completed"
             progress.completed_at = progress.completed_at or datetime.now(UTC)
             if not was_completed:
-                current_user.add_xp(task.xp_reward)
-                xp_awarded = task.xp_reward
+                if outranks_lesson:
+                    xp_skipped = True
+                else:
+                    current_user.add_xp(task.xp_reward)
+                    xp_awarded = task.xp_reward
         elif has_answer and progress.status == "not_started":
             progress.status = "in_progress"
             _mark_progress_started(progress)
@@ -897,19 +929,57 @@ def submit_task(current_user: User, task_id: int):
             feedback=summarize_judge_report(judge_report) if judge_report else None,
         )
     if not manual_review_required:
-        _award_achievement_if_needed(current_user, code="first_code")
-    sync_achievements_for_user(current_user)
+        _award_achievement_if_needed(
+            current_user, code="first_code", award_xp=not outranks_lesson
+        )
+    sync_achievements_for_user(current_user, award_xp=not outranks_lesson)
     db.session.commit()
     return {
         "passed": passed,
         "score": score,
         "xp_awarded": xp_awarded,
+        "xp_skipped": xp_skipped,
         "feedback": feedback,
         "judge_report": judge_report,
         "requires_teacher_review": manual_review_required,
         "progress": progress.to_dict(),
         "user": current_user.to_dict(),
     }
+
+
+@student_bp.post("/lessons/<int:lesson_id>/start")
+@auth_required([UserRole.STUDENT])
+def start_lesson(current_user: User, lesson_id: int):
+    lesson = Lesson.query.get_or_404(lesson_id)
+    if not _user_can_access_lesson(current_user, lesson):
+        return {"message": "У вас нет доступа к этому уроку."}, 403
+    if _effective_lesson_state_for_student(current_user, lesson) == STATE_MAP["locked"]:
+        return {"message": "Сначала завершите предыдущий урок."}, 403
+
+    progress = _get_or_create_progress(current_user.id, lesson.id)
+    _mark_progress_started(progress)
+    db.session.commit()
+    return {"progress": progress.to_dict()}
+
+
+@student_bp.post("/lessons/<int:lesson_id>/hints")
+@auth_required([UserRole.STUDENT])
+def record_lesson_hints(current_user: User, lesson_id: int):
+    lesson = Lesson.query.get_or_404(lesson_id)
+    if not _user_can_access_lesson(current_user, lesson):
+        return {"message": "У вас нет доступа к этому уроку."}, 403
+    if _effective_lesson_state_for_student(current_user, lesson) == STATE_MAP["locked"]:
+        return {"message": "Сначала завершите предыдущий урок."}, 403
+
+    data = request.get_json() or {}
+    progress = _get_or_create_progress(current_user.id, lesson.id)
+    _mark_progress_started(progress)
+    progress.hints_used = max(
+        int(progress.hints_used or 0),
+        _coerce_nonnegative_int(data.get("hints_used")),
+    )
+    db.session.commit()
+    return {"progress": progress.to_dict()}
 
 
 @student_bp.post("/quizzes/<int:quiz_id>/submit")
@@ -945,11 +1015,14 @@ def submit_quiz(current_user: User, quiz_id: int):
     score = int((correct / max(len(quiz.questions), 1)) * 100)
     progress = _get_or_create_progress(current_user.id, quiz.lesson_id)
     progress.attempts += 1
+    _mark_progress_started(progress)
     progress.score = max(progress.score, score)
     passed = score >= quiz.passing_score
     was_completed = progress.status == "completed"
     xp_awarded = 0
+    xp_skipped = False
     manual_review_required = _lesson_requires_teacher_review(quiz.lesson)
+    outranks_lesson = _student_outranks_lesson(current_user, quiz.lesson)
     if passed:
         progress.status = (
             "pending_review"
@@ -958,8 +1031,11 @@ def submit_quiz(current_user: User, quiz_id: int):
         )
         progress.completed_at = progress.completed_at or datetime.now(UTC)
         if not was_completed and not manual_review_required:
-            current_user.add_xp(quiz.xp_reward)
-            xp_awarded = quiz.xp_reward
+            if outranks_lesson:
+                xp_skipped = True
+            else:
+                current_user.add_xp(quiz.xp_reward)
+                xp_awarded = quiz.xp_reward
     elif progress.status == "not_started":
         progress.status = "in_progress"
         _mark_progress_started(progress)
@@ -967,7 +1043,7 @@ def submit_quiz(current_user: User, quiz_id: int):
         sync_student_assignment_submissions_for_lesson(
             current_user, quiz.lesson, progress
         )
-    sync_achievements_for_user(current_user)
+    sync_achievements_for_user(current_user, award_xp=not outranks_lesson)
     db.session.commit()
     return {
         "passed": passed,
@@ -975,6 +1051,7 @@ def submit_quiz(current_user: User, quiz_id: int):
         "correct_answers": correct,
         "total_questions": len(quiz.questions),
         "xp_awarded": xp_awarded,
+        "xp_skipped": xp_skipped,
         "details": details,
         "review_questions": quiz.to_dict(include_private=True)["questions"],
         "progress": progress.to_dict(),
@@ -1256,7 +1333,7 @@ def parent_access(code: str):
     }
 
 
-def _award_achievement_if_needed(user: User, code: str) -> None:
+def _award_achievement_if_needed(user: User, code: str, *, award_xp: bool = True) -> None:
     achievement = Achievement.query.filter_by(code=code).first()
     if not achievement:
         return
@@ -1266,5 +1343,6 @@ def _award_achievement_if_needed(user: User, code: str) -> None:
     if exists:
         return
     db.session.add(UserAchievement(user_id=user.id, achievement_id=achievement.id))
-    user.add_xp(achievement.xp_reward)
+    if award_xp:
+        user.add_xp(achievement.xp_reward)
     db.session.flush()
