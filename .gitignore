@@ -1,4 +1,5 @@
 # --- Secrets / local env ---
+secrets/redis_password
 .env
 .env.*
 !.env.example

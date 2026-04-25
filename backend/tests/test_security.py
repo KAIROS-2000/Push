@@ -12,6 +12,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+_PROD_REDIS_ENV = {
+    'REDIS_URL': 'redis://127.0.0.1:6379/0',
+    'REDIS_PASSWORD': 'UnitTestRedisPassword0123456789ABC!',
+}
+
 
 class SecurityRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -278,6 +283,56 @@ class SecurityRegressionTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 403)
 
+    def test_register_rejects_invalid_phone(self):
+        app = self.create_app()
+        with app.test_client() as client:
+            response = client.post(
+                '/api/auth/register',
+                json={
+                    'email': 'reg1@example.com',
+                    'username': 'st_rg1',
+                    'password': 'StrongPass123!',
+                    'phone': '123',
+                    'role': 'student',
+                    'age_group': 'middle',
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('телефон', response.get_json().get('message', '').lower())
+
+    def test_register_succeeds_with_russian_phone(self):
+        app = self.create_app()
+        with app.test_client() as client:
+            response = client.post(
+                '/api/auth/register',
+                json={
+                    'email': 'reg2@example.com',
+                    'username': 'st_rg2',
+                    'password': 'StrongPass123!',
+                    'phone': '+7 (912) 345-67-89',
+                    'role': 'student',
+                    'age_group': 'middle',
+                },
+            )
+            self.assertEqual(response.status_code, 201, response.get_json())
+            self.assertEqual(response.get_json()['user']['phone'], '79123456789')
+
+    def test_register_rejects_missing_phone(self):
+        app = self.create_app()
+        with app.test_client() as client:
+            response = client.post(
+                '/api/auth/register',
+                json={
+                    'email': 'reg3@example.com',
+                    'username': 'st_rg3',
+                    'password': 'StrongPass123!',
+                    'role': 'student',
+                    'age_group': 'middle',
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('телефон', response.get_json().get('message', '').lower())
+
     def test_production_bootstrap_requires_explicit_secure_superadmin(self):
         with self.assertRaises(RuntimeError):
             self.create_app(
@@ -287,6 +342,7 @@ class SecurityRegressionTests(unittest.TestCase):
                 SUPERADMIN_EMAIL='',
                 SUPERADMIN_PASSWORD='',
                 GIGACHAT_VERIFY_SSL='true',
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_forces_local_fallback_off_and_sets_security_headers(self):
@@ -296,6 +352,7 @@ class SecurityRegressionTests(unittest.TestCase):
             SUPERADMIN_BOOTSTRAP='false',
             GIGACHAT_VERIFY_SSL='true',
             CODE_JUDGE_ALLOW_LOCAL_FALLBACK='true',
+            **_PROD_REDIS_ENV,
         )
         self.assertFalse(app.config['CODE_JUDGE_ALLOW_LOCAL_FALLBACK'])
 

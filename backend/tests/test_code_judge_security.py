@@ -15,6 +15,11 @@ if str(BACKEND_DIR) not in sys.path:
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+_PROD_REDIS_ENV = {
+    'REDIS_URL': 'redis://127.0.0.1:6379/0',
+    'REDIS_PASSWORD': 'UnitTestRedisPassword0123456789ABC!',
+}
+
 
 class CodeJudgeSecurityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -87,6 +92,7 @@ class CodeJudgeSecurityTests(unittest.TestCase):
                 CLIENT_URL='https://frontend.example',
                 CODE_JUDGE_RUNNER_URL='http://judge-runner:8090/execute',
                 CODE_JUDGE_RUNNER_TOKEN='',
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_runner_rejects_common_placeholder_tokens(self):
@@ -102,6 +108,7 @@ class CodeJudgeSecurityTests(unittest.TestCase):
                         CLIENT_URL='https://frontend.example',
                         CODE_JUDGE_RUNNER_URL='http://judge-runner:8090/execute',
                         CODE_JUDGE_RUNNER_TOKEN=placeholder_token,
+                        **_PROD_REDIS_ENV,
                     )
 
     def test_production_runner_rejects_short_tokens(self):
@@ -112,6 +119,7 @@ class CodeJudgeSecurityTests(unittest.TestCase):
                 CLIENT_URL='https://frontend.example',
                 CODE_JUDGE_RUNNER_URL='http://judge-runner:8090/execute',
                 CODE_JUDGE_RUNNER_TOKEN='x' * 23,
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_runner_accepts_strong_token(self):
@@ -123,6 +131,7 @@ class CodeJudgeSecurityTests(unittest.TestCase):
             CODE_JUDGE_RUNNER_TOKEN='r' * 32,
             SUPERADMIN_BOOTSTRAP='false',
             GIGACHAT_VERIFY_SSL='true',
+            **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])
 

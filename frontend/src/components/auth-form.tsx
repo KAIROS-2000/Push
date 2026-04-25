@@ -5,6 +5,7 @@ import { api, getApiErrorMessage } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
 import { setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
+import { isValidRuPhone, normalizeRuPhoneInput } from '@/lib/phone'
 import { showErrorToast } from '@/lib/toast'
 import { AuthOptions, UserItem } from '@/types'
 import Image from 'next/image'
@@ -53,6 +54,7 @@ export function AuthForm({
 		full_name: '',
 		username: '',
 		email: '',
+		phone: '',
 		password: '',
 		role: 'student',
 		age_group: 'middle',
@@ -68,6 +70,7 @@ export function AuthForm({
 		event.preventDefault()
 		const normalizedCredential = form.email.trim().toLowerCase()
 		const normalizedUsername = form.username.trim()
+		const normalizedRegPhone = normalizeRuPhoneInput(form.phone)
 		if (mode === 'register' && !normalizedUsername) {
 			showErrorToast('Укажите username.')
 			return
@@ -101,6 +104,16 @@ export function AuthForm({
 			showErrorToast('Выберите возрастную группу ученика.')
 			return
 		}
+		if (mode === 'register' && !form.phone.trim()) {
+			showErrorToast('Укажите номер телефона.')
+			return
+		}
+		if (mode === 'register' && !isValidRuPhone(normalizedRegPhone)) {
+			showErrorToast(
+				'Укажите корректный российский номер телефона (например +7 912 345-67-89).',
+			)
+			return
+		}
 		if (mode === 'login' && !normalizedCredential) {
 			showErrorToast('Укажите email или username.')
 			return
@@ -116,6 +129,7 @@ export function AuthForm({
 							full_name: form.full_name,
 							username: normalizedUsername,
 							email: normalizedCredential,
+							phone: normalizedRegPhone!,
 							password: form.password,
 							role: form.role,
 							theme: form.theme,
@@ -328,6 +342,25 @@ export function AuthForm({
 
 							{mode === 'register' && (
 								<label className='space-y-2'>
+									<span className='auth-label text-sm font-semibold text-slate-700'>
+										Телефон
+									</span>
+									<input
+										type='tel'
+										autoComplete='tel'
+										inputMode='tel'
+										placeholder='+7 912 345-67-89'
+										className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
+										value={form.phone}
+										onChange={e =>
+											setForm({ ...form, phone: e.target.value })
+										}
+									/>
+								</label>
+							)}
+
+							{mode === 'register' && (
+								<label className='space-y-2 md:col-span-2'>
 									<span className='auth-label text-sm font-semibold text-slate-700'>
 										Роль
 									</span>

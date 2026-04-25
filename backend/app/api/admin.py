@@ -8,6 +8,7 @@ from ..core.security import (
     ADMIN_PASSWORD_MIN_LENGTH,
     auth_required,
     hash_password,
+    invalidate_session_version_cache,
     revoke_refresh_tokens_for_user,
     validate_password,
 )
@@ -307,6 +308,7 @@ def block_user(current_user: User, user_id: int):
         return error
     user.is_active = False
     user.bump_session_version()
+    invalidate_session_version_cache(user.id)
     revoke_refresh_tokens_for_user(user.id)
     _log_admin_action(
         current_user,
@@ -608,6 +610,7 @@ def block_admin(current_user: User, user_id: int):
         return error
     user.is_active = False
     user.bump_session_version()
+    invalidate_session_version_cache(user.id)
     revoke_refresh_tokens_for_user(user.id)
     _log_admin_action(
         current_user,

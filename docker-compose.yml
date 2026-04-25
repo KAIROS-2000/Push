@@ -29,6 +29,30 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    # pin: redis:7-alpine  (replace with redis:7-alpine@sha256:<digest> before prod; see docs/operations/image-pinning.md)
+    # Redis 7.4.x does not support requirepass-file; read secret in shell, then --requirepass (see docs/operations/redis.md).
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        REDIS_PASS=$$(cat /run/secrets/redis_password)
+        exec redis-server --requirepass "$$REDIS_PASS" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    secrets:
+      - redis_password
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # ---------------------------------------------------------------------------
   # P0-8: nightly pg_dump sidecar. Runs the same postgres:17 image as `db`
   # so pg_dump/pg_restore versions always match the server. See
@@ -134,6 +158,8 @@ services:
     restart: "no"
     env_file:
       - .env
+    secrets:
+      - redis_password
     environment:
       APP_ENV: ${APP_ENV:-development}
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
@@ -142,8 +168,12 @@ services:
       CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
       CODE_JUDGE_ALLOW_LOCAL_FALLBACK: ${CODE_JUDGE_ALLOW_LOCAL_FALLBACK:-false}
       METRICS_DEBUG: ${METRICS_DEBUG:-0}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: ["python", "-m", "flask", "--app", "run.py", "bootstrap-app"]
     networks:
@@ -157,6 +187,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    secrets:
+      - redis_password
     environment:
       APP_ENV: ${APP_ENV:-development}
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
@@ -165,8 +197,12 @@ services:
       CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
       CODE_JUDGE_ALLOW_LOCAL_FALLBACK: ${CODE_JUDGE_ALLOW_LOCAL_FALLBACK:-false}
       METRICS_DEBUG: ${METRICS_DEBUG:-0}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       backend-init:
         condition: service_completed_successfully
@@ -217,6 +253,11 @@ services:
 volumes:
   postgres_data:
   postgres_backups:
+  redis_data:
+
+secrets:
+  redis_password:
+    file: ./secrets/redis_password
 
 networks:
   backend_net:

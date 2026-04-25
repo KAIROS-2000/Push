@@ -14,6 +14,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+_PROD_REDIS_ENV = {
+    'REDIS_URL': 'redis://127.0.0.1:6379/0',
+    'REDIS_PASSWORD': 'UnitTestRedisPassword0123456789ABC!',
+}
+
 
 class RuntimeConfigValidationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -69,6 +74,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='wemogw!325gzz',
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_accepts_strong_hex_secret_key(self):
@@ -78,6 +84,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             CLIENT_URL='https://frontend.example',
             SECRET_KEY='a1' * 32,
             GIGACHAT_VERIFY_SSL='true',
+            **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])
 
@@ -88,6 +95,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='totally-random-change-me-key-material-1234567890',
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_rejects_long_but_low_entropy_secret_key(self):
@@ -98,6 +106,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='abcdefghijklmnopqrstuvwxyzabcdefghi',
+                **_PROD_REDIS_ENV,
             )
 
     def test_production_rejects_same_char_secret_key(self):
@@ -107,6 +116,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a' * 64,
+                **_PROD_REDIS_ENV,
             )
 
     def test_development_allows_weak_secret_key_for_local_ergonomics(self):
@@ -124,6 +134,67 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='Abcdef1234567890!Abcdef1234567890!Abcdef',
                 GIGACHAT_VERIFY_SSL='false',
+                **_PROD_REDIS_ENV,
+            )
+
+    def test_production_requires_redis_url(self):
+        with self.assertRaisesRegex(RuntimeError, 'REDIS_URL'):
+            self.create_app(
+                APP_ENV='production',
+                SESSION_COOKIE_SECURE='true',
+                CLIENT_URL='https://frontend.example',
+                SECRET_KEY='a1' * 32,
+                GIGACHAT_VERIFY_SSL='true',
+                REDIS_URL='',
+                REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
+            )
+
+    def test_production_requires_redis_password_strength(self):
+        with self.assertRaisesRegex(RuntimeError, 'Redis password'):
+            self.create_app(
+                APP_ENV='production',
+                SESSION_COOKIE_SECURE='true',
+                CLIENT_URL='https://frontend.example',
+                SECRET_KEY='a1' * 32,
+                GIGACHAT_VERIFY_SSL='true',
+                REDIS_URL='redis://127.0.0.1:6379/0',
+                REDIS_PASSWORD='short',
+            )
+
+    def test_production_rejects_placeholder_redis_url(self):
+        with self.assertRaisesRegex(RuntimeError, 'REDIS_URL'):
+            self.create_app(
+                APP_ENV='production',
+                SESSION_COOKIE_SECURE='true',
+                CLIENT_URL='https://frontend.example',
+                SECRET_KEY='a1' * 32,
+                GIGACHAT_VERIFY_SSL='true',
+                REDIS_URL='redis://placeholder-host:6379/0',
+                REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
+            )
+
+    def test_production_rejects_rediss_url(self):
+        with self.assertRaisesRegex(RuntimeError, 'redis://'):
+            self.create_app(
+                APP_ENV='production',
+                SESSION_COOKIE_SECURE='true',
+                CLIENT_URL='https://frontend.example',
+                SECRET_KEY='a1' * 32,
+                GIGACHAT_VERIFY_SSL='true',
+                REDIS_URL='rediss://127.0.0.1:6379/0',
+                REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
+            )
+
+    def test_production_rejects_placeholder_redis_password(self):
+        with self.assertRaisesRegex(RuntimeError, 'Redis password'):
+            self.create_app(
+                APP_ENV='production',
+                SESSION_COOKIE_SECURE='true',
+                CLIENT_URL='https://frontend.example',
+                SECRET_KEY='a1' * 32,
+                GIGACHAT_VERIFY_SSL='true',
+                REDIS_URL='redis://127.0.0.1:6379/0',
+                REDIS_PASSWORD='prefix-change-me-suffix-123456789012',
             )
 
     def test_trust_proxy_applies_forwarded_for_and_proto(self):

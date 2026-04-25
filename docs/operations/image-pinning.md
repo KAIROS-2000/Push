@@ -12,6 +12,7 @@ defeats reproducible builds and SBOM/CVE tracking.
 | `postgres:17`      | `docker-compose.yml` services `db`, `db-backup`     |
 | `python:3.12-slim` | `backend/Dockerfile`, `judge_runner/Dockerfile`     |
 | `node:22-alpine`   | `frontend/Dockerfile` (three stages: deps/builder/runner) |
+| `redis:7-alpine`   | `docker-compose.yml` service `redis`; CI `services.redis` |
 | `alpine:3.21`      | (reserved — not currently used by any runtime stage) |
 
 Any change to this list MUST be reflected in `scripts/pin-images.sh`.

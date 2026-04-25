@@ -28,6 +28,7 @@ class User(db.Model):
     full_name = db.Column(db.String(120), nullable=False)
     username = db.Column(db.String(60), unique=True, nullable=False, index=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    phone = db.Column(db.String(20), unique=True, nullable=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum(UserRole), nullable=False, default=UserRole.STUDENT)
     age_group = db.Column(db.String(20), nullable=True)
@@ -73,6 +74,7 @@ class User(db.Model):
             'full_name': self.full_name,
             'username': self.username,
             'email': self.email,
+            'phone': self.phone,
             'role': self.role.value,
             'age_group': self.age_group,
             'xp': self.xp,

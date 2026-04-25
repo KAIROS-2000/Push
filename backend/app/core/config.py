@@ -25,6 +25,16 @@ def _env(name: str) -> str | None:
     return value or None
 
 
+def resolve_redis_password() -> str | None:
+    file_path = _env('REDIS_PASSWORD_FILE')
+    if file_path:
+        p = Path(file_path)
+        if p.is_file():
+            raw = p.read_text(encoding='utf-8').strip()
+            return raw or None
+    return _env('REDIS_PASSWORD')
+
+
 class Config:
     APP_ENV = (_env('APP_ENV') or 'production').lower()
     IS_PRODUCTION = APP_ENV == 'production'
@@ -82,3 +92,29 @@ class Config:
     PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS = int(_env('PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS') or '600')
     PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES = int(_env('PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES') or '20')
     PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS = int(_env('PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS') or '900')
+    REGISTER_RATE_LIMIT_WINDOW_SECONDS = int(_env('REGISTER_RATE_LIMIT_WINDOW_SECONDS') or '3600')
+    REGISTER_RATE_LIMIT_MAX_FAILURES = int(_env('REGISTER_RATE_LIMIT_MAX_FAILURES') or '25')
+    REGISTER_RATE_LIMIT_BLOCK_SECONDS = int(_env('REGISTER_RATE_LIMIT_BLOCK_SECONDS') or '3600')
+    REFRESH_RATE_LIMIT_WINDOW_SECONDS = int(_env('REFRESH_RATE_LIMIT_WINDOW_SECONDS') or '60')
+    REFRESH_RATE_LIMIT_MAX_FAILURES = int(_env('REFRESH_RATE_LIMIT_MAX_FAILURES') or '45')
+    REFRESH_RATE_LIMIT_BLOCK_SECONDS = int(_env('REFRESH_RATE_LIMIT_BLOCK_SECONDS') or '300')
+
+    REDIS_URL = _env('REDIS_URL')
+    REDIS_PASSWORD_FILE = _env('REDIS_PASSWORD_FILE')
+    REDIS_SOCKET_TIMEOUT_MS = int(_env('REDIS_SOCKET_TIMEOUT_MS') or '200')
+    REDIS_CONNECT_TIMEOUT_MS = int(_env('REDIS_CONNECT_TIMEOUT_MS') or '200')
+    REDIS_HEALTH_PING_MS = int(_env('REDIS_HEALTH_PING_MS') or '100')
+    REDIS_DB_LEADERBOARD = int(_env('REDIS_DB_LEADERBOARD') or '0')
+    REDIS_DB_SESSION_VERSION = int(_env('REDIS_DB_SESSION_VERSION') or '1')
+    REDIS_DB_THROTTLE = int(_env('REDIS_DB_THROTTLE') or '2')
+    REDIS_DB_CELERY_BROKER = int(_env('REDIS_DB_CELERY_BROKER') or '3')
+    REDIS_DB_CELERY_RESULT = int(_env('REDIS_DB_CELERY_RESULT') or '4')
+
+    _throttle_backend = (_env('THROTTLE_BACKEND') or 'dual').strip().lower()
+    THROTTLE_BACKEND = _throttle_backend if _throttle_backend in {'redis', 'db', 'dual'} else 'dual'
+
+    _session_ver_cache = (_env('SESSION_VERSION_CACHE') or '').strip().lower()
+    if _session_ver_cache in {'redis', 'off'}:
+        SESSION_VERSION_CACHE = _session_ver_cache
+    else:
+        SESSION_VERSION_CACHE = 'redis' if IS_PRODUCTION else 'off'

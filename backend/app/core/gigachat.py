@@ -120,46 +120,154 @@ def _invalidate_cached_token() -> None:
     with _token_lock:
         _token_cache['access_token'] = None
         _token_cache['expires_at'] = 0.0
+    try:
+        from .config import Config
+        from .redis_client import get_redis, redis_key
+
+        client = get_redis(Config.REDIS_DB_LEADERBOARD)
+        if client:
+            client.delete(redis_key('gigachat', 'oauth'))
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _redis_oauth_key() -> str:
+    from .redis_client import redis_key
+
+    return redis_key('gigachat', 'oauth')
+
+
+def _redis_oauth_lock_key() -> str:
+    from .redis_client import redis_key
+
+    return redis_key('gigachat', 'lock')
+
+
+def _read_oauth_from_redis(now: float) -> str | None:
+    try:
+        from .config import Config
+        from .redis_client import get_redis, redis_available
+
+        if not redis_available():
+            return None
+        client = get_redis(Config.REDIS_DB_LEADERBOARD)
+        if not client:
+            return None
+        raw = client.get(_redis_oauth_key())
+        if not raw:
+            return None
+        data = json.loads(raw) if isinstance(raw, str) else {}
+        token = str(data.get('access_token') or '').strip()
+        expires_at = float(data.get('expires_at') or 0)
+        if token and expires_at > now + 60:
+            return token
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _store_oauth_in_redis(access_token: str, expires_at_value: float) -> None:
+    try:
+        from .config import Config
+        from .redis_client import get_redis, redis_available
+
+        if not redis_available():
+            return
+        client = get_redis(Config.REDIS_DB_LEADERBOARD)
+        if not client:
+            return
+        ttl = int(max(expires_at_value - time.time() - 30, 60))
+        payload = json.dumps({'access_token': access_token, 'expires_at': expires_at_value}, ensure_ascii=False)
+        client.setex(_redis_oauth_key(), ttl, payload)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _request_new_access_token() -> tuple[str, float]:
+    now = time.time()
+    auth_key = _authorization_header(current_app.config.get('GIGACHAT_AUTH_KEY') or '')
+    payload = parse.urlencode({'scope': current_app.config.get('GIGACHAT_SCOPE', 'GIGACHAT_API_PERS')}).encode('utf-8')
+    try:
+        data = _request_json(
+            current_app.config['GIGACHAT_AUTH_URL'],
+            data=payload,
+            headers={
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                'RqUID': str(uuid4()),
+                'Authorization': auth_key,
+            },
+        )
+    except _GigaChatAPIError as exc:
+        if exc.status_code in {400, 401}:
+            raise GigaChatConfigurationError(f'Не удалось получить токен GigaChat: {exc}') from exc
+        raise GigaChatUnavailableError(str(exc)) from exc
+
+    access_token = str(data.get('access_token') or '').strip()
+    if not access_token:
+        raise GigaChatUnavailableError('GigaChat не вернул access token.')
+
+    expires_at_raw = data.get('expires_at')
+    try:
+        expires_at_value = float(expires_at_raw)
+    except (TypeError, ValueError):
+        expires_at_value = now + 25 * 60
+    return access_token, expires_at_value
 
 
 def _get_access_token() -> str:
     now = time.time()
+    redis_token = _read_oauth_from_redis(now)
+    if redis_token:
+        return redis_token
+
     with _token_lock:
+        redis_token = _read_oauth_from_redis(now)
+        if redis_token:
+            return redis_token
+
         cached_token = _token_cache.get('access_token')
         expires_at = float(_token_cache.get('expires_at') or 0)
         if cached_token and expires_at > now + 60:
             return str(cached_token)
 
-        auth_key = _authorization_header(current_app.config.get('GIGACHAT_AUTH_KEY') or '')
-        payload = parse.urlencode({'scope': current_app.config.get('GIGACHAT_SCOPE', 'GIGACHAT_API_PERS')}).encode('utf-8')
         try:
-            data = _request_json(
-                current_app.config['GIGACHAT_AUTH_URL'],
-                data=payload,
-                headers={
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json',
-                    'RqUID': str(uuid4()),
-                    'Authorization': auth_key,
-                },
-            )
-        except _GigaChatAPIError as exc:
-            if exc.status_code in {400, 401}:
-                raise GigaChatConfigurationError(f'Не удалось получить токен GigaChat: {exc}') from exc
-            raise GigaChatUnavailableError(str(exc)) from exc
+            from .config import Config
+            from .redis_client import get_redis, redis_available
 
-        access_token = str(data.get('access_token') or '').strip()
-        if not access_token:
-            raise GigaChatUnavailableError('GigaChat не вернул access token.')
+            if redis_available():
+                client = get_redis(Config.REDIS_DB_LEADERBOARD)
+                if client:
+                    owner = str(uuid4())
+                    lock_key = _redis_oauth_lock_key()
+                    if client.set(lock_key, owner, nx=True, px=8000):
+                        try:
+                            access_token, expires_at_value = _request_new_access_token()
+                            _store_oauth_in_redis(access_token, expires_at_value)
+                            _token_cache['access_token'] = access_token
+                            _token_cache['expires_at'] = expires_at_value
+                            return access_token
+                        finally:
+                            try:
+                                if client.get(lock_key) == owner:
+                                    client.delete(lock_key)
+                            except (OSError, TypeError, ValueError):
+                                pass
+                    else:
+                        for _ in range(40):
+                            time.sleep(0.05)
+                            redis_token = _read_oauth_from_redis(time.time())
+                            if redis_token:
+                                return redis_token
+        except (GigaChatConfigurationError, GigaChatUnavailableError):
+            raise
+        except (OSError, TypeError, ValueError):
+            pass
 
-        expires_at_raw = data.get('expires_at')
-        try:
-            expires_at_value = float(expires_at_raw)
-        except (TypeError, ValueError):
-            expires_at_value = now + 25 * 60
-
+        access_token, expires_at_value = _request_new_access_token()
         _token_cache['access_token'] = access_token
         _token_cache['expires_at'] = expires_at_value
+        _store_oauth_in_redis(access_token, expires_at_value)
         return access_token
 
 

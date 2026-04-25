@@ -6,17 +6,28 @@ from flask import Blueprint, make_response, request
 
 from ..core.achievements import sync_achievements_for_user
 from ..core.db import db
+from ..core.phone import (
+    is_valid_russian_phone,
+    normalize_russian_phone,
+    phone_validation_message,
+)
 from ..core.security import (
     auth_required,
     clear_auth_cookies,
     clear_login_failures,
+    clear_refresh_throttle,
+    clear_register_throttle,
     create_token_pair,
     decode_token,
     hash_password,
     login_attempt_allowed,
     password_strength,
+    refresh_attempt_allowed,
     refresh_token_from_request,
     register_login_failure,
+    register_refresh_failure,
+    register_register_failure,
+    register_attempt_allowed,
     set_auth_cookies,
     revoke_refresh_token,
     token_matches_user_session,
@@ -50,33 +61,60 @@ def register_options():
 
 @auth_bp.post('/register')
 def register():
+    ip = request.remote_addr or 'unknown'
     data = request.get_json() or {}
     email = (data.get('email') or '').strip().lower()
+    if not register_attempt_allowed(email or 'unknown', ip):
+        return {'message': 'Слишком много попыток регистрации. Повторите позже.'}, 429
     username = (data.get('username') or '').strip().lower()
+    phone = normalize_russian_phone(data.get('phone'))
     password = data.get('password') or ''
     role = data.get('role', UserRole.STUDENT.value)
     age_group = normalize_age_group(data.get('age_group'))
     password_error = validate_password(password)
 
     if role not in {UserRole.STUDENT.value, UserRole.TEACHER.value}:
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': 'Самостоятельная регистрация доступна только ученикам и учителям.'}, 400
-    if not email or not username or not password:
-        return {'message': 'Заполните email, username и пароль.'}, 400
+    if not email or not username or not password or not (data.get('phone') or '').strip():
+        register_register_failure(email, ip)
+        db.session.commit()
+        return {'message': 'Укажите email, username, пароль и номер телефона.'}, 400
+    if not is_valid_russian_phone(phone):
+        register_register_failure(email, ip)
+        db.session.commit()
+        return {'message': phone_validation_message()}, 400
     if len(username) > USERNAME_MAX_LENGTH:
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': f'Логин должен содержать не более {USERNAME_MAX_LENGTH} символов.'}, 400
     if password_error:
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': password_error}, 400
     if not is_valid_email(email):
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': 'Укажите корректный email.'}, 400
     if role == UserRole.STUDENT.value and not age_group:
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': 'Выберите возрастную группу ученика.'}, 400
     if User.query.filter((User.email == email) | (User.username == username)).first():
+        register_register_failure(email, ip)
+        db.session.commit()
         return {'message': 'Пользователь с таким email или username уже существует.'}, 409
+    if User.query.filter_by(phone=phone).first():
+        register_register_failure(email, ip)
+        db.session.commit()
+        return {'message': 'Пользователь с таким номером телефона уже зарегистрирован.'}, 409
 
     user = User(
         full_name=data.get('full_name') or username,
         username=username,
         email=email,
+        phone=phone,
         password_hash=hash_password(password),
         role=UserRole(role),
         age_group=age_group if role == UserRole.STUDENT.value else None,
@@ -86,6 +124,7 @@ def register():
     db.session.add(user)
     db.session.flush()
     tokens = create_token_pair(user)
+    clear_register_throttle(email, ip)
     db.session.commit()
     response = make_response({
         'message': 'Регистрация успешна',
@@ -127,29 +166,39 @@ def login():
 
 @auth_bp.post('/refresh')
 def refresh():
+    ip = request.remote_addr or 'unknown'
+    if not refresh_attempt_allowed(ip):
+        return {'message': 'Слишком много запросов обновления сессии. Подождите немного.'}, 429
     token = ((request.get_json(silent=True) or {}).get('refresh_token') or refresh_token_from_request()).strip()
     try:
         payload = decode_token(token)
         if payload.get('type') != 'refresh':
             raise ValueError('Wrong token type')
     except Exception:
+        register_refresh_failure(ip)
+        db.session.commit()
         return {'message': 'Недействительный refresh token'}, 401
 
     refresh_row = RefreshToken.query.filter_by(token_id=payload.get('jti')).first()
     user = db.session.get(User, int(payload['sub'])) if payload.get('sub') else None
     if not refresh_row or not user:
+        register_refresh_failure(ip)
+        db.session.commit()
         return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
     if not user.is_active:
         db.session.delete(refresh_row)
+        register_refresh_failure(ip)
         db.session.commit()
         return {'message': 'Пользователь заблокирован.', 'code': 'user_blocked'}, 401
     if not token_matches_user_session(payload, user):
         db.session.delete(refresh_row)
+        register_refresh_failure(ip)
         db.session.commit()
         return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
 
     db.session.delete(refresh_row)
     tokens = create_token_pair(user)
+    clear_refresh_throttle(ip)
     db.session.commit()
     response = make_response({'user': user.to_dict()})
     return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])

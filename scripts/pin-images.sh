@@ -21,6 +21,7 @@ postgres:17
 python:3.12-slim
 node:22-alpine
 alpine:3.21
+redis:7-alpine
 "
 
 resolve() {

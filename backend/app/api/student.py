@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+
+import redis
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from flask import Blueprint, abort, request
 
+from ..core.config import Config
 from ..core.code_judge import (
     CodeJudgeConfigurationError,
     CodeJudgeUnavailableError,
@@ -76,6 +80,51 @@ _global_leaderboard_cache: dict[
 ] = {}
 
 
+def _leaderboard_cache_age_key(age_group: str | None) -> str:
+    if not age_group:
+        return GLOBAL_LEADERBOARD_CACHE_KEY_ALL
+    return age_group.strip().lower()
+
+
+def _read_leaderboard_from_cache(age_key: str) -> list[dict] | None:
+    from ..core.redis_client import get_redis, redis_available, redis_key
+
+    if not redis_available():
+        return None
+    client = get_redis(Config.REDIS_DB_LEADERBOARD)
+    if not client:
+        return None
+    try:
+        raw = client.get(redis_key('leaderboard', 'global', age_key))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return None
+        return [dict(row) for row in data if isinstance(row, dict)]
+    except (TypeError, ValueError, json.JSONDecodeError, OSError, redis.RedisError):
+        return None
+
+
+def _write_leaderboard_to_cache(age_key: str, rows: list[dict]) -> None:
+    from ..core.redis_client import get_redis, redis_available, redis_key
+
+    if not redis_available():
+        return
+    client = get_redis(Config.REDIS_DB_LEADERBOARD)
+    if not client:
+        return
+    try:
+        ttl = int(GLOBAL_LEADERBOARD_REFRESH_INTERVAL.total_seconds())
+        client.setex(
+            redis_key('leaderboard', 'global', age_key),
+            ttl,
+            json.dumps(rows, ensure_ascii=False),
+        )
+    except (TypeError, ValueError, OSError, redis.RedisError):
+        pass
+
+
 def _leaderboard_row(student: User, position: int) -> dict:
     return {
         "id": student.id,
@@ -106,10 +155,12 @@ def _classrooms_payload(memberships: list[ClassMembership]) -> list[dict]:
 
 def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
     now = datetime.now(UTC)
-    cache_key = (
-        str(db.engine.url),
-        (age_group or GLOBAL_LEADERBOARD_CACHE_KEY_ALL).strip().lower(),
-    )
+    age_key = _leaderboard_cache_age_key(age_group)
+    redis_rows = _read_leaderboard_from_cache(age_key)
+    if redis_rows is not None:
+        return [row.copy() for row in redis_rows]
+
+    cache_key = (str(db.engine.url), age_key)
     cached = _global_leaderboard_cache.get(cache_key)
     if cached and cached[0] > now:
         return [row.copy() for row in cached[1]]
@@ -128,6 +179,7 @@ def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
         now + GLOBAL_LEADERBOARD_REFRESH_INTERVAL,
         rows,
     )
+    _write_leaderboard_to_cache(age_key, rows)
     return [row.copy() for row in rows]
 
 
@@ -666,10 +718,12 @@ def get_lesson(current_user: User, lesson_id: int):
             user_id=current_user.id, lesson_id=lesson.id, status="not_started"
         )
     include_quiz_review = progress.status in {"completed", "pending_review"}
+    finished = state == STATE_MAP["completed"] or progress.status == "completed"
     return {
         "lesson": lesson.to_dict(include_private=include_quiz_review),
         "state": state,
         "progress": progress.to_dict(),
+        "is_finished": finished,
         "viewer_role": current_user.role.value,
     }
 

@@ -9,6 +9,7 @@ export interface UserItem {
   full_name: string
   username: string
   email: string
+  phone: string | null
   role: UserRole
   age_group: string | null
   xp: number

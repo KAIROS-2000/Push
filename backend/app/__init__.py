@@ -1,6 +1,10 @@
 import sys
+import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
+
+import redis
 
 from flask import Flask, g, has_request_context, request, send_from_directory
 from flask.testing import FlaskClient
@@ -19,12 +23,14 @@ from .api.messaging import messaging_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
 from .cli import register_commands
-from .core.config import Config
+from .core.config import Config, resolve_redis_password
 from .core.db import db
 from .core.security import (
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
     SAFE_HTTP_METHODS,
+    access_token_from_request,
+    decode_token,
     request_origin_allowed,
     request_uses_cookie_auth,
     verify_csrf_token,
@@ -99,6 +105,31 @@ class _CSRFAwareFlaskClient(FlaskClient):
         return super().open(*args, **kwargs)
 
 
+def _redis_production_config_ok(url: str, password: str | None) -> tuple[bool, str | None]:
+    lowered = url.strip().lower()
+    if any(
+        fragment in lowered
+        for fragment in (
+            'change-me',
+            'replace-me',
+            'your-redis',
+            'example',
+            'placeholder',
+            'todo',
+        )
+    ):
+        return False, 'REDIS_URL looks like a placeholder.'
+    parsed = urlparse(url)
+    if parsed.scheme not in {'redis', 'rediss'}:
+        return False, 'REDIS_URL must use redis:// or rediss:// scheme.'
+    if parsed.scheme == 'rediss':
+        return False, 'REDIS_URL must use redis:// in this deployment (TLS URLs are not enabled for Redis yet).'
+    has_auth = bool(parsed.password) or bool(password and password.strip())
+    if not has_auth:
+        return False, 'REDIS_URL must include credentials or set REDIS_PASSWORD / REDIS_PASSWORD_FILE.'
+    return True, None
+
+
 def _validate_runtime_config(app: Flask) -> None:
     secret_key = (app.config.get("SECRET_KEY") or "").strip()
     if app.config["IS_PRODUCTION"]:
@@ -137,6 +168,50 @@ def _validate_runtime_config(app: Flask) -> None:
         )
         if password_error:
             raise RuntimeError(f"SUPERADMIN_PASSWORD is not secure enough: {password_error}")
+    if app.config["IS_PRODUCTION"]:
+        redis_url = (app.config.get("REDIS_URL") or "").strip()
+        if not redis_url:
+            raise RuntimeError("Set REDIS_URL before running in production mode.")
+        redis_password = (resolve_redis_password() or "").strip()
+        if len(redis_password) < 24:
+            raise RuntimeError(
+                "Set a strong Redis password (REDIS_PASSWORD or REDIS_PASSWORD_FILE, min 24 characters) for production."
+            )
+        if _contains_placeholder_secret_fragment(redis_password):
+            raise RuntimeError("Redis password must not contain placeholder fragments in production mode.")
+        if _is_trivially_low_entropy_secret(redis_password):
+            raise RuntimeError("Redis password is too weak for production mode.")
+        ok, redis_err = _redis_production_config_ok(redis_url, redis_password)
+        if not ok:
+            raise RuntimeError(redis_err or "Invalid REDIS_URL for production mode.")
+
+
+_MAINT_FLAG_LOCK = threading.Lock()
+_MAINT_FLAG_UNTIL = 0.0
+_MAINT_FLAG_VALUE = False
+
+
+def _maintenance_flag_active(app: Flask) -> bool:
+    global _MAINT_FLAG_UNTIL, _MAINT_FLAG_VALUE
+    now = time.monotonic()
+    with _MAINT_FLAG_LOCK:
+        if now < _MAINT_FLAG_UNTIL:
+            return _MAINT_FLAG_VALUE
+    active = False
+    try:
+        from .core.config import Config as _Cfg
+        from .core.redis_client import get_redis, redis_key
+
+        client = get_redis(_Cfg.REDIS_DB_LEADERBOARD)
+        if client is not None:
+            raw = client.get(redis_key("flags", "maintenance"))
+            active = str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+    except (OSError, TypeError, ValueError, redis.RedisError):
+        active = False
+    with _MAINT_FLAG_LOCK:
+        _MAINT_FLAG_VALUE = active
+        _MAINT_FLAG_UNTIL = now + 5.0
+    return active
 
 
 def _register_request_metrics(app: Flask) -> None:
@@ -214,7 +289,32 @@ def create_app() -> Flask:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        payload = {"status": "ok"}
+        if (app.config.get("REDIS_URL") or "").strip():
+            from .core.redis_client import redis_ping_with_timeout_ms
+
+            payload["redis"] = bool(redis_ping_with_timeout_ms())
+        return payload
+
+    @app.before_request
+    def enforce_maintenance_mode():
+        if request.method in SAFE_HTTP_METHODS:
+            return None
+        path = request.path or ""
+        if path.startswith("/api/health"):
+            return None
+        if not _maintenance_flag_active(app):
+            return None
+        try:
+            token = access_token_from_request()
+            if token:
+                payload = decode_token(token)
+                role = str(payload.get("role") or "").lower()
+                if role in {"admin", "superadmin"}:
+                    return None
+        except Exception:
+            pass
+        return {"message": "Платформа в режиме обслуживания. Запись временно недоступна."}, 503
 
     @app.before_request
     def enforce_origin_for_unsafe_api_requests():

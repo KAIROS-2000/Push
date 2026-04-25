@@ -7,6 +7,7 @@ import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { RolePill } from '@/components/role-pill'
 import { setAnonymousSession, setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
+import { formatRuPhoneForDisplay } from '@/lib/phone'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import { UserItem } from '@/types'
 
@@ -118,6 +119,8 @@ export function ProfileView() {
   if (error && !profile) return <div className="codequest-card p-6 text-rose-700">{error}</div>
   if (!profile) return <div className="codequest-card p-6">Профиль недоступен.</div>
 
+  const phoneDisplay = formatRuPhoneForDisplay(profile.phone)
+
   return (
     <div ref={rootRef} className="space-y-6">
       <section className="profile-identity codequest-card p-5 sm:p-8" data-motion-reveal>
@@ -129,6 +132,13 @@ export function ProfileView() {
             </h1>
             <p className="mt-3 break-words text-base leading-7 text-slate-600 sm:text-lg">
               @{profile.username} · {profile.email}
+            </p>
+            <p className="mt-1 break-words text-base leading-7 text-slate-600 sm:text-lg">
+              {phoneDisplay ? (
+                <>Телефон: {phoneDisplay}</>
+              ) : (
+                <span className="text-slate-500">Телефон не указан</span>
+              )}
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
               <span className="brand-chip brand-chip--soft">уровень {profile.level}</span>

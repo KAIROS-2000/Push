@@ -220,9 +220,11 @@ class CriticalJourneyTests(unittest.TestCase):
                     'lesson_id': lesson_id,
                     'title': 'Practice assignment',
                     'description': 'Solve and submit.',
+                    'due_date': '2099-12-31',
                     'learning_goal': 'Practice code',
                     'work_steps': 'Submit answer',
                     'success_criteria': 'Teacher can review',
+                    'resources': 'Course materials',
                 },
             )
             self.assertEqual(assignment_response.status_code, 201)

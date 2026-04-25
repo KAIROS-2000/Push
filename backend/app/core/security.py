@@ -9,10 +9,14 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import jwt
+import redis
 from flask import Response, current_app, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from ..core.config import Config
 from ..core.db import db
+from ..core import throttle_redis
+from ..core.redis_client import get_redis, redis_available
 from ..models.user import RefreshToken, SecurityThrottle, User, UserRole
 
 ACCESS_COOKIE_NAME = 'codequest_access_token'
@@ -24,6 +28,9 @@ DEFAULT_PASSWORD_MIN_LENGTH = 10
 ADMIN_PASSWORD_MIN_LENGTH = 12
 LOGIN_THROTTLE_SCOPE = 'login'
 PARENT_ACCESS_THROTTLE_SCOPE = 'parent_access'
+REGISTER_THROTTLE_SCOPE = 'register'
+REFRESH_THROTTLE_SCOPE = 'refresh'
+SESSION_VERSION_CACHE_TTL_SECONDS = 30
 COMMON_WEAK_PASSWORDS = {
     '123456',
     '12345678',
@@ -105,6 +112,18 @@ def _throttle_settings(scope: str) -> tuple[int, int, int]:
             int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES', 20)),
             int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS', 900)),
         )
+    if scope == REGISTER_THROTTLE_SCOPE:
+        return (
+            int(current_app.config.get('REGISTER_RATE_LIMIT_WINDOW_SECONDS', 3600)),
+            int(current_app.config.get('REGISTER_RATE_LIMIT_MAX_FAILURES', 25)),
+            int(current_app.config.get('REGISTER_RATE_LIMIT_BLOCK_SECONDS', 3600)),
+        )
+    if scope == REFRESH_THROTTLE_SCOPE:
+        return (
+            int(current_app.config.get('REFRESH_RATE_LIMIT_WINDOW_SECONDS', 60)),
+            int(current_app.config.get('REFRESH_RATE_LIMIT_MAX_FAILURES', 45)),
+            int(current_app.config.get('REFRESH_RATE_LIMIT_BLOCK_SECONDS', 300)),
+        )
     return (900, 10, 900)
 
 
@@ -131,9 +150,8 @@ def _reset_expired_window(record: SecurityThrottle, now: datetime, window_second
     return changed
 
 
-def throttle_allowed(scope: str, subject: str, ip_address: str | None = None) -> bool:
+def _throttle_allowed_db(scope: str, subject: str, normalized_ip: str) -> bool:
     now = datetime.now(UTC)
-    normalized_ip = (ip_address or '').strip()[:64] or _request_ip()
     record = _throttle_record(scope, subject, normalized_ip)
     if record is None:
         return True
@@ -150,9 +168,31 @@ def throttle_allowed(scope: str, subject: str, ip_address: str | None = None) ->
     return True
 
 
-def register_throttle_failure(scope: str, subject: str, ip_address: str | None = None) -> bool:
-    now = datetime.now(UTC)
+def throttle_allowed(scope: str, subject: str, ip_address: str | None = None) -> bool:
     normalized_ip = (ip_address or '').strip()[:64] or _request_ip()
+    backend = str(current_app.config.get('THROTTLE_BACKEND') or 'dual').lower()
+
+    redis_leg = True
+    if backend in {'redis', 'dual'} and redis_available():
+        redis_leg = throttle_redis.throttle_check_allowed(scope, subject, normalized_ip)
+    elif backend == 'redis' and not redis_available():
+        redis_leg = True
+
+    db_leg = True
+    if backend in {'db', 'dual'}:
+        db_leg = _throttle_allowed_db(scope, subject, normalized_ip)
+
+    if backend == 'redis':
+        return redis_leg
+    if backend == 'db':
+        return db_leg
+    if not redis_available():
+        return db_leg
+    return redis_leg and db_leg
+
+
+def _register_throttle_failure_db(scope: str, subject: str, normalized_ip: str) -> bool:
+    now = datetime.now(UTC)
     window_seconds, max_failures, block_seconds = _throttle_settings(scope)
     record = _throttle_record(scope, subject, normalized_ip)
     if record is None:
@@ -177,13 +217,37 @@ def register_throttle_failure(scope: str, subject: str, ip_address: str | None =
     return blocked_until is None or blocked_until <= now
 
 
+def register_throttle_failure(scope: str, subject: str, ip_address: str | None = None) -> bool:
+    normalized_ip = (ip_address or '').strip()[:64] or _request_ip()
+    backend = str(current_app.config.get('THROTTLE_BACKEND') or 'dual').lower()
+
+    redis_still = True
+    if backend in {'redis', 'dual'} and redis_available():
+        redis_still = throttle_redis.throttle_register_failure(scope, subject, normalized_ip)
+
+    db_still = True
+    if backend in {'db', 'dual'}:
+        db_still = _register_throttle_failure_db(scope, subject, normalized_ip)
+
+    if backend == 'redis':
+        return redis_still
+    if backend == 'db':
+        return db_still
+    if not redis_available():
+        return db_still
+    return redis_still and db_still
+
+
 def clear_throttle_failures(scope: str, subject: str, ip_address: str | None = None) -> None:
     normalized_ip = (ip_address or '').strip()[:64] or _request_ip()
-    record = _throttle_record(scope, subject, normalized_ip)
-    if record is None:
-        return
-    db.session.delete(record)
-    db.session.flush()
+    backend = str(current_app.config.get('THROTTLE_BACKEND') or 'dual').lower()
+    if backend in {'redis', 'dual'}:
+        throttle_redis.throttle_clear(scope, subject, normalized_ip)
+    if backend in {'db', 'dual'}:
+        record = _throttle_record(scope, subject, normalized_ip)
+        if record is not None:
+            db.session.delete(record)
+            db.session.flush()
 
 
 def login_attempt_allowed(login_identifier: str, ip_address: str | None = None) -> bool:
@@ -208,6 +272,76 @@ def register_parent_access_failure(ip_address: str | None = None) -> bool:
 
 def clear_parent_access_failures(ip_address: str | None = None) -> None:
     clear_throttle_failures(PARENT_ACCESS_THROTTLE_SCOPE, 'invite_lookup', ip_address)
+
+
+def register_attempt_allowed(email: str, ip_address: str | None = None) -> bool:
+    subject = (email or '').strip().lower() or 'unknown'
+    return throttle_allowed(REGISTER_THROTTLE_SCOPE, subject, ip_address)
+
+
+def register_register_failure(email: str, ip_address: str | None = None) -> bool:
+    subject = (email or '').strip().lower() or 'unknown'
+    return register_throttle_failure(REGISTER_THROTTLE_SCOPE, subject, ip_address)
+
+
+def clear_register_throttle(email: str, ip_address: str | None = None) -> None:
+    subject = (email or '').strip().lower() or 'unknown'
+    clear_throttle_failures(REGISTER_THROTTLE_SCOPE, subject, ip_address)
+
+
+def refresh_attempt_allowed(ip_address: str | None = None) -> bool:
+    return throttle_allowed(REFRESH_THROTTLE_SCOPE, 'token_refresh', ip_address)
+
+
+def register_refresh_failure(ip_address: str | None = None) -> bool:
+    return register_throttle_failure(REFRESH_THROTTLE_SCOPE, 'token_refresh', ip_address)
+
+
+def clear_refresh_throttle(ip_address: str | None = None) -> None:
+    clear_throttle_failures(REFRESH_THROTTLE_SCOPE, 'token_refresh', ip_address)
+
+
+def _session_version_redis_key(user_id: int) -> str:
+    from .redis_client import redis_key
+
+    return redis_key('session_ver', str(int(user_id)))
+
+
+def get_cached_session_version(user_id: int) -> int | None:
+    if current_app.config.get('SESSION_VERSION_CACHE') != 'redis':
+        return None
+    client = get_redis(Config.REDIS_DB_SESSION_VERSION)
+    if client is None:
+        return None
+    try:
+        raw = client.get(_session_version_redis_key(user_id))
+        if raw is None:
+            return None
+        return int(raw)
+    except (TypeError, ValueError, redis.ConnectionError, redis.TimeoutError, redis.ResponseError, OSError):
+        return None
+
+
+def set_cached_session_version(user_id: int, version: int) -> None:
+    if current_app.config.get('SESSION_VERSION_CACHE') != 'redis':
+        return
+    client = get_redis(Config.REDIS_DB_SESSION_VERSION)
+    if client is None:
+        return
+    try:
+        client.setex(_session_version_redis_key(user_id), SESSION_VERSION_CACHE_TTL_SECONDS, str(int(version)))
+    except (redis.ConnectionError, redis.TimeoutError, redis.ResponseError, OSError):
+        pass
+
+
+def invalidate_session_version_cache(user_id: int) -> None:
+    client = get_redis(Config.REDIS_DB_SESSION_VERSION)
+    if client is None:
+        return
+    try:
+        client.delete(_session_version_redis_key(user_id))
+    except (redis.ConnectionError, redis.TimeoutError, redis.ResponseError, OSError):
+        pass
 
 
 def create_token_pair(user: User) -> dict:
@@ -289,7 +423,15 @@ def token_matches_user_session(payload: dict, user: User) -> bool:
     session_version = _payload_session_version(payload)
     if session_version is None:
         return False
-    return session_version == int(user.session_version or 0)
+    if current_app.config.get('SESSION_VERSION_CACHE') == 'redis':
+        cached = get_cached_session_version(user.id)
+        if cached is not None:
+            return session_version == cached
+    db_version = int(user.session_version or 0)
+    ok = session_version == db_version
+    if ok and current_app.config.get('SESSION_VERSION_CACHE') == 'redis':
+        set_cached_session_version(user.id, db_version)
+    return ok
 
 
 def _cookie_security_settings() -> tuple[bool, str]:
@@ -440,6 +582,16 @@ def auth_required(roles: list[UserRole] | None = None) -> Callable:
                 payload = decode_token(token)
                 if payload.get('type') != 'access':
                     raise ValueError('Not access token')
+                if current_app.config.get('SESSION_VERSION_CACHE') == 'redis' and redis_available():
+                    try:
+                        sub_id = int(payload['sub'])
+                    except (TypeError, ValueError):
+                        sub_id = None
+                    if sub_id is not None:
+                        cached = get_cached_session_version(sub_id)
+                        token_ver = _payload_session_version(payload)
+                        if cached is not None and token_ver is not None and cached != token_ver:
+                            return {'message': 'Сессия была отозвана. Войдите снова.', 'code': 'session_revoked'}, 401
                 user = db.session.get(User, int(payload['sub']))
             except Exception:
                 return {'message': 'Недействительный токен сессии.', 'code': 'invalid_token'}, 401
