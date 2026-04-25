@@ -241,7 +241,7 @@ export function DashboardView({
 				<div
 					role='button'
 					tabIndex={0}
-					className='cursor-pointer text-left'
+					className='achievement-metric-trigger cursor-pointer text-left'
 					onClick={() => setShowcaseOpen(true)}
 					onKeyDown={event => {
 						if (event.key === 'Enter' || event.key === ' ') {

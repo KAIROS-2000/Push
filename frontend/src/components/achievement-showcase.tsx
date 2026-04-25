@@ -21,11 +21,11 @@ function ShelfItem({ item }: { item: AchievementItem }) {
 
 	return (
 		<div
-			className='flex flex-col items-center gap-1 text-center'
+			className='flex min-w-0 flex-col items-center gap-1 text-center'
 			title={item.description}
 		>
 			<div
-				className={`flex h-16 w-16 items-center justify-center rounded-full transition-all ${
+				className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-all sm:h-16 sm:w-16 ${
 					item.earned
 						? isCup
 							? 'bg-amber-100 text-amber-500 shadow-md shadow-amber-200'
@@ -34,13 +34,13 @@ function ShelfItem({ item }: { item: AchievementItem }) {
 				}`}
 			>
 				{isCup ? (
-					<Trophy size={30} strokeWidth={1.8} />
+					<Trophy className='h-7 w-7 sm:h-[30px] sm:w-[30px]' strokeWidth={1.8} />
 				) : (
-					<Medal size={30} strokeWidth={1.8} />
+					<Medal className='h-7 w-7 sm:h-[30px] sm:w-[30px]' strokeWidth={1.8} />
 				)}
 			</div>
 			<p
-				className={`mt-1 max-w-[80px] text-xs font-bold leading-tight ${
+				className={`mt-1 w-full min-w-0 break-words text-[11px] font-bold leading-tight sm:text-xs ${
 					item.earned ? 'text-slate-800' : 'text-slate-400'
 				}`}
 			>
@@ -64,13 +64,15 @@ function ShelfItem({ item }: { item: AchievementItem }) {
 function Shelf({ items }: { items: AchievementItem[] }) {
 	return (
 		<div>
-			<div className='grid grid-cols-4 gap-3 rounded-t-2xl bg-amber-50 px-6 pb-5 pt-6'>
+			<div className='grid grid-cols-2 gap-x-4 gap-y-5 rounded-t-2xl bg-amber-50 px-4 pb-5 pt-6 sm:grid-cols-4 sm:gap-3 sm:px-6'>
 				{items.map(item => (
 					<ShelfItem key={item.id} item={item} />
 				))}
-				{Array.from({ length: Math.max(0, 4 - items.length) }).map((_, index) => (
-					<div key={`empty-${index}`} />
-				))}
+				{Array.from({ length: Math.max(0, 4 - items.length) }).map(
+					(_, index) => (
+						<div key={`empty-${index}`} className='hidden sm:block' />
+					),
+				)}
 			</div>
 			<div className='h-3 rounded-b-xl bg-amber-800/25 shadow-inner' />
 		</div>
@@ -106,6 +108,17 @@ export function AchievementShowcase({ onClose }: AchievementShowcaseProps) {
 			mounted = false
 		}
 	}, [])
+
+	useEffect(() => {
+		function handleKeyDown(event: KeyboardEvent) {
+			if (event.key === 'Escape') {
+				onClose()
+			}
+		}
+
+		window.addEventListener('keydown', handleKeyDown)
+		return () => window.removeEventListener('keydown', handleKeyDown)
+	}, [onClose])
 
 	const earned = achievements.filter(achievement => achievement.earned)
 	const shelves: AchievementItem[][] = []

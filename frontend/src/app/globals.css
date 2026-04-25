@@ -2890,6 +2890,118 @@ html[data-theme='dark'] .progyx-theme-toggle--light:hover:not(:disabled) .progyx
 		0 18px 34px var(--metric-shadow);
 }
 
+.achievement-metric-trigger {
+	position: relative;
+	border-radius: 1.75rem;
+	padding: 0;
+	overflow: visible;
+	isolation: isolate;
+	box-shadow:
+		0 24px 86px rgba(37, 99, 235, 0.22),
+		0 0 0 1px rgba(125, 211, 252, 0.18),
+		0 0 52px rgba(59, 130, 246, 0.3);
+	transition:
+		transform 180ms ease,
+		box-shadow 180ms ease,
+		filter 180ms ease;
+}
+
+.achievement-metric-trigger::before {
+	content: '';
+	position: absolute;
+	inset: -0.9rem;
+	z-index: 0;
+	border-radius: 2.1rem;
+	pointer-events: none;
+	background:
+		radial-gradient(
+			circle at 30% 35%,
+			rgba(191, 219, 254, 0.55) 0%,
+			rgba(56, 189, 248, 0.18) 40%,
+			rgba(59, 130, 246, 0) 72%
+		),
+		radial-gradient(
+			circle at 70% 40%,
+			rgba(59, 130, 246, 0.35) 0%,
+			rgba(14, 165, 233, 0) 64%
+		);
+	filter: blur(16px) saturate(1.12);
+	opacity: 0.95;
+	transform-origin: 50% 50%;
+	animation: achievementMetricGlowDrift 3.2s ease-in-out infinite;
+}
+
+.achievement-metric-trigger::after {
+	content: '';
+	position: absolute;
+	inset: -0.45rem;
+	z-index: 0;
+	border-radius: 1.95rem;
+	pointer-events: none;
+	background:
+		radial-gradient(
+			circle at 45% 55%,
+			rgba(59, 130, 246, 0.35) 0%,
+			rgba(14, 165, 233, 0) 64%
+		),
+		radial-gradient(
+			circle at 55% 45%,
+			rgba(125, 211, 252, 0.22) 0%,
+			rgba(59, 130, 246, 0) 70%
+		);
+	filter: blur(10px) saturate(1.1);
+	opacity: 0.85;
+	transform-origin: 50% 50%;
+	animation: achievementMetricGlowShimmer 2.1s ease-in-out infinite;
+}
+
+.achievement-metric-trigger .student-metric {
+	height: 100%;
+	position: relative;
+	z-index: 1;
+	border-color: rgba(219, 234, 254, 0.72);
+}
+
+.achievement-metric-trigger:hover,
+.achievement-metric-trigger:focus-visible {
+	transform: translateY(-2px);
+	box-shadow:
+		0 30px 102px rgba(37, 99, 235, 0.28),
+		0 0 0 1px rgba(125, 211, 252, 0.22),
+		0 0 70px rgba(59, 130, 246, 0.38);
+	outline: none;
+}
+
+@keyframes achievementMetricGlowDrift {
+	0%,
+	100% {
+		transform: translate3d(0, 0, 0) scale(1);
+		opacity: 0.9;
+		filter: blur(16px) saturate(1.12);
+	}
+
+	50% {
+		transform: translate3d(0.4rem, -0.25rem, 0) scale(1.04);
+		opacity: 1;
+		filter: blur(18px) saturate(1.2);
+	}
+}
+
+@keyframes achievementMetricGlowShimmer {
+	0%,
+	100% {
+		transform: translate3d(0, 0, 0) scale(1);
+		opacity: 0.8;
+		filter: blur(10px) saturate(1.1);
+	}
+
+	50% {
+		transform: translate3d(-0.35rem, 0.3rem, 0) scale(1.05);
+		opacity: 0.95;
+		filter: blur(12px) saturate(1.18);
+	}
+}
+
 @keyframes studentMetricSheen {
 	0%,
 	24% {
@@ -4137,6 +4249,46 @@ html[data-theme='dark'] .student-metric {
 		0 18px 38px var(--metric-shadow);
 }
 
+html[data-theme='dark'] .achievement-metric-trigger {
+	box-shadow:
+		0 26px 96px rgba(37, 99, 235, 0.34),
+		0 0 0 1px rgba(125, 211, 252, 0.16),
+		0 0 64px rgba(59, 130, 246, 0.38);
+}
+
+html[data-theme='dark'] .achievement-metric-trigger::before {
+	background:
+		radial-gradient(
+			circle at 28% 33%,
+			rgba(125, 211, 252, 0.42) 0%,
+			rgba(59, 130, 246, 0.16) 42%,
+			rgba(59, 130, 246, 0) 74%
+		),
+		radial-gradient(
+			circle at 72% 38%,
+			rgba(96, 165, 250, 0.32) 0%,
+			rgba(14, 165, 233, 0) 66%
+		);
+	filter: blur(18px) saturate(1.18);
+	opacity: 1;
+}
+
+html[data-theme='dark'] .achievement-metric-trigger::after {
+	background:
+		radial-gradient(
+			circle at 46% 56%,
+			rgba(59, 130, 246, 0.38) 0%,
+			rgba(14, 165, 233, 0) 66%
+		),
+		radial-gradient(
+			circle at 58% 44%,
+			rgba(125, 211, 252, 0.22) 0%,
+			rgba(59, 130, 246, 0) 72%
+		);
+	filter: blur(12px) saturate(1.14);
+	opacity: 0.95;
+}
+
 html[data-theme='dark'] .student-metric__kicker {
 	background: rgba(7, 18, 37, 0.68);
 	box-shadow: inset 0 0 0 1px var(--metric-border);
@@ -4688,5 +4840,15 @@ html[data-theme='dark'] .site-footer__link {
 
 	.student-metric:hover .student-metric__icon-wrap {
 		transform: none;
+	}
+
+	.achievement-metric-trigger:hover,
+	.achievement-metric-trigger:focus-visible {
+		transform: none;
+	}
+
+	.achievement-metric-trigger::before,
+	.achievement-metric-trigger::after {
+		animation: none !important;
 	}
 }

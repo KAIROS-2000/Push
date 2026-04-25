@@ -39,7 +39,8 @@ services:
       - -c
       - |
         set -eu
-        REDIS_PASS=$$(cat /run/secrets/redis_password)
+        # Strip CR so CRLF on Windows does not end up in requirepass (shell keeps \r; Python .strip() does not).
+        REDIS_PASS=$$(tr -d '\r' < /run/secrets/redis_password)
         exec redis-server --requirepass "$$REDIS_PASS" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -48,7 +49,7 @@ services:
     networks:
       - backend_net
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$(tr -d '\r' < /run/secrets/redis_password)\" ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 10

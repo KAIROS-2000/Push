@@ -30,9 +30,10 @@ def resolve_redis_password() -> str | None:
     if file_path:
         p = Path(file_path)
         if p.is_file():
-            raw = p.read_text(encoding='utf-8').strip()
+            raw = p.read_text(encoding='utf-8').replace("\r", "").strip()
             return raw or None
-    return _env('REDIS_PASSWORD')
+    pw = _env("REDIS_PASSWORD")
+    return pw.replace("\r", "") if pw else None
 
 
 class Config:
