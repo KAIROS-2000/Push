@@ -393,6 +393,20 @@ html[data-theme='dark'] :is(button, a)[class~='bg-violet-600'] {
 	color: #f0f6fc !important;
 }
 
+html[data-theme='dark'] .achievement-modal-card {
+	background: #161b22 !important;
+	-webkit-backdrop-filter: none !important;
+	backdrop-filter: none !important;
+}
+
+html[data-theme='dark'] .achievement-shelf-bg {
+	background-color: #1c2128 !important;
+}
+
+html[data-theme='dark'] .achievement-shelf-plank {
+	background-color: rgba(110, 64, 20, 0.35) !important;
+}
+
 html[data-theme='dark'] :is(button, a)[class~='bg-slate-100'] {
 	background-color: var(--surface-muted) !important;
 	border: 1px solid var(--border-default) !important;

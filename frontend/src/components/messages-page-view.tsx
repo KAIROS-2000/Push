@@ -23,6 +23,7 @@ import {
 	Users,
 	X,
 } from 'lucide-react'
+import { UserAvatar } from '@/components/user-avatar'
 import {
 	useCallback,
 	useEffect,
@@ -542,25 +543,30 @@ export function MessagesPageView({
 												: 'border-slate-200 bg-white'
 										}`}
 									>
-										<div className='flex flex-wrap items-start justify-between gap-3'>
-											<div className='min-w-0'>
-												<p className='break-words font-black text-slate-900'>
-													{student.fullName}
-												</p>
-												{student.username ? (
-													<p className='text-sm text-slate-500'>
-														@{student.username}
-													</p>
-												) : null}
-												<p className='mt-1 text-xs font-semibold text-slate-500'>
-													{formatMessagingTime(student.latestAt)}
-												</p>
+										<div className='flex items-start gap-3'>
+											<UserAvatar name={student.fullName} className='h-9 w-9 shrink-0 text-xs' />
+											<div className='min-w-0 flex-1'>
+												<div className='flex flex-wrap items-start justify-between gap-2'>
+													<div>
+														<p className='break-words font-black text-slate-900'>
+															{student.fullName}
+														</p>
+														{student.username ? (
+															<p className='text-sm text-slate-500'>
+																@{student.username}
+															</p>
+														) : null}
+														<p className='mt-1 text-xs font-semibold text-slate-500'>
+															{formatMessagingTime(student.latestAt)}
+														</p>
+													</div>
+													{student.unread > 0 ? (
+														<span className='messaging-unread-badge'>
+															{student.unread}
+														</span>
+													) : null}
+												</div>
 											</div>
-											{student.unread > 0 ? (
-												<span className='messaging-unread-badge'>
-													{student.unread}
-												</span>
-											) : null}
 										</div>
 										{student.latestPreview ? (
 											<p className='mt-2 truncate text-sm text-slate-500'>
@@ -627,21 +633,26 @@ export function MessagesPageView({
 						}`}
 						data-motion-item
 					>
-						<div className='flex flex-wrap items-start justify-between gap-3'>
-							<div className='min-w-0'>
-								<p className='break-words text-lg font-black text-slate-900'>
-									{chat.teacherName}
-								</p>
-								<p className='mt-1 text-sm text-slate-600'>
-									{chat.classroomName}
-								</p>
-								<p className='mt-1 text-xs font-semibold text-slate-500'>
-									{formatMessagingTime(chat.latestAt)}
-								</p>
+						<div className='flex items-start gap-3'>
+							<UserAvatar name={chat.teacherName} className='h-9 w-9 shrink-0 text-xs' />
+							<div className='min-w-0 flex-1'>
+								<div className='flex flex-wrap items-start justify-between gap-2'>
+									<div>
+										<p className='break-words text-lg font-black text-slate-900'>
+											{chat.teacherName}
+										</p>
+										<p className='mt-1 text-sm text-slate-600'>
+											{chat.classroomName}
+										</p>
+										<p className='mt-1 text-xs font-semibold text-slate-500'>
+											{formatMessagingTime(chat.latestAt)}
+										</p>
+									</div>
+									{chat.unread > 0 ? (
+										<span className='messaging-unread-badge'>{chat.unread}</span>
+									) : null}
+								</div>
 							</div>
-							{chat.unread > 0 ? (
-								<span className='messaging-unread-badge'>{chat.unread}</span>
-							) : null}
 						</div>
 						{chat.latestPreview ? (
 							<p className='mt-3 truncate text-sm text-slate-500'>
@@ -658,7 +669,13 @@ export function MessagesPageView({
 		<div ref={rootRef} className='messages-page space-y-6'>
 			<section className='codequest-card p-6' data-motion-hero-copy>
 				<div className='flex flex-wrap items-start justify-between gap-4'>
-					<div className='min-w-0'>
+					<div className='flex min-w-0 items-start gap-4'>
+						<UserAvatar
+							name={user.full_name}
+							url={user.avatar_url}
+							className='mt-3 h-14 w-14 shrink-0 border-2 border-slate-200 text-lg shadow-sm'
+						/>
+						<div className='min-w-0'>
 						<p className='brand-eyebrow'>Сообщения</p>
 						<h1 className='mt-3 break-words text-3xl font-black text-slate-900 sm:text-4xl'>
 							{role === 'teacher'
@@ -670,6 +687,7 @@ export function MessagesPageView({
 								? 'Выберите ученика в нужном классе и продолжите личную переписку.'
 								: 'Выберите класс, чтобы задать вопрос учителю или ответить на сообщение.'}
 						</p>
+						</div>
 					</div>
 					<div className='flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end'>
 						<span className='brand-chip brand-chip--soft'>
@@ -799,6 +817,7 @@ export function MessagesPageView({
 							role={role}
 							target={activeTarget}
 							currentUserId={user.id}
+							currentUserAvatarUrl={user.avatar_url}
 							onClose={() => setActiveTarget(null)}
 							onConversationRead={() => loadSummary()}
 						/>

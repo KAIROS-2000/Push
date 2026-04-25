@@ -18,6 +18,7 @@ export interface UserItem {
   xp_to_next: number
   streak: number
   theme: 'light' | 'dark'
+  avatar_url?: string | null
   is_active: boolean
 }
 

@@ -63,7 +63,7 @@ function ShelfItem({ item }: { item: AchievementItem }) {
 function Shelf({ items }: { items: AchievementItem[] }) {
 	return (
 		<div>
-			<div className='grid grid-cols-4 gap-3 rounded-t-2xl bg-amber-50 px-6 pb-5 pt-6 sm:grid-cols-4'>
+			<div className='grid grid-cols-4 gap-3 rounded-t-2xl bg-amber-50 achievement-shelf-bg px-6 pb-5 pt-6 sm:grid-cols-4'>
 				{items.map(item => (
 					<ShelfItem key={item.id} item={item} />
 				))}
@@ -71,7 +71,7 @@ function Shelf({ items }: { items: AchievementItem[] }) {
 					<div key={`empty-${i}`} />
 				))}
 			</div>
-			<div className='h-3 rounded-b-xl bg-amber-800/25 shadow-inner' />
+			<div className='h-3 rounded-b-xl bg-amber-800/25 achievement-shelf-plank shadow-inner' />
 		</div>
 	)
 }
@@ -97,7 +97,7 @@ export function AchievementShowcase({ onClose }: AchievementShowcaseProps) {
 			className='fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center'
 			onClick={e => e.target === e.currentTarget && onClose()}
 		>
-			<div className='codequest-card w-full max-w-xl max-h-[90vh] overflow-y-auto'>
+			<div className='codequest-card achievement-modal-card w-full max-w-xl max-h-[90vh] overflow-y-auto'>
 				<div className='flex items-start justify-between p-6 pb-4'>
 					<div>
 						<p className='brand-eyebrow'>Коллекция</p>

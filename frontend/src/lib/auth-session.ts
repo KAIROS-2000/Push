@@ -31,7 +31,12 @@ export async function fetchSessionUser({
 } = {}) {
   const snapshot = getSessionSnapshot()
   if (!force && canReuseSnapshot(snapshot, auth)) {
-    return snapshot.user
+    // Re-fetch if cached user is missing fields added after the session was stored.
+    if (snapshot.user && !('avatar_url' in snapshot.user)) {
+      force = true
+    } else {
+      return snapshot.user
+    }
   }
 
   if (sessionRequest) {

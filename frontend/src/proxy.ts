@@ -17,7 +17,7 @@ function buildContentSecurityPolicy() {
 		// No nonce on style-src: with a nonce present, browsers ignore 'unsafe-inline', which blocks
 		// React style={{}} and other legitimate inline styles. Script nonce remains for script-src.
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: blob:",
+		"img-src 'self' data: blob: https:",
 		"font-src 'self' data:",
 		"connect-src 'self'",
 		"worker-src 'self' blob:",

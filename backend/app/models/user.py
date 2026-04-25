@@ -35,6 +35,7 @@ class User(db.Model):
     xp = db.Column(db.Integer, nullable=False, default=0)
     streak = db.Column(db.Integer, nullable=False, default=1)
     theme = db.Column(db.String(20), nullable=False, default='light')
+    avatar_url = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     session_version = db.Column(db.Integer, nullable=False, default=0)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -83,6 +84,7 @@ class User(db.Model):
             'xp_to_next': self.xp_to_next,
             'streak': self.streak,
             'theme': self.theme,
+            'avatar_url': self.avatar_url,
             'is_active': self.is_active,
         }
 

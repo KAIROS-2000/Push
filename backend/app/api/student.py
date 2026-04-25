@@ -1171,6 +1171,9 @@ def update_profile(current_user: User):
         current_user.full_name = data["full_name"]
     if "theme" in data and data["theme"] in {"light", "dark"}:
         current_user.theme = data["theme"]
+    if "avatar_url" in data:
+        url = (data.get("avatar_url") or "").strip()
+        current_user.avatar_url = url if url else None
     if "password" in data:
         password = data.get("password") or ""
         if password:

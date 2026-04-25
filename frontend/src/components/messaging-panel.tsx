@@ -9,6 +9,7 @@ import {
 	MessagingConversationSummary,
 	MessagingMessage,
 } from '@/types'
+import { UserAvatar } from '@/components/user-avatar'
 import { Inbox, Loader2, RefreshCw, Send, X } from 'lucide-react'
 import {
 	useCallback,
@@ -23,9 +24,11 @@ interface MessagingPanelProps {
 	role: 'student' | 'teacher'
 	target: MessagingChatTarget
 	currentUserId?: number
+	currentUserAvatarUrl?: string | null
 	onClose: () => void
 	onConversationRead?: (conversationId: number | null) => void
 }
+
 
 function normalizeConversationId(value: unknown): number | null {
 	if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -116,6 +119,7 @@ export function MessagingPanel({
 	role,
 	target,
 	currentUserId,
+	currentUserAvatarUrl,
 	onClose,
 	onConversationRead,
 }: MessagingPanelProps) {
@@ -323,21 +327,24 @@ export function MessagingPanel({
 					) : messages.length ? (
 						messages.map(message => {
 							const own = isOwnMessage(message, role, currentUserId)
+							const otherName = message.sender_name || (role === 'teacher' ? 'Ученик' : 'Учитель')
 							return (
 								<div
 									key={message.id}
-									className={`messaging-panel__message ${own ? 'messaging-panel__message--own' : 'messaging-panel__message--other'}`}
+									className={`messaging-panel__message items-end gap-2 ${own ? 'messaging-panel__message--own' : 'messaging-panel__message--other'}`}
 									data-motion-item
 								>
+									{!own && <UserAvatar name={otherName} className='h-8 w-8 shrink-0 border-2 border-white shadow-sm text-xs' />}
 									<div className='messaging-panel__bubble'>
 										<p className='whitespace-pre-wrap break-words text-sm leading-6'>
 											{message.body}
 										</p>
 										<div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.12em] opacity-70'>
-											<span>{own ? 'Вы' : message.sender_name || (role === 'teacher' ? 'Ученик' : 'Учитель')}</span>
+											<span>{own ? 'Вы' : otherName}</span>
 											<span>{formatChatTime(message.created_at)}</span>
 										</div>
 									</div>
+									{own && <UserAvatar name='Вы' url={currentUserAvatarUrl} className='h-8 w-8 shrink-0 border-2 border-white shadow-sm text-xs' />}
 								</div>
 							)
 						})

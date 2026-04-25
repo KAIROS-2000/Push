@@ -5,6 +5,7 @@ import { api, getApiErrorMessage } from '@/lib/api'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { RolePill } from '@/components/role-pill'
+import { UserAvatar } from '@/components/user-avatar'
 import { setAnonymousSession, setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
 import { formatRuPhoneForDisplay } from '@/lib/phone'
@@ -35,6 +36,7 @@ export function ProfileView() {
   const [form, setForm] = useState({
     full_name: '',
     theme: 'light' as UserItem['theme'],
+    avatar_url: '',
   })
 
   async function load() {
@@ -51,6 +53,7 @@ export function ProfileView() {
     setForm({
       full_name: profileResponse.user.full_name,
       theme: profileResponse.user.theme,
+      avatar_url: profileResponse.user.avatar_url ?? '',
     })
     setTheme(profileResponse.user.theme)
     setAchievements(achievementsResponse.achievements)
@@ -89,6 +92,7 @@ export function ProfileView() {
       setForm({
         full_name: result.user.full_name,
         theme: result.user.theme,
+        avatar_url: result.user.avatar_url ?? '',
       })
       setTheme(result.user.theme)
       showSuccessToast('Изменения профиля сохранены.')
@@ -126,7 +130,14 @@ export function ProfileView() {
       <section className="profile-identity codequest-card p-5 sm:p-8" data-motion-reveal>
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <div data-motion-hero-copy>
-            <RolePill role={profile.role} />
+            <div className="flex items-center gap-4">
+              <UserAvatar
+                name={profile.full_name}
+                url={profile.avatar_url}
+                className="h-16 w-16 border-2 border-slate-200 text-xl shrink-0"
+              />
+              <RolePill role={profile.role} />
+            </div>
             <h1 className="mt-4 text-4xl font-black leading-tight text-slate-900 sm:text-5xl">
               {profile.full_name}
             </h1>
@@ -193,6 +204,27 @@ export function ProfileView() {
                 Фон приложения изменится после сохранения профиля.
               </p>
             </label>
+            <label className="space-y-2">
+              <span className="text-sm font-semibold text-slate-600">Аватар (URL изображения)</span>
+              <input
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                type="url"
+                placeholder="https://example.com/avatar.jpg"
+                value={form.avatar_url}
+                onChange={(e) => setForm({ ...form, avatar_url: e.target.value })}
+              />
+              {form.avatar_url && (
+                <div className="flex items-center gap-3 pt-1">
+                  <img
+                    src={form.avatar_url}
+                    alt="Аватар"
+                    className="h-12 w-12 rounded-full object-cover border border-slate-200"
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  />
+                  <p className="text-xs text-slate-500">Предпросмотр</p>
+                </div>
+              )}
+            </label>
           </div>
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <button disabled={saving || loggingOut} className="brand-button-primary w-full sm:w-auto">
@@ -215,7 +247,7 @@ export function ProfileView() {
           <p className="mt-3 text-sm leading-7 text-slate-500">
             Получено: {earnedStats.earnedCount} · XP: +{earnedStats.earnedXp}
           </p>
-          <div className="mt-5 space-y-3">
+          <div className="mt-5 max-h-[420px] space-y-3 overflow-y-auto pr-1">
             {achievements.map((item) => (
               <div
                 key={item.id}

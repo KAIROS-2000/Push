@@ -1,5 +1,6 @@
 'use client'
 
+import { UserAvatar } from '@/components/user-avatar'
 import { ThemeToggleButton } from '@/components/theme-toggle-button'
 import { api } from '@/lib/api'
 import { useSessionUser } from '@/lib/auth-session'
@@ -178,6 +179,15 @@ export function SiteHeader() {
 					className={`progyx-header__actions ${isAuthenticated ? 'progyx-header__actions--auth' : 'progyx-header__actions--guest'}`}
 				>
 					{/* <span className='progyx-header__signal'>{metaLabel}</span> */}
+					{isAuthenticated && user && (
+						<Link href='/profile' className='shrink-0' tabIndex={-1}>
+							<UserAvatar
+								name={user.full_name ?? '?'}
+								url={user.avatar_url}
+								className='h-9 w-9 border-2 border-slate-200 text-xs'
+							/>
+						</Link>
+					)}
 					<ThemeToggleButton user={user} />
 					{isAuthenticated ? (
 						<button
