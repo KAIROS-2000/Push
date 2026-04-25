@@ -9,6 +9,11 @@ from ..models.user import User, UserRole
 LIGHTNING_WINDOW = timedelta(minutes=1)
 MARATHON_STREAK_TARGET = 30
 PERFECT_FIVE_TARGET = 5
+PATIENCE_WINDOW = timedelta(minutes=10)
+GOLDEN_STREAK_TARGET = 10
+GOLDEN_STREAK_GAP = timedelta(minutes=5)
+SPRINTER_TARGET = 5
+SPRINTER_WINDOW = timedelta(minutes=20)
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -106,12 +111,108 @@ def _has_lightning(user: User) -> bool:
     return False
 
 
+def _has_patience(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.attempts == 1,
+        UserProgress.started_at.isnot(None),
+        UserProgress.completed_at.isnot(None),
+    ).all()
+    for p in progresses:
+        started = _as_utc(p.started_at)
+        completed = _as_utc(p.completed_at)
+        if started and completed and (completed - started) > PATIENCE_WINDOW:
+            return True
+    return False
+
+
+def _has_night_owl(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.completed_at.isnot(None),
+    ).all()
+    return any(_as_utc(p.completed_at) is not None and _as_utc(p.completed_at).hour >= 23 for p in progresses)
+
+
+def _has_early_bird(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.completed_at.isnot(None),
+    ).all()
+    return any(_as_utc(p.completed_at) is not None and _as_utc(p.completed_at).hour < 8 for p in progresses)
+
+
+def _has_golden_streak(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.completed_at.isnot(None),
+    ).order_by(UserProgress.completed_at.asc()).all()
+    times = [_as_utc(p.completed_at) for p in progresses if _as_utc(p.completed_at)]
+    streak = 1
+    for i in range(1, len(times)):
+        if times[i] - times[i - 1] <= GOLDEN_STREAK_GAP:
+            streak += 1
+            if streak >= GOLDEN_STREAK_TARGET:
+                return True
+        else:
+            streak = 1
+    return False
+
+
+def _has_sprinter(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.completed_at.isnot(None),
+    ).order_by(UserProgress.completed_at.asc()).all()
+    times = [_as_utc(p.completed_at) for p in progresses if _as_utc(p.completed_at)]
+    if len(times) < SPRINTER_TARGET:
+        return False
+    for i in range(len(times) - SPRINTER_TARGET + 1):
+        if times[i + SPRINTER_TARGET - 1] - times[i] <= SPRINTER_WINDOW:
+            return True
+    return False
+
+
+def _has_no_hints(user: User) -> bool:
+    progresses = UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.hints_used == 0,
+        UserProgress.attempts > 0,
+    ).all()
+    if not progresses:
+        return False
+    lesson_ids = [p.lesson_id for p in progresses]
+    return db.session.query(Task.lesson_id).filter(Task.lesson_id.in_(lesson_ids)).first() is not None
+
+
+def _has_revisitor(user: User) -> bool:
+    return UserProgress.query.filter(
+        UserProgress.user_id == user.id,
+        UserProgress.status == 'completed',
+        UserProgress.score == 100,
+        UserProgress.attempts > 1,
+    ).first() is not None
+
+
 ACHIEVEMENT_CHECKS = {
     'first_code': _has_first_code,
     'perfect_five': _has_perfect_five,
     'marathon': _has_marathon,
     'explorer': _has_explorer,
     'lightning': _has_lightning,
+    'patience': _has_patience,
+    'night_owl': _has_night_owl,
+    'early_bird': _has_early_bird,
+    'golden_streak': _has_golden_streak,
+    'sprinter': _has_sprinter,
+    'no_hints': _has_no_hints,
+    'revisitor': _has_revisitor,
 }
 
 
