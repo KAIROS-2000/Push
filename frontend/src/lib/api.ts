@@ -58,8 +58,22 @@ function shouldClearSessionAfterAuthFailure(
   return authMode !== 'none' && status === 401
 }
 
+function payloadLooksLikeHtml(value: string): boolean {
+  const t = value.trimStart()
+  return t.startsWith('<!') || t.toLowerCase().startsWith('<html')
+}
+
+function httpStatusFallbackMessage(status: number): string | null {
+  if (status === 404) return 'Страница или ресурс не найдены.'
+  if (status === 403) return 'Недостаточно прав для доступа.'
+  if (status === 401) return 'Требуется вход в аккаунт.'
+  if (status >= 500) return 'Сервер временно недоступен. Попробуйте позже.'
+  return null
+}
+
 function extractErrorMessage(payload: unknown): string | null {
   if (typeof payload === 'string' && payload.trim()) {
+    if (payloadLooksLikeHtml(payload)) return null
     return payload.trim()
   }
   if (!payload || typeof payload !== 'object') {
@@ -184,7 +198,9 @@ export async function api<T>(path: string, init: RequestInit = {}, auth: ApiAuth
       await clearSessionSilently()
     }
     throw new ApiError(
-      extractErrorMessage(payload) || 'Ошибка запроса',
+      extractErrorMessage(payload) ||
+        httpStatusFallbackMessage(response.status) ||
+        'Ошибка запроса',
       response.status,
       payload,
     )

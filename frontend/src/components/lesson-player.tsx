@@ -2,7 +2,8 @@
 
 import { useAppTheme } from '@/hooks/use-app-theme'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
-import { api } from '@/lib/api'
+import { LessonNotFoundPanel } from '@/components/lesson-not-found-panel'
+import { ApiError, api, getApiErrorMessage } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import {
@@ -478,6 +479,7 @@ export function LessonPlayer({
 		normalizedInitialData?.lesson ?? null,
 	)
 	const [error, setError] = useState('')
+	const [lessonMissing, setLessonMissing] = useState(false)
 	const [answer, setAnswer] = useState('')
 	const [quizAnswers, setQuizAnswers] = useState<Record<string, unknown>>({})
 	const [loadingTask, setLoadingTask] = useState(false)
@@ -513,6 +515,8 @@ export function LessonPlayer({
 
 	useEffect(() => {
 		if (initialData) return
+		setError('')
+		setLessonMissing(false)
 		api<LessonPlayerPayload>(`/lessons/${lessonId}`, undefined, 'required')
 			.then(data => {
 				const normalized = normalizeLessonPayload(data)
@@ -534,9 +538,13 @@ export function LessonPlayer({
 					),
 				)
 			})
-			.catch(e =>
-				setError(e instanceof Error ? e.message : 'Не удалось загрузить урок'),
-			)
+			.catch(e => {
+				if (e instanceof ApiError && e.status === 404) {
+					setLessonMissing(true)
+					return
+				}
+				setError(getApiErrorMessage(e, 'Не удалось загрузить урок.'))
+			})
 	}, [initialData, lessonId])
 
 	const quiz = useMemo<QuizItem | null>(
@@ -912,8 +920,21 @@ export function LessonPlayer({
 		}
 	}
 
-	if (error)
-		return <div className='codequest-card p-6 text-rose-700'>{error}</div>
+	if (lessonMissing) {
+		return <LessonNotFoundPanel />
+	}
+	if (error) {
+		return (
+			<div className='codequest-card mx-auto max-w-xl p-6 sm:p-8'>
+				<p className='text-sm font-bold uppercase tracking-[0.18em] text-rose-600 dark:text-rose-400'>
+					Не удалось загрузить
+				</p>
+				<p className='mt-3 text-base leading-relaxed text-slate-800 dark:text-slate-200'>
+					{error}
+				</p>
+			</div>
+		)
+	}
 	if (!lesson) return <div className='codequest-card p-6'>Загружаем урок…</div>
 
 	return (
