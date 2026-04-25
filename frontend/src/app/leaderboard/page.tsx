@@ -42,6 +42,15 @@ interface StoredLeaderboardView {
 
 const LEADERBOARD_VIEW_STORAGE_KEY = 'progyx:leaderboard-view:v1'
 const GLOBAL_LEADERBOARD_REFRESH_MS = 5 * 60 * 1000
+/** Matches backend `LEADERBOARD_LIMIT` — never show more rows than this. */
+const LEADERBOARD_DISPLAY_LIMIT = 50
+
+function firstTokenFromName(value: string | null | undefined) {
+	if (typeof value !== 'string') return ''
+	const t = value.trim()
+	if (!t) return ''
+	return t.split(/\s+/)[0] ?? ''
+}
 
 function isBrowser() {
 	return typeof window !== 'undefined'
@@ -103,11 +112,9 @@ function buildLeaderboardPath(
 
 function formatLeaderboardIdentity(row: Row) {
 	const displayName =
-		typeof row.full_name === 'string' && row.full_name.trim()
-			? row.full_name.trim()
-			: typeof row.name === 'string'
-				? row.name.trim()
-				: ''
+		firstTokenFromName(row.full_name) ||
+		firstTokenFromName(row.name) ||
+		''
 	const username =
 		typeof row.username === 'string'
 			? row.username.trim()
@@ -166,7 +173,9 @@ export default function LeaderboardPage() {
 				if (cancelled) return
 
 				const responseClasses = data.classes ?? []
-				setRows(data.leaderboard)
+				setRows(
+					(data.leaderboard ?? []).slice(0, LEADERBOARD_DISPLAY_LIMIT)
+				)
 				setClasses(responseClasses)
 
 				if (data.scope === 'class') {
@@ -243,7 +252,7 @@ export default function LeaderboardPage() {
 		<main ref={rootRef} className='brand-app-shell'>
 			<div className='page-shell mx-auto w-full max-w-[96rem]'>
 				<section
-					className='codequest-card overflow-hidden p-6 sm:p-8'
+					className='codequest-card overflow-hidden p-6 sm:px-8 sm:py-8 lg:pl-3'
 					data-motion-reveal
 				>
 					<p className='brand-eyebrow'>Top players</p>
@@ -319,35 +328,58 @@ export default function LeaderboardPage() {
 					) : (
 						<>
 							{podium.length > 0 && (
-								<div className='leaderboard-podium mt-8' data-motion-stagger>
-									{podium.map((row, index) => (
-										<article
-											key={row.id ?? `${row.username ?? row.position}-${row.position}`}
-											className={`leaderboard-podium__card p-5 ${index === 0 ? 'leaderboard-podium__card--top' : ''}`}
-											data-motion-item
-											data-motion-hover
-										>
-											<div className='flex items-center justify-between gap-3'>
-												<span className='brand-chip brand-chip--soft'>
-													#{row.position}
-												</span>
-												<span className='brand-chip brand-chip--warm'>
-													{row.xp} XP
-												</span>
-											</div>
-											<h2 className='mt-5 text-2xl font-black text-slate-900'>
-												{formatLeaderboardIdentity(row)}
-											</h2>
-											<div className='mt-4 flex flex-wrap gap-2 text-sm text-slate-600'>
-												<span className='rounded-full bg-slate-50 px-3 py-1'>
-													Группа: {formatAgeGroup(row.age_group)}
-												</span>
-												<span className='rounded-full bg-slate-50 px-3 py-1'>
-													Уровень: {row.level}
-												</span>
-											</div>
-										</article>
-									))}
+								<div className='leaderboard-podium-wrap w-full' data-motion-stagger>
+									<div className='leaderboard-podium mt-4'>
+										{podium.map((row, index) => (
+											<article
+												key={row.id ?? `${row.username ?? row.position}-${row.position}`}
+												className={`leaderboard-podium__card min-h-0 p-3 sm:p-3.5 lg:p-2.5 ${index === 0 ? 'leaderboard-podium__card--top' : ''} ${index === 1 ? 'leaderboard-podium__card--rung2' : ''} ${index === 2 ? 'leaderboard-podium__card--rung3' : ''}`}
+												data-motion-item
+												data-motion-hover
+											>
+												<div className='flex shrink-0 items-center justify-between gap-2'>
+													<span
+														className={`leaderboard-podium__rank ${
+															index === 0
+																? 'leaderboard-podium__rank--gold'
+																: index === 1
+																	? 'leaderboard-podium__rank--silver'
+																	: 'leaderboard-podium__rank--bronze'
+														}`}
+													>
+														#{row.position}
+													</span>
+													<span className='brand-chip brand-chip--warm min-h-8 py-1 text-xs sm:text-[0.7rem]'>
+														{row.xp} XP
+													</span>
+												</div>
+												<h2
+													className={`mt-2 min-h-0 flex-1 overflow-hidden font-black leading-tight text-slate-900 line-clamp-2 ${
+														index === 0
+															? 'text-lg sm:text-xl'
+															: index === 1
+																? 'text-base sm:text-lg'
+																: 'text-sm sm:text-base'
+													}`}
+												>
+													{formatLeaderboardIdentity(row)}
+												</h2>
+												<div className='mt-auto flex shrink-0 flex-wrap gap-1.5 pt-1 text-xs sm:text-sm text-slate-600'>
+													<span className='rounded-full bg-slate-50 px-2 py-0.5'>
+														Группа: {formatAgeGroup(row.age_group)}
+													</span>
+													<span className='rounded-full bg-slate-50 px-2 py-0.5'>
+														Уровень: {row.level}
+													</span>
+												</div>
+											</article>
+										))}
+									</div>
+									<div className='leaderboard-podium-stairs' aria-hidden>
+										<span />
+										<span />
+										<span />
+									</div>
 								</div>
 							)}
 
@@ -389,11 +421,11 @@ export default function LeaderboardPage() {
 								<table className='min-w-full text-left'>
 									<thead>
 										<tr className='border-b border-slate-200 text-sm text-slate-500'>
-											<th className='px-4 py-3'>#</th>
-											<th className='px-4 py-3'>Пользователь</th>
-											<th className='px-4 py-3'>Возрастная группа</th>
-											<th className='px-4 py-3'>Уровень</th>
-											<th className='px-4 py-3'>XP</th>
+											<th className='py-3 pl-0 pr-3 sm:px-2 lg:pl-0'>#</th>
+											<th className='px-2 py-3 sm:px-3'>Пользователь</th>
+											<th className='px-2 py-3 sm:px-3'>Возрастная группа</th>
+											<th className='px-2 py-3 sm:px-3'>Уровень</th>
+											<th className='px-2 py-3 sm:px-3'>XP</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -402,17 +434,17 @@ export default function LeaderboardPage() {
 												key={row.id ?? `${row.username ?? row.position}-${row.position}`}
 												className='border-b border-slate-100 text-sm'
 											>
-												<td className='px-4 py-4 font-bold text-slate-900'>
+												<td className='py-3 pl-0 pr-3 font-bold text-slate-900 sm:px-2 lg:pl-0'>
 													{row.position}
 												</td>
-												<td className='px-4 py-4'>
+												<td className='px-2 py-3 sm:px-3 sm:py-4'>
 													{formatLeaderboardIdentity(row)}
 												</td>
-												<td className='px-4 py-4'>
+												<td className='px-2 py-3 sm:px-3 sm:py-4'>
 													{formatAgeGroup(row.age_group)}
 												</td>
-												<td className='px-4 py-4'>{row.level}</td>
-												<td className='px-4 py-4 font-semibold text-sky-700'>
+												<td className='px-2 py-3 sm:px-3 sm:py-4'>{row.level}</td>
+												<td className='px-2 py-3 font-semibold text-sky-700 sm:px-3 sm:py-4'>
 													{row.xp}
 												</td>
 											</tr>

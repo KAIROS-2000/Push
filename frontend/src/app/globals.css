@@ -3225,8 +3225,64 @@ html[data-theme='dark'] .lesson-mark-button--active {
 }
 
 .leaderboard-podium {
-	display: grid;
-	gap: 1rem;
+	--leaderboard-podium-card-h: 9.5rem;
+	--leaderboard-podium-card-max-w: 20.5rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.12rem;
+	width: 100%;
+	max-width: var(--leaderboard-podium-card-max-w);
+	margin-inline: auto;
+	align-items: center;
+}
+
+/* Gold stair lines: desktop only; positioned flush under the 3 card stack (see .leaderboard-podium-wrap) */
+.leaderboard-podium-stairs {
+	display: none;
+}
+
+.leaderboard-podium__rank {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 2rem;
+	min-width: 2.75rem;
+	padding: 0.32rem 0.6rem;
+	border-radius: 999px;
+	font-family: var(--progyx-font-code);
+	font-size: 0.7rem;
+	font-weight: 800;
+	letter-spacing: 0.04em;
+	border: 1px solid transparent;
+	box-shadow: 0 1px 6px rgba(15, 23, 42, 0.1);
+}
+
+.leaderboard-podium__rank--gold {
+	background: linear-gradient(
+		160deg,
+		#fff8dc 0%,
+		#f0d060 40%,
+		#c9a227 100%
+	);
+	color: #3d2e06;
+	border-color: rgba(180, 130, 20, 0.55);
+}
+
+.leaderboard-podium__rank--silver {
+	background: linear-gradient(165deg, #f5f5f7 0%, #d0d2d8 50%, #9ca1ab 100%);
+	color: #1e293b;
+	border-color: rgba(100, 110, 125, 0.45);
+}
+
+.leaderboard-podium__rank--bronze {
+	background: linear-gradient(
+		160deg,
+		#e8c4a4 0%,
+		#b8733d 50%,
+		#7a4a28 100%
+	);
+	color: #2a1608;
+	border-color: rgba(120, 70, 40, 0.5);
 }
 
 :is(
@@ -3238,9 +3294,17 @@ html[data-theme='dark'] .lesson-mark-button--active {
 	)
 	.leaderboard-podium__card {
 	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: var(--leaderboard-podium-card-max-w);
+	/* Taller, fixed-tile silhouette — no growing downward with long names */
+	height: var(--leaderboard-podium-card-h);
+	min-height: var(--leaderboard-podium-card-h);
+	max-height: var(--leaderboard-podium-card-h);
 	overflow: hidden;
 	border: 1px solid var(--progyx-border);
-	border-radius: 30px;
+	border-radius: 22px;
 	background: linear-gradient(
 		180deg,
 		rgba(255, 255, 255, 0.98),
@@ -3268,6 +3332,30 @@ html[data-theme='dark'] .lesson-mark-button--active {
 			rgba(255, 255, 255, 0.98),
 			rgba(242, 247, 255, 0.96)
 		);
+	box-shadow: var(--progyx-shadow-soft), 0 6px 18px rgba(15, 23, 42, 0.1);
+	margin-inline: 0;
+}
+
+:is(
+		.brand-public-shell,
+		.brand-auth-shell,
+		.brand-app-shell,
+		.brand-parent-shell,
+		.brand-admin-shell
+	)
+	.leaderboard-podium__card--rung2 {
+	margin-inline: 0.12rem;
+}
+
+:is(
+		.brand-public-shell,
+		.brand-auth-shell,
+		.brand-app-shell,
+		.brand-parent-shell,
+		.brand-admin-shell
+	)
+	.leaderboard-podium__card--rung3 {
+	margin-inline: 0.24rem;
 }
 
 .admin-workspace-shell {
@@ -3529,14 +3617,103 @@ html[data-theme='dark'] .home-code-panel {
 
 @media (min-width: 1025px) {
 	.home-hero__grid,
-	.site-footer__grid,
-	.leaderboard-podium {
+	.site-footer__grid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
+	/* Wrap: centers block; stair platforms are absolutely positioned under each card. */
+	.leaderboard-podium-wrap {
+		position: relative;
+		width: 100%;
+		max-width: min(64rem, 100%);
+		margin-left: auto;
+		margin-right: auto;
+		padding-bottom: 1.05rem;
+	}
+
+	/* Diagonal podium: 2nd/3rd pulled up; ~20% wider than mobile */
 	.leaderboard-podium {
-		grid-template-columns: 1.15fr 0.85fr 0.85fr;
-		align-items: end;
+		--leaderboard-podium-card-h: 10.5rem;
+		--leaderboard-podium-card-max-w: 24.6rem; /* 20.5rem * 1.2 */
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0;
+		width: 100%;
+		max-width: none;
+		margin-left: 0;
+		margin-right: 0;
+	}
+
+	.leaderboard-podium-stairs {
+		display: none;
+	}
+
+	/* Minimal gold platforms are attached to cards, so they stay exactly under each tile. */
+	.leaderboard-podium .leaderboard-podium__card {
+		overflow: visible;
+	}
+
+	.leaderboard-podium .leaderboard-podium__card::after {
+		content: '';
+		position: absolute;
+		left: 1.35rem;
+		right: 1.35rem;
+		bottom: -0.68rem;
+		height: 2px;
+		border-radius: 999px;
+		background: linear-gradient(
+			90deg,
+			rgba(122, 95, 18, 0.1) 0%,
+			rgba(184, 137, 42, 0.52) 22%,
+			rgba(245, 230, 168, 0.74) 50%,
+			rgba(212, 164, 42, 0.5) 78%,
+			rgba(122, 95, 18, 0.12) 100%
+		);
+		box-shadow:
+			0 0 0 1px rgba(201, 162, 39, 0.08),
+			0 2px 8px rgba(201, 162, 39, 0.1);
+		pointer-events: none;
+	}
+
+	/* Slight overlap: ~10% of card height between stacked cards */
+	.leaderboard-podium .leaderboard-podium__card:nth-child(1) {
+		align-self: flex-start;
+		position: relative;
+		z-index: 1;
+	}
+
+	.leaderboard-podium .leaderboard-podium__card:nth-child(2) {
+		align-self: center;
+		position: relative;
+		z-index: 2;
+		margin-top: calc(-0.1 * var(--leaderboard-podium-card-h));
+	}
+
+	.leaderboard-podium .leaderboard-podium__card:nth-child(3) {
+		align-self: flex-end;
+		position: relative;
+		z-index: 3;
+		margin-top: calc(-0.1 * var(--leaderboard-podium-card-h));
+	}
+
+	:is(
+			.brand-public-shell,
+			.brand-auth-shell,
+			.brand-app-shell,
+			.brand-parent-shell,
+			.brand-admin-shell
+		)
+		.leaderboard-podium__card--rung2,
+	:is(
+			.brand-public-shell,
+			.brand-auth-shell,
+			.brand-app-shell,
+			.brand-parent-shell,
+			.brand-admin-shell
+		)
+		.leaderboard-podium__card--rung3 {
+		margin-inline: 0;
 	}
 
 	.admin-area__layout {
@@ -4139,6 +4316,51 @@ html[data-theme='dark'] .leaderboard-podium__card--top {
 			transparent 24%
 		),
 		linear-gradient(180deg, rgba(14, 27, 51, 0.98), rgba(10, 23, 44, 0.94));
+}
+
+html[data-theme='dark'] .leaderboard-podium__rank--gold {
+	background: linear-gradient(
+		160deg,
+		#fff3bf 0%,
+		#d4a82a 48%,
+		#9a7418 100%
+	);
+	color: #1a1304;
+	border-color: rgba(255, 220, 120, 0.35);
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme='dark'] .leaderboard-podium__rank--silver {
+	background: linear-gradient(165deg, #e4e6ea 0%, #9ea4ae 50%, #6b707a 100%);
+	color: #0f1419;
+	border-color: rgba(200, 210, 220, 0.35);
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme='dark'] .leaderboard-podium__rank--bronze {
+	background: linear-gradient(
+		160deg,
+		#d9a67a 0%,
+		#9a5a30 50%,
+		#5c3418 100%
+	);
+	color: #1a0e06;
+	border-color: rgba(200, 140, 90, 0.4);
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme='dark'] .leaderboard-podium .leaderboard-podium__card::after {
+	background: linear-gradient(
+		90deg,
+		rgba(92, 72, 16, 0.18) 0%,
+		rgba(138, 106, 28, 0.58) 22%,
+		rgba(232, 216, 122, 0.78) 50%,
+		rgba(184, 133, 32, 0.55) 78%,
+		rgba(92, 72, 16, 0.18) 100%
+	);
+	box-shadow:
+		0 0 0 1px rgba(255, 213, 100, 0.08),
+		0 2px 8px rgba(201, 162, 39, 0.16);
 }
 
 html[data-theme='dark'] .home-poster__frame,
