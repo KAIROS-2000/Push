@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import hmac
 import math
@@ -17,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from shared.judge import JudgeExecutionRequest, coerce_test_cases, execute_stdio_submission
+from shared.judge import JudgeExecutionRequest, async_execute_stdio_submission, coerce_test_cases
 
 
 HOST = os.getenv('JUDGE_RUNNER_HOST', '0.0.0.0')
@@ -27,6 +28,7 @@ DEFAULT_TIME_LIMIT_MS = int(os.getenv('JUDGE_RUNNER_DEFAULT_TIME_LIMIT_MS', '200
 DEFAULT_MEMORY_LIMIT_MB = int(os.getenv('JUDGE_RUNNER_DEFAULT_MEMORY_LIMIT_MB', '128'))
 MAX_OUTPUT_CHARS = int(os.getenv('JUDGE_RUNNER_MAX_OUTPUT_CHARS', '4000'))
 MAX_CONCURRENCY = max(1, int(os.getenv('JUDGE_RUNNER_MAX_CONCURRENCY', '4')))
+MAX_TEST_CONCURRENCY = max(1, int(os.getenv('JUDGE_RUNNER_MAX_TEST_CONCURRENCY', str(MAX_CONCURRENCY))))
 PYTHON_BIN = os.getenv('JUDGE_RUNNER_PYTHON_BIN', 'python')
 NODE_BIN = os.getenv('JUDGE_RUNNER_NODE_BIN', 'node')
 AUTH_TOKEN = (os.getenv('JUDGE_RUNNER_AUTH_TOKEN') or '').strip()
@@ -124,7 +126,7 @@ class RunnerRuntime:
         return _preexec_resource_limits(memory_limit_mb, time_limit_ms, language)
 
 
-def execute_submission_payload(payload: dict) -> dict:
+async def execute_submission_payload_async(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError('Ожидается JSON-объект.')
 
@@ -148,8 +150,13 @@ def execute_submission_payload(payload: dict) -> dict:
         memory_limit_mb=_safe_int(payload.get('memory_limit_mb'), DEFAULT_MEMORY_LIMIT_MB, minimum=32, maximum=1024),
         max_output_chars=_safe_int(payload.get('max_output_chars'), MAX_OUTPUT_CHARS, minimum=256, maximum=20000),
         tempdir_prefix='judge-',
+        max_parallel_tests=MAX_TEST_CONCURRENCY,
     )
-    return execute_stdio_submission(request, RunnerRuntime())
+    return await async_execute_stdio_submission(request, RunnerRuntime())
+
+
+def execute_submission_payload(payload: dict) -> dict:
+    return asyncio.run(execute_submission_payload_async(payload))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,7 +172,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == '/health':
-            self._send_json(HTTPStatus.OK, {'status': 'ok', 'max_concurrency': MAX_CONCURRENCY})
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    'status': 'ok',
+                    'max_concurrency': MAX_CONCURRENCY,
+                    'max_test_concurrency': MAX_TEST_CONCURRENCY,
+                },
+            )
             return
         self._send_json(HTTPStatus.NOT_FOUND, {'message': 'Not found'})
 
@@ -216,7 +230,8 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             print(
-                f'judge_execution language={language} tests_total={tests_total} duration_ms={duration_ms}',
+                f'judge_execution language={language} tests_total={tests_total} '
+                f'test_concurrency={MAX_TEST_CONCURRENCY} duration_ms={duration_ms}',
                 flush=True,
             )
             RUNNER_SEMAPHORE.release()

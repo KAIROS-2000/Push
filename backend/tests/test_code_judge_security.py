@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -183,6 +185,97 @@ class CodeJudgeSecurityTests(unittest.TestCase):
 
         self.assertFalse(report['passed'])
         self.assertEqual(report['results'][0]['error_type'], 'timeout')
+
+    def test_shared_engine_executes_stdio_tests_concurrently_with_isolated_workdirs(self):
+        from shared.judge import JudgeExecutionRequest, JudgeTestCase, async_execute_stdio_submission
+
+        class PythonRuntime:
+            def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:  # noqa: ARG002
+                return [sys.executable, '-I', script_path]
+
+            def build_env(self) -> dict[str, str]:
+                return {'PATH': os.environ.get('PATH', ''), 'PYTHONIOENCODING': 'utf-8'}
+
+            def preexec_fn(self, memory_limit_mb: int, time_limit_ms: int, language: str):  # noqa: ARG002
+                return None
+
+        code = (
+            'from pathlib import Path\n'
+            'import sys\n'
+            'import time\n'
+            'value = sys.stdin.read().strip()\n'
+            'Path("case.txt").write_text(value, encoding="utf-8")\n'
+            'time.sleep(0.5)\n'
+            'print(Path("case.txt").read_text(encoding="utf-8"))\n'
+        )
+        started_at = time.perf_counter()
+        report = asyncio.run(
+            async_execute_stdio_submission(
+                JudgeExecutionRequest(
+                    language='python',
+                    code=code,
+                    tests=[
+                        JudgeTestCase(label='case-a', input='a', expected='a'),
+                        JudgeTestCase(label='case-b', input='b', expected='b'),
+                        JudgeTestCase(label='case-c', input='c', expected='c'),
+                        JudgeTestCase(label='case-d', input='d', expected='d'),
+                    ],
+                    time_limit_ms=2500,
+                    memory_limit_mb=64,
+                    max_output_chars=256,
+                    max_parallel_tests=4,
+                ),
+                PythonRuntime(),
+            )
+        )
+        duration_seconds = time.perf_counter() - started_at
+
+        self.assertTrue(report['passed'])
+        self.assertLess(duration_seconds, 1.7)
+
+    def test_runner_uses_configured_async_test_concurrency(self):
+        with patch.dict(
+            os.environ,
+            {
+                'JUDGE_RUNNER_MAX_TEST_CONCURRENCY': '3',
+                'JUDGE_RUNNER_ALLOW_UNAUTHENTICATED': 'true',
+            },
+            clear=False,
+        ):
+            import judge_runner.app as runner_app
+
+            importlib.reload(runner_app)
+
+        captured = {}
+
+        async def fake_execute(request, runtime):  # noqa: ANN001, ARG001
+            captured['max_parallel_tests'] = request.max_parallel_tests
+            return {
+                'mode': 'stdin_stdout',
+                'runner': 'stdin_stdout',
+                'language': request.language,
+                'passed': True,
+                'score': 100,
+                'feedback': 'ok',
+                'tests_passed': 1,
+                'tests_total': 1,
+                'results': [],
+                'compile_error': None,
+                'runtime_error': None,
+                'time_limit_ms': request.time_limit_ms,
+                'memory_limit_mb': request.memory_limit_mb,
+            }
+
+        with patch.object(runner_app, 'async_execute_stdio_submission', side_effect=fake_execute):
+            runner_app.execute_submission_payload(
+                {
+                    'language': 'python',
+                    'code': 'print(input())',
+                    'tests': [{'label': 'echo', 'input': 'x', 'expected': 'x'}],
+                }
+            )
+
+        self.assertEqual(captured['max_parallel_tests'], 3)
 
 
 if __name__ == '__main__':
