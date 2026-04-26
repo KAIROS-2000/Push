@@ -30,7 +30,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="ru" data-theme="light" suppressHydrationWarning>
       <head>
-        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: getThemeInitScript() }} />
+        <script
+          nonce={nonce}
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: getThemeInitScript() }}
+        />
       </head>
       <body>
         <ThemeHydrator />

@@ -11,27 +11,40 @@ import type {
   AdminAuditLogItem,
   AdminAuditLogResponse,
   AdminOverviewData,
+  AdminTeacherRequestsResponse,
   AdminUserDirectoryResponse,
   AdminUserListItem,
   ModuleItem,
   PaginationMeta,
+  TeacherApprovalStatus,
 } from '@/types'
 
 const USERNAME_MAX_LENGTH = 10
 const DIRECTORY_PAGE_SIZE = 20
+type TeacherApprovalFilter = 'all' | TeacherApprovalStatus
 
 const STAT_LABELS: Record<string, string> = {
   users: 'Пользователи',
   students: 'Ученики',
   teachers: 'Учителя',
+  teacher_requests: 'Заявки учителей',
   modules: 'Модули',
   lessons: 'Уроки',
+}
+
+const TEACHER_APPROVAL_LABELS: Record<TeacherApprovalStatus, string> = {
+  pending: 'На проверке',
+  approved: 'Подтверждён',
+  rejected: 'Отклонён',
 }
 
 const AUDIT_ACTION_OPTIONS = [
   { value: 'all', label: 'Все действия' },
   { value: 'user_blocked', label: 'Блокировка пользователя' },
   { value: 'user_unblocked', label: 'Разблокировка пользователя' },
+  { value: 'user_deleted', label: 'Удаление пользователя' },
+  { value: 'teacher_request_approved', label: 'Подтверждение учителя' },
+  { value: 'teacher_request_rejected', label: 'Отклонение учителя' },
   { value: 'admin_created', label: 'Создание админа' },
   { value: 'admin_blocked', label: 'Блокировка админа' },
   { value: 'admin_unblocked', label: 'Разблокировка админа' },
@@ -77,6 +90,22 @@ function describeError(error: unknown, fallback: string) {
 
 function hasPasswordWhitespace(value: string) {
   return /\s/.test(value)
+}
+
+function accountStatusBadge(user: AdminUserListItem) {
+  if (user.role === 'teacher') {
+    const approvalStatus = user.teacher_approval_status ?? 'approved'
+    if (approvalStatus === 'pending') {
+      return { label: TEACHER_APPROVAL_LABELS.pending, modifier: 'admin-status-badge--pending' }
+    }
+    if (approvalStatus === 'rejected') {
+      return { label: TEACHER_APPROVAL_LABELS.rejected, modifier: 'admin-status-badge--rejected' }
+    }
+  }
+
+  return user.is_active
+    ? { label: 'Активен', modifier: 'admin-status-badge--active' }
+    : { label: 'Заблокирован', modifier: 'admin-status-badge--blocked' }
 }
 
 function PaginationControls({
@@ -126,19 +155,15 @@ function AccountCard({
   user: AdminUserListItem
   children?: ReactNode
 }) {
+  const statusBadge = accountStatusBadge(user)
+
   return (
     <article className="rounded-[1.75rem] border border-slate-200 bg-white/80 p-5 shadow-[0_18px_38px_rgba(17,40,93,0.06)]">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xl font-black text-slate-900">{user.full_name}</p>
-            <span
-              className={`admin-status-badge ${
-                user.is_active ? 'admin-status-badge--active' : 'admin-status-badge--blocked'
-              }`}
-            >
-              {user.is_active ? 'Активен' : 'Заблокирован'}
-            </span>
+            <span className={`admin-status-badge ${statusBadge.modifier}`}>{statusBadge.label}</span>
             <span className="brand-chip brand-chip--soft min-h-[2rem] px-3 py-1 text-[0.68rem]">
               {user.role}
             </span>
@@ -146,6 +171,7 @@ function AccountCard({
           <div className="space-y-1 text-sm text-slate-500">
             <p className="font-semibold text-slate-700">@{user.username}</p>
             <p>{user.email}</p>
+            {user.phone ? <p>{user.phone}</p> : null}
           </div>
           <div className="grid gap-2 text-sm text-slate-500 sm:grid-cols-2">
             <p>
@@ -156,6 +182,12 @@ function AccountCard({
               <span className="font-semibold text-slate-700">Последний вход:</span>{' '}
               {formatAbsoluteDate(user.last_login_at)}
             </p>
+            {user.teacher_rejection_expires_at ? (
+              <p>
+                <span className="font-semibold text-slate-700">Удалится:</span>{' '}
+                {formatAbsoluteDate(user.teacher_rejection_expires_at)}
+              </p>
+            ) : null}
           </div>
         </div>
         {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
@@ -228,11 +260,11 @@ function DirectoryToolbar({
 
 function AuditActionBadge({ action }: { action: string }) {
   const modifier =
-    action.includes('blocked')
+    action.includes('blocked') || action.includes('rejected')
       ? 'admin-action-badge--danger'
       : action.includes('deleted')
         ? 'admin-action-badge--muted'
-        : action.includes('created')
+        : action.includes('created') || action.includes('approved')
           ? 'admin-action-badge--success'
           : action.includes('published')
             ? 'admin-action-badge--primary'
@@ -300,8 +332,10 @@ export function AdminOverviewPanel({ overview }: { overview: AdminOverviewData |
 
 export function AdminUsersPanel({
   initialData,
+  canDeleteUsers = false,
 }: {
   initialData: AdminUserDirectoryResponse | null
+  canDeleteUsers?: boolean
 }) {
   const [response, setResponse] = useState(initialData)
   const [username, setUsername] = useState(initialData?.filters.username ?? '')
@@ -380,11 +414,41 @@ export function AdminUsersPanel({
     }
   }
 
+  async function deleteUser(user: AdminUserListItem) {
+    const confirmed = window.confirm(
+      `Удалить пользователя @${user.username}? Это действие нельзя отменить.`,
+    )
+    if (!confirmed) return
+
+    setBusyUserId(user.id)
+    try {
+      await api(`/admin/users/${user.id}`, { method: 'DELETE' }, 'required')
+      showSuccessToast(`Пользователь @${user.username} удалён.`)
+      const nextPage = (response?.users.length ?? 0) <= 1 && page > 1 ? page - 1 : page
+      if (nextPage !== page) {
+        setPage(nextPage)
+      }
+      await load({ page: nextPage })
+    } catch (error) {
+      showErrorToast(describeError(error, 'Не удалось удалить пользователя.'))
+    } finally {
+      setBusyUserId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <DirectoryToolbar
-        title="Поиск и блокировка учеников и учителей"
-        description="Серверная фильтрация по логину помогает быстро найти нужный аккаунт, а статус виден сразу в списке без переходов между экранами."
+        title={
+          canDeleteUsers
+            ? 'Поиск, блокировка и удаление учеников и учителей'
+            : 'Поиск и блокировка учеников и учителей'
+        }
+        description={
+          canDeleteUsers
+            ? 'Серверная фильтрация по логину помогает быстро найти нужный аккаунт, изменить статус или удалить запись после подтверждения действия.'
+            : 'Серверная фильтрация по логину помогает быстро найти нужный аккаунт, а статус виден сразу в списке без переходов между экранами.'
+        }
         username={username}
         status={status}
         total={response?.pagination.total}
@@ -417,6 +481,16 @@ export function AdminUsersPanel({
                     ? 'Блокировать'
                     : 'Разблокировать'}
               </button>
+              {canDeleteUsers ? (
+                <button
+                  type="button"
+                  className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-700"
+                  disabled={busyUserId === user.id}
+                  onClick={() => void deleteUser(user)}
+                >
+                  {busyUserId === user.id ? 'Удаляем…' : 'Удалить'}
+                </button>
+              ) : null}
             </AccountCard>
           ))}
         </div>
@@ -426,6 +500,189 @@ export function AdminUsersPanel({
             <p className="text-lg font-black text-slate-900">Совпадений не найдено</p>
             <p className="mt-3 text-sm leading-7 text-slate-500">
               Попробуйте изменить логин или переключить фильтр статуса.
+            </p>
+          </div>
+        ) : null}
+
+        <PaginationControls
+          pagination={response?.pagination}
+          loading={loading}
+          onPageChange={(nextPage) => setPage(nextPage)}
+        />
+      </section>
+    </div>
+  )
+}
+
+export function AdminTeacherRequestsPanel({
+  initialData,
+}: {
+  initialData: AdminTeacherRequestsResponse | null
+}) {
+  const [response, setResponse] = useState(initialData)
+  const [username, setUsername] = useState(initialData?.filters.username ?? '')
+  const [status, setStatus] = useState<TeacherApprovalFilter>(
+    initialData?.filters.status ?? 'pending',
+  )
+  const [page, setPage] = useState(initialData?.pagination.page ?? 1)
+  const [loading, setLoading] = useState(!initialData)
+  const [busyUserId, setBusyUserId] = useState<number | null>(null)
+  const skipInitialLoad = useRef(Boolean(initialData))
+
+  async function load(next?: {
+    username?: string
+    status?: TeacherApprovalFilter
+    page?: number
+  }) {
+    const nextUsername = next?.username ?? username
+    const nextStatus = next?.status ?? status
+    const nextPage = next?.page ?? page
+    setLoading(true)
+    try {
+      const data = await api<AdminTeacherRequestsResponse>(
+        `/admin/teacher-requests${buildQuery({
+          username: nextUsername,
+          status: nextStatus,
+          page: nextPage,
+          page_size: DIRECTORY_PAGE_SIZE,
+        })}`,
+        undefined,
+        'required',
+      )
+      setResponse(data)
+    } catch (error) {
+      showErrorToast(describeError(error, 'Не удалось загрузить заявки учителей.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (
+      skipInitialLoad.current &&
+      username === (initialData?.filters.username ?? '') &&
+      status === (initialData?.filters.status ?? 'pending') &&
+      page === (initialData?.pagination.page ?? 1)
+    ) {
+      skipInitialLoad.current = false
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void load({ username, status, page })
+    }, 280)
+
+    return () => window.clearTimeout(timer)
+  }, [initialData, page, status, username])
+
+  async function changeRequest(user: AdminUserListItem, action: 'approve' | 'reject') {
+    setBusyUserId(user.id)
+    try {
+      await api(
+        `/admin/teacher-requests/${user.id}/${action}`,
+        { method: 'PATCH' },
+        'required',
+      )
+      showSuccessToast(
+        action === 'approve'
+          ? `Учитель @${user.username} подтверждён.`
+          : `Заявка @${user.username} отклонена и будет удалена через 15 минут.`,
+      )
+      await load()
+    } catch (error) {
+      showErrorToast(describeError(error, 'Не удалось обновить заявку учителя.'))
+    } finally {
+      setBusyUserId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="codequest-card p-6 sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl space-y-3">
+            <p className="brand-eyebrow">Teacher access</p>
+            <h2 className="text-2xl font-black text-slate-900">Подтверждение регистраций учителей</h2>
+            <p className="text-sm leading-7 text-slate-500">
+              Учитель создаёт аккаунт сам, но кабинет открывается только после решения администратора.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="brand-chip brand-chip--soft">
+              {loading ? 'Загрузка…' : `${response?.pagination.total ?? 0} заявок`}
+            </span>
+            <span className="brand-chip brand-chip--warm">ручное подтверждение</span>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
+          <label className="space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Логин учителя</span>
+            <input
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              placeholder="Например, mentor"
+              value={username}
+              onChange={(event) => {
+                setUsername(event.target.value)
+                setPage(1)
+              }}
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Статус заявки</span>
+            <select
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value as TeacherApprovalFilter)
+                setPage(1)
+              }}
+            >
+              <option value="pending">Ожидают решения</option>
+              <option value="approved">Подтверждённые</option>
+              <option value="rejected">Отклонённые</option>
+              <option value="all">Все</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="codequest-card p-6 sm:p-7">
+        <div className="space-y-4">
+          {(response?.teacher_requests ?? []).map((user) => {
+            const approvalStatus = user.teacher_approval_status ?? 'approved'
+            return (
+              <AccountCard key={user.id} user={user}>
+                {approvalStatus !== 'approved' ? (
+                  <button
+                    type="button"
+                    className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800"
+                    disabled={busyUserId === user.id}
+                    onClick={() => void changeRequest(user, 'approve')}
+                  >
+                    {busyUserId === user.id ? 'Сохраняем…' : 'Подтвердить'}
+                  </button>
+                ) : null}
+                {approvalStatus === 'pending' ? (
+                  <button
+                    type="button"
+                    className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-800"
+                    disabled={busyUserId === user.id}
+                    onClick={() => void changeRequest(user, 'reject')}
+                  >
+                    {busyUserId === user.id ? 'Сохраняем…' : 'Отклонить'}
+                  </button>
+                ) : null}
+              </AccountCard>
+            )
+          })}
+        </div>
+
+        {!loading && (response?.teacher_requests.length ?? 0) === 0 ? (
+          <div className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+            <p className="text-lg font-black text-slate-900">Заявок не найдено</p>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              Измените фильтр статуса или дождитесь новой регистрации учителя.
             </p>
           </div>
         ) : null}

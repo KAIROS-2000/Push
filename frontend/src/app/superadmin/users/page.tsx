@@ -10,7 +10,7 @@ export default async function SuperadminUsersPage() {
 
   return (
     <AdminAreaShell area="superadmin" section="users">
-      <AdminUsersPanel initialData={directory} />
+      <AdminUsersPanel initialData={directory} canDeleteUsers />
     </AdminAreaShell>
   )
 }

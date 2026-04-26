@@ -50,6 +50,7 @@ export function AuthForm({
 	const rootRef = useRef<HTMLElement | null>(null)
 	const [showPassword, setShowPassword] = useState(false)
 	const [loading, setLoading] = useState(false)
+	const [notice, setNotice] = useState<string | null>(null)
 	const [form, setForm] = useState({
 		full_name: '',
 		username: '',
@@ -119,6 +120,7 @@ export function AuthForm({
 			return
 		}
 
+		setNotice(null)
 		setLoading(true)
 
 		try {
@@ -136,10 +138,25 @@ export function AuthForm({
 							...(isTeacherRegistration ? {} : { age_group: form.age_group }),
 						}
 
-			const result = await api<{ user: UserItem }>('/auth/' + mode, {
+			const result = await api<{
+				user?: UserItem
+				status?: 'pending'
+				message?: string
+			}>('/auth/' + mode, {
 				method: 'POST',
 				body: JSON.stringify(payload),
 			})
+			if (mode === 'register' && result.status === 'pending') {
+				setNotice(
+					result.message
+						|| 'Заявка учителя отправлена администратору. Войти можно будет после подтверждения.',
+				)
+				setForm({ ...form, password: '' })
+				return
+			}
+			if (!result.user) {
+				throw new Error('Сервер не вернул данные пользователя.')
+			}
 			setAuthenticatedSession(result.user)
 			setTheme(result.user?.theme || form.theme)
 			if (mode === 'register' && result.user?.role === 'student') {
@@ -274,7 +291,9 @@ export function AuthForm({
 							<p className='auth-form-intro mt-3 text-sm leading-7 text-slate-600'>
 								{mode === 'login'
 									? 'Введите email или username и продолжайте с того места, где остановились.'
-									: 'Заполните профиль, чтобы открыть свой маршрут внутри платформы.'}
+									: isTeacherRegistration
+										? 'Заполните профиль учителя. После отправки администратор подтвердит доступ к кабинету.'
+										: 'Заполните профиль, чтобы открыть свой маршрут внутри платформы.'}
 							</p>
 						</div>
 						<Link
@@ -284,6 +303,12 @@ export function AuthForm({
 							{mode === 'login' ? 'Нет аккаунта' : 'Уже есть аккаунт'}
 						</Link>
 					</div>
+
+					{notice ? (
+						<div className='mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold leading-6 text-emerald-800'>
+							{notice}
+						</div>
+					) : null}
 
 					<form className='mt-8 space-y-5' noValidate onSubmit={handleSubmit}>
 						{mode === 'register' && (
@@ -367,7 +392,10 @@ export function AuthForm({
 									<select
 										className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
 										value={form.role}
-										onChange={e => setForm({ ...form, role: e.target.value })}
+										onChange={e => {
+											setNotice(null)
+											setForm({ ...form, role: e.target.value })
+										}}
 									>
 										{(options?.roles?.length
 											? options.roles
@@ -455,7 +483,9 @@ export function AuthForm({
 								? 'Подождите…'
 								: mode === 'login'
 									? 'Войти в кабинет'
-									: 'Создать аккаунт'}
+									: isTeacherRegistration
+										? 'Отправить заявку'
+										: 'Создать аккаунт'}
 						</button>
 					</form>
 				</section>

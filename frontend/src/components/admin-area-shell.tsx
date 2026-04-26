@@ -2,7 +2,7 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 
 type AdminArea = 'admin' | 'superadmin'
-type AdminSection = 'users' | 'admins' | 'lessons' | 'modules' | 'logs'
+type AdminSection = 'users' | 'teacher-requests' | 'admins' | 'lessons' | 'modules' | 'logs'
 
 interface NavItem {
   key: AdminSection
@@ -18,6 +18,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/admin/users',
       label: 'Пользователи',
       description: 'Поиск и блокировка',
+    },
+    {
+      key: 'teacher-requests',
+      href: '/admin/teacher-requests',
+      label: 'Заявки учителей',
+      description: 'Подтверждение доступа',
     },
     {
       key: 'lessons',
@@ -44,6 +50,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/superadmin/users',
       label: 'Пользователи',
       description: 'Ученики и учителя',
+    },
+    {
+      key: 'teacher-requests',
+      href: '/superadmin/teacher-requests',
+      label: 'Заявки учителей',
+      description: 'Подтверждение доступа',
     },
     {
       key: 'admins',

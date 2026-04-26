@@ -1,4 +1,5 @@
 export type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
+export type TeacherApprovalStatus = 'pending' | 'approved' | 'rejected'
 export type ProgressStatus = 'not_started' | 'in_progress' | 'pending_review' | 'needs_revision' | 'completed'
 export type SubmissionStatus = 'submitted' | 'pending_review' | 'checked' | 'needs_revision'
 export type TaskEvaluationMode = 'manual' | 'keywords' | 'stdin_stdout'
@@ -19,6 +20,8 @@ export interface UserItem {
   streak: number
   theme: 'light' | 'dark'
   is_active: boolean
+  teacher_approval_status?: TeacherApprovalStatus
+  teacher_rejection_expires_at?: string | null
 }
 
 export interface PaginationMeta {
@@ -58,6 +61,15 @@ export interface AdminAdminDirectoryResponse {
   filters: {
     username: string
     status: 'all' | 'active' | 'blocked'
+  }
+}
+
+export interface AdminTeacherRequestsResponse {
+  teacher_requests: AdminUserListItem[]
+  pagination: PaginationMeta
+  filters: {
+    username: string
+    status: 'all' | TeacherApprovalStatus
   }
 }
 

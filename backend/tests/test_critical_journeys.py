@@ -162,6 +162,37 @@ class CriticalJourneyTests(unittest.TestCase):
         self.assertIn('user', refresh_response.get_json())
         self.assertTrue(any('codequest_access_token=' in cookie for cookie in refresh_response.headers.getlist('Set-Cookie')))
 
+    def test_teacher_refresh_token_survives_parallel_refresh_retry(self):
+        app = self.create_app()
+        self.create_teacher(app)
+
+        with app.test_client() as client:
+            self.login(client, login='teacher@example.com', password='TeacherPass123!')
+            refresh_cookie = client.get_cookie('codequest_refresh_token')
+            csrf_cookie = client.get_cookie('csrf_token')
+            self.assertIsNotNone(refresh_cookie)
+            self.assertIsNotNone(csrf_cookie)
+            original_refresh_token = refresh_cookie.value
+
+            first_refresh = client.post(
+                '/api/auth/refresh',
+                json={'refresh_token': original_refresh_token},
+                headers={'X-CSRF-Token': csrf_cookie.value},
+            )
+            self.assertEqual(first_refresh.status_code, 200)
+
+            next_csrf_cookie = client.get_cookie('csrf_token')
+            self.assertIsNotNone(next_csrf_cookie)
+            second_refresh = client.post(
+                '/api/auth/refresh',
+                json={'refresh_token': original_refresh_token},
+                headers={'X-CSRF-Token': next_csrf_cookie.value},
+            )
+
+        self.assertEqual(second_refresh.status_code, 200)
+        self.assertEqual(second_refresh.get_json()['user']['role'], 'teacher')
+        self.assertTrue(any('codequest_access_token=' in cookie for cookie in second_refresh.headers.getlist('Set-Cookie')))
+
     def test_student_task_submission_uses_remote_runner_contract(self):
         app = self.create_app()
         self.create_student(app)

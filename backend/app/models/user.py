@@ -19,6 +19,14 @@ class UserRole(enum.Enum):
 
 USERNAME_MAX_LENGTH = 10
 JSONType = JSONB().with_variant(db.JSON(), 'sqlite')
+TEACHER_APPROVAL_PENDING = 'pending'
+TEACHER_APPROVAL_APPROVED = 'approved'
+TEACHER_APPROVAL_REJECTED = 'rejected'
+TEACHER_APPROVAL_STATUSES = {
+    TEACHER_APPROVAL_PENDING,
+    TEACHER_APPROVAL_APPROVED,
+    TEACHER_APPROVAL_REJECTED,
+}
 
 
 class User(db.Model):
@@ -36,6 +44,13 @@ class User(db.Model):
     streak = db.Column(db.Integer, nullable=False, default=1)
     theme = db.Column(db.String(20), nullable=False, default='light')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    teacher_approval_status = db.Column(
+        db.String(20),
+        nullable=False,
+        default=TEACHER_APPROVAL_APPROVED,
+        index=True,
+    )
+    teacher_rejection_expires_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     session_version = db.Column(db.Integer, nullable=False, default=0)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
@@ -84,6 +99,10 @@ class User(db.Model):
             'streak': self.streak,
             'theme': self.theme,
             'is_active': self.is_active,
+            'teacher_approval_status': self.teacher_approval_status or TEACHER_APPROVAL_APPROVED,
+            'teacher_rejection_expires_at': self.teacher_rejection_expires_at.isoformat()
+            if self.teacher_rejection_expires_at
+            else None,
         }
 
     def to_parent_dict(self) -> dict:

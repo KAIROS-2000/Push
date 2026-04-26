@@ -3603,6 +3603,16 @@ html[data-theme='dark'] .lesson-builder__summary {
 	color: #b45309;
 }
 
+.admin-status-badge--pending {
+	background: rgba(59, 130, 246, 0.12);
+	color: #1d4ed8;
+}
+
+.admin-status-badge--rejected {
+	background: rgba(239, 68, 68, 0.14);
+	color: #b91c1c;
+}
+
 .admin-action-badge--primary {
 	background: rgba(11, 103, 255, 0.12);
 	color: var(--progyx-blue);
@@ -3692,6 +3702,14 @@ html[data-theme='dark'] .admin-area__nav-link {
 
 html[data-theme='dark'] .admin-status-badge--blocked {
 	color: #f59e0b;
+}
+
+html[data-theme='dark'] .admin-status-badge--pending {
+	color: #93c5fd;
+}
+
+html[data-theme='dark'] .admin-status-badge--rejected {
+	color: #fca5a5;
 }
 
 html[data-theme='dark'] .admin-action-badge--muted {

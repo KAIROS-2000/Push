@@ -17,7 +17,14 @@ from ..core.config import Config
 from ..core.db import db
 from ..core import throttle_redis
 from ..core.redis_client import get_redis, redis_available
-from ..models.user import RefreshToken, SecurityThrottle, User, UserRole
+from ..models.user import (
+    TEACHER_APPROVAL_APPROVED,
+    TEACHER_APPROVAL_PENDING,
+    RefreshToken,
+    SecurityThrottle,
+    User,
+    UserRole,
+)
 
 ACCESS_COOKIE_NAME = 'codequest_access_token'
 REFRESH_COOKIE_NAME = 'codequest_refresh_token'
@@ -344,7 +351,7 @@ def invalidate_session_version_cache(user_id: int) -> None:
         pass
 
 
-def create_token_pair(user: User) -> dict:
+def create_access_token(user: User) -> str:
     now = datetime.now(UTC)
     session_version = int(user.session_version or 0)
     access_payload = {
@@ -355,6 +362,12 @@ def create_token_pair(user: User) -> dict:
         'iat': int(now.timestamp()),
         'exp': int((now + timedelta(minutes=current_app.config['ACCESS_TOKEN_MINUTES'])).timestamp()),
     }
+    return jwt.encode(access_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+
+
+def create_token_pair(user: User) -> dict:
+    now = datetime.now(UTC)
+    session_version = int(user.session_version or 0)
     refresh_id = str(uuid4())
     refresh_payload = {
         'sub': str(user.id),
@@ -365,7 +378,7 @@ def create_token_pair(user: User) -> dict:
         'iat': int(now.timestamp()),
         'exp': int((now + timedelta(days=current_app.config['REFRESH_TOKEN_DAYS'])).timestamp()),
     }
-    access_token = jwt.encode(access_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+    access_token = create_access_token(user)
     refresh_token = jwt.encode(refresh_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
 
     db.session.add(
@@ -434,6 +447,23 @@ def token_matches_user_session(payload: dict, user: User) -> bool:
     return ok
 
 
+def teacher_approval_auth_error(user: User) -> tuple[dict, int] | None:
+    if user.role != UserRole.TEACHER:
+        return None
+    status = user.teacher_approval_status or TEACHER_APPROVAL_APPROVED
+    if status == TEACHER_APPROVAL_APPROVED:
+        return None
+    if status == TEACHER_APPROVAL_PENDING:
+        return {
+            'message': 'Заявка учителя ещё ожидает подтверждения администратора.',
+            'code': 'teacher_approval_pending',
+        }, 401
+    return {
+        'message': 'Заявка учителя отклонена. Обратитесь к администратору.',
+        'code': 'teacher_approval_rejected',
+    }, 401
+
+
 def _cookie_security_settings() -> tuple[bool, str]:
     secure = bool(current_app.config.get('SESSION_COOKIE_SECURE', current_app.config.get('IS_PRODUCTION', False)))
     same_site = current_app.config.get('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -473,24 +503,14 @@ def verify_csrf_token() -> bool:
     return hmac.compare_digest(csrf_cookie, csrf_header)
 
 
-def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> Response:
+def set_access_cookie(response: Response, access_token: str) -> Response:
     secure, same_site = _cookie_security_settings()
     access_cookie_max_age = _token_max_age(access_token, int(current_app.config['ACCESS_TOKEN_MINUTES']) * 60)
-    refresh_cookie_max_age = _token_max_age(refresh_token, int(current_app.config['REFRESH_TOKEN_DAYS']) * 24 * 60 * 60)
     access_expires_at = _token_expiration(access_token)
     response.set_cookie(
         ACCESS_COOKIE_NAME,
         access_token,
         max_age=access_cookie_max_age,
-        httponly=True,
-        secure=secure,
-        samesite=same_site,
-        path='/',
-    )
-    response.set_cookie(
-        REFRESH_COOKIE_NAME,
-        refresh_token,
-        max_age=refresh_cookie_max_age,
         httponly=True,
         secure=secure,
         samesite=same_site,
@@ -505,6 +525,22 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str) 
         path='/',
     )
     return issue_csrf_cookie(response)
+
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> Response:
+    secure, same_site = _cookie_security_settings()
+    refresh_cookie_max_age = _token_max_age(refresh_token, int(current_app.config['REFRESH_TOKEN_DAYS']) * 24 * 60 * 60)
+    response = set_access_cookie(response, access_token)
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        refresh_token,
+        max_age=refresh_cookie_max_age,
+        httponly=True,
+        secure=secure,
+        samesite=same_site,
+        path='/',
+    )
+    return response
 
 
 def clear_auth_cookies(response: Response) -> Response:
@@ -598,6 +634,9 @@ def auth_required(roles: list[UserRole] | None = None) -> Callable:
 
             if not user:
                 return {'message': 'Сессия больше недействительна.', 'code': 'session_revoked'}, 401
+            teacher_approval_error = teacher_approval_auth_error(user)
+            if teacher_approval_error:
+                return teacher_approval_error
             if not user.is_active:
                 return {'message': 'Пользователь заблокирован.', 'code': 'user_blocked'}, 401
             if not token_matches_user_session(payload, user):

@@ -18,6 +18,7 @@ from ..core.security import (
     clear_refresh_throttle,
     clear_register_throttle,
     create_token_pair,
+    create_access_token,
     decode_token,
     hash_password,
     login_attempt_allowed,
@@ -29,12 +30,21 @@ from ..core.security import (
     register_register_failure,
     register_attempt_allowed,
     set_auth_cookies,
+    set_access_cookie,
     revoke_refresh_token,
     token_matches_user_session,
     validate_password,
     verify_password,
 )
-from ..models.user import RefreshToken, User, UserRole, USERNAME_MAX_LENGTH
+from ..models.user import (
+    TEACHER_APPROVAL_APPROVED,
+    TEACHER_APPROVAL_PENDING,
+    RefreshToken,
+    User,
+    UserRole,
+    USERNAME_MAX_LENGTH,
+)
+from ..services.teacher_approval_service import cleanup_expired_teacher_requests
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -101,6 +111,8 @@ def register():
         register_register_failure(email, ip)
         db.session.commit()
         return {'message': 'Выберите возрастную группу ученика.'}, 400
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
     if User.query.filter((User.email == email) | (User.username == username)).first():
         register_register_failure(email, ip)
         db.session.commit()
@@ -110,6 +122,7 @@ def register():
         db.session.commit()
         return {'message': 'Пользователь с таким номером телефона уже зарегистрирован.'}, 409
 
+    is_teacher_registration = role == UserRole.TEACHER.value
     user = User(
         full_name=data.get('full_name') or username,
         username=username,
@@ -119,10 +132,23 @@ def register():
         role=UserRole(role),
         age_group=age_group if role == UserRole.STUDENT.value else None,
         theme=data.get('theme') or 'light',
+        is_active=not is_teacher_registration,
+        teacher_approval_status=TEACHER_APPROVAL_PENDING
+        if is_teacher_registration
+        else TEACHER_APPROVAL_APPROVED,
     )
-    user.touch_login()
     db.session.add(user)
     db.session.flush()
+    if is_teacher_registration:
+        clear_register_throttle(email, ip)
+        db.session.commit()
+        return {
+            'message': 'Заявка учителя отправлена администратору. Войти можно будет после подтверждения.',
+            'status': TEACHER_APPROVAL_PENDING,
+            'teacher_request': user.to_dict(),
+        }, 201
+
+    user.touch_login()
     tokens = create_token_pair(user)
     clear_register_throttle(email, ip)
     db.session.commit()
@@ -145,11 +171,24 @@ def login():
     password = data.get('password') or ''
     if not login_value or not password:
         return {'message': 'Укажите email или username и пароль.'}, 400
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
     user = User.query.filter((User.email == login_value) | (User.username == login_value)).first()
     if not user or not verify_password(password, user.password_hash):
         register_login_failure(login_value or 'unknown', ip)
         db.session.commit()
         return {'message': 'Неверный логин или пароль.'}, 401
+    teacher_approval_status = user.teacher_approval_status or TEACHER_APPROVAL_APPROVED
+    if user.role == UserRole.TEACHER and teacher_approval_status != TEACHER_APPROVAL_APPROVED:
+        if teacher_approval_status == TEACHER_APPROVAL_PENDING:
+            return {
+                'message': 'Заявка учителя ещё ожидает подтверждения администратора.',
+                'code': 'teacher_approval_pending',
+            }, 403
+        return {
+            'message': 'Заявка учителя отклонена. Обратитесь к администратору.',
+            'code': 'teacher_approval_rejected',
+        }, 403
     if not user.is_active:
         register_login_failure(login_value, ip)
         db.session.commit()
@@ -185,6 +224,14 @@ def refresh():
         register_refresh_failure(ip)
         db.session.commit()
         return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
+    teacher_approval_status = user.teacher_approval_status or TEACHER_APPROVAL_APPROVED
+    if user.role == UserRole.TEACHER and teacher_approval_status != TEACHER_APPROVAL_APPROVED:
+        db.session.delete(refresh_row)
+        register_refresh_failure(ip)
+        db.session.commit()
+        if teacher_approval_status == TEACHER_APPROVAL_PENDING:
+            return {'message': 'Заявка учителя ещё ожидает подтверждения администратора.', 'code': 'teacher_approval_pending'}, 401
+        return {'message': 'Заявка учителя отклонена.', 'code': 'teacher_approval_rejected'}, 401
     if not user.is_active:
         db.session.delete(refresh_row)
         register_refresh_failure(ip)
@@ -196,12 +243,11 @@ def refresh():
         db.session.commit()
         return {'message': 'Refresh token отозван или пользователь недоступен', 'code': 'session_revoked'}, 401
 
-    db.session.delete(refresh_row)
-    tokens = create_token_pair(user)
+    access_token = create_access_token(user)
     clear_refresh_throttle(ip)
     db.session.commit()
     response = make_response({'user': user.to_dict()})
-    return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
+    return set_access_cookie(response, access_token)
 
 
 @auth_bp.post('/logout')

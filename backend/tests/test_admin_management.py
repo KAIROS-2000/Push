@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -161,6 +162,153 @@ class AdminManagementRegressionTests(unittest.TestCase):
             blocked_login = self.login(blocked_user_client, 'alice', 'StudentPass123!')
             self.assertEqual(blocked_login.status_code, 403)
 
+    def test_teacher_registration_requires_admin_approval(self):
+        app = self.create_app()
+        admin_id = self.create_user(
+            app,
+            full_name='Admin Example',
+            username='admin',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+
+        with app.test_client() as teacher_client:
+            register_response = teacher_client.post(
+                '/api/auth/register',
+                json={
+                    'full_name': 'Pending Teacher',
+                    'username': 'mentor1',
+                    'email': 'mentor1@example.com',
+                    'phone': '+7 912 345-67-89',
+                    'password': 'TeacherPass123!',
+                    'role': 'teacher',
+                },
+            )
+            self.assertEqual(register_response.status_code, 201)
+            register_payload = register_response.get_json()
+            self.assertEqual(register_payload['status'], 'pending')
+            self.assertEqual(register_payload['teacher_request']['teacher_approval_status'], 'pending')
+            self.assertFalse(register_payload['teacher_request']['is_active'])
+
+            pending_login = self.login(teacher_client, 'mentor1@example.com', 'TeacherPass123!')
+            self.assertEqual(pending_login.status_code, 403)
+            self.assertEqual(pending_login.get_json()['code'], 'teacher_approval_pending')
+
+        with app.test_client() as admin_client:
+            login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            requests_response = admin_client.get('/api/admin/teacher-requests?status=pending&page_size=10')
+            self.assertEqual(requests_response.status_code, 200)
+            requests_payload = requests_response.get_json()
+            self.assertEqual(requests_payload['pagination']['total'], 1)
+            request_user = requests_payload['teacher_requests'][0]
+            self.assertEqual(request_user['username'], 'mentor1')
+
+            users_response = admin_client.get('/api/admin/users?username=mentor1&page_size=10')
+            self.assertEqual(users_response.status_code, 200)
+            self.assertEqual(users_response.get_json()['pagination']['total'], 0)
+
+            approve_response = admin_client.patch(f"/api/admin/teacher-requests/{request_user['id']}/approve")
+            self.assertEqual(approve_response.status_code, 200)
+            approved_user = approve_response.get_json()['teacher_request']
+            self.assertEqual(approved_user['teacher_approval_status'], 'approved')
+            self.assertTrue(approved_user['is_active'])
+
+            audit_response = admin_client.get('/api/admin/audit-logs?action=teacher_request_approved&target=mentor1')
+            self.assertEqual(audit_response.status_code, 200)
+            audit_payload = audit_response.get_json()
+            self.assertEqual(audit_payload['pagination']['total'], 1)
+            self.assertEqual(audit_payload['audit_logs'][0]['actor_user_id'], admin_id)
+            self.assertEqual(audit_payload['audit_logs'][0]['details']['next_status'], 'approved')
+
+        with app.test_client() as approved_teacher_client:
+            approved_login = self.login(approved_teacher_client, 'mentor1', 'TeacherPass123!')
+            self.assertEqual(approved_login.status_code, 200)
+            self.assertEqual(approved_login.get_json()['user']['role'], 'teacher')
+
+    def test_admin_can_reject_teacher_registration_request(self):
+        app = self.create_app()
+        self.create_user(
+            app,
+            full_name='Admin Example',
+            username='admin',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+
+        with app.test_client() as teacher_client:
+            register_response = teacher_client.post(
+                '/api/auth/register',
+                json={
+                    'full_name': 'Rejected Teacher',
+                    'username': 'mentor2',
+                    'email': 'mentor2@example.com',
+                    'phone': '+7 912 345-67-90',
+                    'password': 'TeacherPass123!',
+                    'role': 'teacher',
+                },
+            )
+            self.assertEqual(register_response.status_code, 201)
+            teacher_id = register_response.get_json()['teacher_request']['id']
+
+        with app.test_client() as admin_client:
+            login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            reject_response = admin_client.patch(f'/api/admin/teacher-requests/{teacher_id}/reject')
+            self.assertEqual(reject_response.status_code, 200)
+            rejected_user = reject_response.get_json()['teacher_request']
+            self.assertEqual(rejected_user['teacher_approval_status'], 'rejected')
+            self.assertFalse(rejected_user['is_active'])
+            self.assertIsNotNone(rejected_user['teacher_rejection_expires_at'])
+
+        with app.test_client() as rejected_teacher_client:
+            rejected_login = self.login(rejected_teacher_client, 'mentor2@example.com', 'TeacherPass123!')
+            self.assertEqual(rejected_login.status_code, 403)
+            self.assertEqual(rejected_login.get_json()['code'], 'teacher_approval_rejected')
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import User
+
+            rejected_user = db.session.get(User, teacher_id)
+            self.assertIsNotNone(rejected_user)
+            rejected_user.teacher_rejection_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            db.session.commit()
+
+        with app.test_client() as admin_client:
+            login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            cleanup_response = admin_client.get('/api/admin/teacher-requests?status=all&page_size=10')
+            self.assertEqual(cleanup_response.status_code, 200)
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import User
+
+            self.assertIsNone(db.session.get(User, teacher_id))
+
+        with app.test_client() as teacher_client:
+            register_again = teacher_client.post(
+                '/api/auth/register',
+                json={
+                    'full_name': 'Rejected Teacher Retry',
+                    'username': 'mentor2',
+                    'email': 'mentor2@example.com',
+                    'phone': '+7 912 345-67-90',
+                    'password': 'TeacherPass123!',
+                    'role': 'teacher',
+                },
+            )
+            self.assertEqual(register_again.status_code, 201)
+            self.assertEqual(register_again.get_json()['status'], 'pending')
+
     def test_blocked_user_refresh_is_rejected_after_admin_block(self):
         app = self.create_app()
         self.create_user(
@@ -232,6 +380,189 @@ class AdminManagementRegressionTests(unittest.TestCase):
         me_response = student_client.get('/api/auth/me')
         self.assertEqual(me_response.status_code, 401)
         self.assertIn(me_response.get_json().get('code'), {'session_revoked', 'user_blocked'})
+
+    def test_only_superadmin_can_delete_managed_users(self):
+        app = self.create_app()
+        admin_id = self.create_user(
+            app,
+            full_name='Admin Example',
+            username='admin',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        self.create_user(
+            app,
+            full_name='Super Admin',
+            username='root',
+            email='root@example.com',
+            password='RootPass123!',
+            role='superadmin',
+            age_group='adult',
+        )
+        teacher_id = self.create_user(
+            app,
+            full_name='Teacher Example',
+            username='mentor',
+            email='mentor@example.com',
+            password='TeacherPass123!',
+            role='teacher',
+            age_group='adult',
+        )
+        student_id = self.create_user(
+            app,
+            full_name='Delete Student',
+            username='delete1',
+            email='delete1@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.learning import (
+                Assignment,
+                AssignmentSubmission,
+                ClassJoinRequest,
+                ClassMembership,
+                Classroom,
+                Module,
+                ParentInvite,
+                custom_classroom_module_slug_prefix,
+            )
+            from app.models.messaging import Conversation, ConversationReadState, Message
+
+            classroom = Classroom(
+                name='Deletion Class',
+                description='Class for delete checks',
+                code='DEL123',
+                teacher_id=teacher_id,
+            )
+            db.session.add(classroom)
+            db.session.flush()
+            custom_module = Module(
+                slug=f'{custom_classroom_module_slug_prefix(classroom.id)}middle',
+                title='Teacher Custom Module',
+                description='Custom lessons',
+                age_group='middle',
+                icon='sparkles',
+                color='#4A90D9',
+                order_index=99,
+            )
+            assignment = Assignment(
+                classroom_id=classroom.id,
+                title='Deletion Assignment',
+                description='Practice',
+                difficulty='medium',
+                xp_reward=80,
+            )
+            db.session.add_all(
+                [
+                    custom_module,
+                    ClassMembership(classroom_id=classroom.id, student_id=student_id),
+                    ClassJoinRequest(
+                        classroom_id=classroom.id,
+                        student_id=student_id,
+                        status='approved',
+                        decided_by_id=teacher_id,
+                    ),
+                    assignment,
+                    ParentInvite(
+                        student_id=student_id,
+                        code='parent-delete-check',
+                        label='Parent check',
+                    ),
+                ]
+            )
+            db.session.flush()
+            db.session.add(
+                AssignmentSubmission(
+                    assignment_id=assignment.id,
+                    student_id=student_id,
+                    answer='Done',
+                )
+            )
+            conversation = Conversation(
+                classroom_id=classroom.id,
+                teacher_id=teacher_id,
+                student_id=student_id,
+            )
+            db.session.add(conversation)
+            db.session.flush()
+            message = Message(
+                conversation_id=conversation.id,
+                sender_id=student_id,
+                body='Hello',
+            )
+            db.session.add(message)
+            db.session.flush()
+            db.session.add(
+                ConversationReadState(
+                    conversation_id=conversation.id,
+                    user_id=student_id,
+                    last_read_message_id=message.id,
+                )
+            )
+            db.session.commit()
+            classroom_id = classroom.id
+            custom_module_id = custom_module.id
+
+        with app.test_client() as admin_client:
+            admin_login = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(admin_login.status_code, 200)
+            forbidden_delete = admin_client.delete(f'/api/admin/users/{student_id}')
+            self.assertEqual(forbidden_delete.status_code, 403)
+
+        with app.test_client() as superadmin_client:
+            superadmin_login = self.login(superadmin_client, 'root@example.com', 'RootPass123!')
+            self.assertEqual(superadmin_login.status_code, 200)
+
+            invalid_target = superadmin_client.delete(f'/api/admin/users/{admin_id}')
+            self.assertEqual(invalid_target.status_code, 400)
+
+            delete_student_response = superadmin_client.delete(f'/api/admin/users/{student_id}')
+            self.assertEqual(delete_student_response.status_code, 200)
+            self.assertEqual(delete_student_response.get_json()['message'], 'Пользователь удалён')
+
+            delete_teacher_response = superadmin_client.delete(f'/api/admin/users/{teacher_id}')
+            self.assertEqual(delete_teacher_response.status_code, 200)
+
+            audit_response = superadmin_client.get('/api/admin/audit-logs?action=user_deleted&target=delete1')
+            self.assertEqual(audit_response.status_code, 200)
+            audit_payload = audit_response.get_json()
+            self.assertEqual(audit_payload['pagination']['total'], 1)
+            self.assertEqual(audit_payload['audit_logs'][0]['details']['target_role'], 'student')
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.learning import (
+                AssignmentSubmission,
+                ClassJoinRequest,
+                ClassMembership,
+                Classroom,
+                Module,
+                ParentInvite,
+            )
+            from app.models.messaging import Conversation, ConversationReadState, Message
+            from app.models.user import User
+
+            self.assertIsNone(db.session.get(User, student_id))
+            self.assertIsNone(db.session.get(User, teacher_id))
+            self.assertIsNone(db.session.get(Classroom, classroom_id))
+            self.assertIsNone(db.session.get(Module, custom_module_id))
+            self.assertEqual(ClassMembership.query.filter_by(student_id=student_id).count(), 0)
+            self.assertEqual(ClassJoinRequest.query.filter_by(student_id=student_id).count(), 0)
+            self.assertEqual(AssignmentSubmission.query.filter_by(student_id=student_id).count(), 0)
+            self.assertEqual(ParentInvite.query.filter_by(student_id=student_id).count(), 0)
+            self.assertEqual(Conversation.query.count(), 0)
+            self.assertEqual(Message.query.count(), 0)
+            self.assertEqual(ConversationReadState.query.count(), 0)
+
+        with app.test_client() as deleted_student_client:
+            deleted_login = self.login(deleted_student_client, 'delete1', 'StudentPass123!')
+            self.assertEqual(deleted_login.status_code, 401)
 
     def test_superadmin_can_manage_admins_and_filter_audit_logs(self):
         app = self.create_app()

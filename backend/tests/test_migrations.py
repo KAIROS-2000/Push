@@ -68,6 +68,7 @@ class MigrationDisciplineTests(unittest.TestCase):
             second_run = upgrade_database()
             inspector = inspect(db.engine)
             columns = {column['name'] for column in inspector.get_columns('user_progress')}
+            user_columns = {column['name'] for column in inspector.get_columns('users')}
             revisions = [
                 row[0]
                 for row in db.session.execute(text('SELECT revision FROM schema_migrations ORDER BY revision')).all()
@@ -77,7 +78,11 @@ class MigrationDisciplineTests(unittest.TestCase):
         self.assertEqual(second_run, [])
         self.assertIn('schema_migrations', inspector.get_table_names())
         self.assertIn('started_at', columns)
+        self.assertIn('teacher_approval_status', user_columns)
+        self.assertIn('teacher_rejection_expires_at', user_columns)
         self.assertIn('0003_session_and_progress_columns', revisions)
+        self.assertIn('0007_teacher_approval_status', revisions)
+        self.assertIn('0008_teacher_rejection_expiration', revisions)
 
 
 if __name__ == '__main__':

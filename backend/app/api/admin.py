@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from flask import Blueprint, request
+from sqlalchemy import or_
 
 from ..core.db import db
 from .lesson_builder import build_lesson_quiz
@@ -13,17 +14,33 @@ from ..core.security import (
     validate_password,
 )
 from ..models.learning import (
+    AssignmentSubmission,
+    ClassJoinRequest,
+    ClassMembership,
+    Classroom,
     Lesson,
     Module,
     Task,
     Assignment,
     ParentInvite,
     age_group_supports_code,
+    custom_classroom_module_slug_prefix,
     has_explicit_code_task_intent,
     normalize_task_validation,
 )
-from ..models.user import AdminAuditLog, User, UserRole, USERNAME_MAX_LENGTH
+from ..models.messaging import Conversation, ConversationReadState, Message
+from ..models.user import (
+    TEACHER_APPROVAL_APPROVED,
+    TEACHER_APPROVAL_PENDING,
+    TEACHER_APPROVAL_REJECTED,
+    TEACHER_APPROVAL_STATUSES,
+    AdminAuditLog,
+    User,
+    UserRole,
+    USERNAME_MAX_LENGTH,
+)
 from ..seed.bootstrap import generate_code
+from ..services.teacher_approval_service import cleanup_expired_teacher_requests, teacher_rejection_expiration
 
 
 admin_bp = Blueprint('admin', __name__)
@@ -32,6 +49,7 @@ MAX_DIRECTORY_PAGE_SIZE = 100
 VISIBLE_USER_ROLES = (UserRole.STUDENT, UserRole.TEACHER)
 MANAGED_ADMIN_ROLES = (UserRole.ADMIN,)
 VALID_STATUS_FILTERS = {'all', 'active', 'blocked'}
+VALID_TEACHER_REQUEST_FILTERS = {'all', *TEACHER_APPROVAL_STATUSES}
 
 
 def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -109,6 +127,11 @@ def _normalize_status_filter(value: str | None) -> str:
     return normalized if normalized in VALID_STATUS_FILTERS else 'all'
 
 
+def _normalize_teacher_request_filter(value: str | None) -> str:
+    normalized = (value or TEACHER_APPROVAL_PENDING).strip().lower()
+    return normalized if normalized in VALID_TEACHER_REQUEST_FILTERS else TEACHER_APPROVAL_PENDING
+
+
 def _pagination_payload(total: int, page: int, page_size: int) -> dict:
     total_pages = max(1, (total + page_size - 1) // page_size)
     return {
@@ -139,6 +162,13 @@ def _list_users_for_roles(role_filters: tuple[UserRole, ...]) -> tuple[list[User
     )
 
     query = User.query.filter(User.role.in_(role_filters))
+    if UserRole.TEACHER in role_filters:
+        query = query.filter(
+            or_(
+                User.role != UserRole.TEACHER,
+                User.teacher_approval_status == TEACHER_APPROVAL_APPROVED,
+            )
+        )
     if username_filter:
         query = query.filter(User.username.ilike(f'%{username_filter}%'))
     if status_filter == 'active':
@@ -190,6 +220,92 @@ def _ensure_admin_target(user: User) -> tuple[dict, int] | None:
     if user.role not in MANAGED_ADMIN_ROLES:
         return {'message': 'Можно управлять только обычными администраторами.'}, 400
     return None
+
+
+def _ensure_teacher_request_target(user: User) -> tuple[dict, int] | None:
+    if user.role != UserRole.TEACHER:
+        return {'message': 'Через этот раздел можно управлять только заявками учителей.'}, 400
+    return None
+
+
+def _delete_user_conversations(user_id: int, classroom_ids: list[int] | None = None) -> int:
+    filters = [Conversation.teacher_id == user_id, Conversation.student_id == user_id]
+    if classroom_ids:
+        filters.append(Conversation.classroom_id.in_(classroom_ids))
+    conversations = Conversation.query.filter(or_(*filters)).all()
+    conversation_ids = [conversation.id for conversation in conversations]
+    if not conversation_ids:
+        return 0
+
+    ConversationReadState.query.filter(
+        ConversationReadState.conversation_id.in_(conversation_ids)
+    ).delete(synchronize_session=False)
+    Message.query.filter(Message.conversation_id.in_(conversation_ids)).delete(
+        synchronize_session=False
+    )
+    Conversation.query.filter(Conversation.id.in_(conversation_ids)).delete(
+        synchronize_session=False
+    )
+    return len(conversation_ids)
+
+
+def _delete_custom_classroom_modules(classroom_ids: list[int]) -> int:
+    deleted_count = 0
+    for classroom_id in classroom_ids:
+        modules = Module.query.filter(
+            Module.slug.like(f'{custom_classroom_module_slug_prefix(classroom_id)}%')
+        ).all()
+        for module in modules:
+            db.session.delete(module)
+            deleted_count += 1
+    return deleted_count
+
+
+def _delete_managed_user_dependencies(user: User) -> dict:
+    classroom_ids: list[int] = []
+    deleted_conversations = 0
+    deleted_custom_modules = 0
+
+    if user.role == UserRole.TEACHER:
+        classrooms = Classroom.query.filter_by(teacher_id=user.id).all()
+        classroom_ids = [classroom.id for classroom in classrooms]
+        deleted_conversations += _delete_user_conversations(user.id, classroom_ids)
+        ClassJoinRequest.query.filter(ClassJoinRequest.decided_by_id == user.id).update(
+            {ClassJoinRequest.decided_by_id: None},
+            synchronize_session=False,
+        )
+        for classroom in classrooms:
+            db.session.delete(classroom)
+        db.session.flush()
+        deleted_custom_modules = _delete_custom_classroom_modules(classroom_ids)
+    else:
+        deleted_conversations += _delete_user_conversations(user.id)
+
+    ClassJoinRequest.query.filter(ClassJoinRequest.student_id == user.id).delete(
+        synchronize_session=False
+    )
+    ClassJoinRequest.query.filter(ClassJoinRequest.decided_by_id == user.id).update(
+        {ClassJoinRequest.decided_by_id: None},
+        synchronize_session=False,
+    )
+    AssignmentSubmission.query.filter(AssignmentSubmission.student_id == user.id).delete(
+        synchronize_session=False
+    )
+    ParentInvite.query.filter(ParentInvite.student_id == user.id).delete(
+        synchronize_session=False
+    )
+    ClassMembership.query.filter(ClassMembership.student_id == user.id).delete(
+        synchronize_session=False
+    )
+    ConversationReadState.query.filter(ConversationReadState.user_id == user.id).delete(
+        synchronize_session=False
+    )
+
+    return {
+        'classrooms_deleted': len(classroom_ids),
+        'conversations_deleted': deleted_conversations,
+        'custom_modules_deleted': deleted_custom_modules,
+    }
 
 
 def _build_theory_blocks(title: str, summary: str, theory_text: str, key_points: list[str]) -> list[dict]:
@@ -277,11 +393,20 @@ def _build_task(lesson: Lesson, raw_task, lesson_title: str) -> Task | None:
 @admin_bp.get('/overview')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def overview(current_user: User):
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
     return {
         'stats': {
             'users': User.query.count(),
             'students': User.query.filter_by(role=UserRole.STUDENT).count(),
-            'teachers': User.query.filter_by(role=UserRole.TEACHER).count(),
+            'teachers': User.query.filter_by(
+                role=UserRole.TEACHER,
+                teacher_approval_status=TEACHER_APPROVAL_APPROVED,
+            ).count(),
+            'teacher_requests': User.query.filter_by(
+                role=UserRole.TEACHER,
+                teacher_approval_status=TEACHER_APPROVAL_PENDING,
+            ).count(),
             'modules': Module.query.count(),
             'lessons': Lesson.query.count(),
         }
@@ -297,6 +422,121 @@ def users(current_user: User):
         'pagination': pagination,
         'filters': filters,
     }
+
+
+@admin_bp.get('/teacher-requests')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def teacher_requests(current_user: User):
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
+    username_filter = (request.args.get('username') or '').strip().lower()
+    status_filter = _normalize_teacher_request_filter(request.args.get('status'))
+    page = _safe_int(request.args.get('page'), 1, minimum=1)
+    page_size = _safe_int(
+        request.args.get('page_size'),
+        DEFAULT_DIRECTORY_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_DIRECTORY_PAGE_SIZE,
+    )
+
+    query = User.query.filter_by(role=UserRole.TEACHER)
+    if username_filter:
+        query = query.filter(User.username.ilike(f'%{username_filter}%'))
+    if status_filter != 'all':
+        query = query.filter(User.teacher_approval_status == status_filter)
+
+    query = query.order_by(User.created_at.desc(), User.id.desc())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'teacher_requests': [_serialize_admin_user(user) for user in items],
+        'pagination': _pagination_payload(total, page, page_size),
+        'filters': {
+            'username': username_filter,
+            'status': status_filter,
+        },
+    }
+
+
+@admin_bp.patch('/teacher-requests/<int:user_id>/approve')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def approve_teacher_request(current_user: User, user_id: int):
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
+    user = User.query.get_or_404(user_id)
+    error = _ensure_teacher_request_target(user)
+    if error:
+        return error
+
+    previous_status = user.teacher_approval_status or TEACHER_APPROVAL_APPROVED
+    if previous_status == TEACHER_APPROVAL_APPROVED:
+        return {'message': 'Заявка этого учителя уже подтверждена.'}, 400
+
+    user.teacher_approval_status = TEACHER_APPROVAL_APPROVED
+    user.teacher_rejection_expires_at = None
+    user.is_active = True
+    user.bump_session_version()
+    invalidate_session_version_cache(user.id)
+    revoke_refresh_tokens_for_user(user.id)
+    _log_admin_action(
+        current_user,
+        action='teacher_request_approved',
+        entity_type='teacher_request',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'previous_status': previous_status,
+            'next_status': TEACHER_APPROVAL_APPROVED,
+            'status': 'active',
+        },
+    )
+    db.session.commit()
+    return {'teacher_request': _serialize_admin_user(user)}
+
+
+@admin_bp.patch('/teacher-requests/<int:user_id>/reject')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def reject_teacher_request(current_user: User, user_id: int):
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
+    user = User.query.get_or_404(user_id)
+    error = _ensure_teacher_request_target(user)
+    if error:
+        return error
+
+    previous_status = user.teacher_approval_status or TEACHER_APPROVAL_APPROVED
+    if previous_status == TEACHER_APPROVAL_APPROVED:
+        return {'message': 'Подтверждённого учителя можно заблокировать в разделе пользователей.'}, 400
+
+    user.teacher_approval_status = TEACHER_APPROVAL_REJECTED
+    user.teacher_rejection_expires_at = teacher_rejection_expiration()
+    user.is_active = False
+    user.bump_session_version()
+    invalidate_session_version_cache(user.id)
+    revoke_refresh_tokens_for_user(user.id)
+    _log_admin_action(
+        current_user,
+        action='teacher_request_rejected',
+        entity_type='teacher_request',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={
+            'target_name': user.full_name,
+            'target_username': user.username,
+            'target_role': user.role.value,
+            'previous_status': previous_status,
+            'next_status': TEACHER_APPROVAL_REJECTED,
+            'delete_after': user.teacher_rejection_expires_at.isoformat()
+            if user.teacher_rejection_expires_at
+            else None,
+            'status': 'rejected',
+        },
+    )
+    db.session.commit()
+    return {'teacher_request': _serialize_admin_user(user)}
 
 
 @admin_bp.patch('/users/<int:user_id>/block')
@@ -350,6 +590,37 @@ def unblock_user(current_user: User, user_id: int):
     )
     db.session.commit()
     return {'user': _serialize_admin_user(user)}
+
+
+@admin_bp.delete('/users/<int:user_id>')
+@auth_required([UserRole.SUPERADMIN])
+def delete_user(current_user: User, user_id: int):
+    user = User.query.get_or_404(user_id)
+    error = _ensure_managed_user_target(user)
+    if error:
+        return error
+
+    target_details = {
+        'target_name': user.full_name,
+        'target_username': user.username,
+        'target_role': user.role.value,
+        'email': user.email,
+        'status': 'deleted',
+    }
+    revoke_refresh_tokens_for_user(user.id)
+    invalidate_session_version_cache(user.id)
+    cleanup_details = _delete_managed_user_dependencies(user)
+    _log_admin_action(
+        current_user,
+        action='user_deleted',
+        entity_type='user',
+        entity_id=user.id,
+        entity_label=user.username,
+        details={**target_details, **cleanup_details},
+    )
+    db.session.delete(user)
+    db.session.commit()
+    return {'message': 'Пользователь удалён'}
 
 
 @admin_bp.get('/admins')
