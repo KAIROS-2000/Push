@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from flask import Blueprint, request
-from sqlalchemy import or_
+from sqlalchemy import case, func, or_
 
 from ..core.db import db
 from .lesson_builder import build_lesson_quiz
@@ -18,13 +20,16 @@ from ..models.learning import (
     ClassJoinRequest,
     ClassMembership,
     Classroom,
+    CUSTOM_CLASSROOM_MODULE_PREFIX,
     Lesson,
     Module,
     Task,
     Assignment,
     ParentInvite,
+    UserProgress,
     age_group_supports_code,
     custom_classroom_module_slug_prefix,
+    decode_assignment_description,
     has_explicit_code_task_intent,
     normalize_task_validation,
 )
@@ -35,6 +40,7 @@ from ..models.user import (
     TEACHER_APPROVAL_REJECTED,
     TEACHER_APPROVAL_STATUSES,
     AdminAuditLog,
+    RefreshToken,
     User,
     UserRole,
     USERNAME_MAX_LENGTH,
@@ -390,6 +396,131 @@ def _build_task(lesson: Lesson, raw_task, lesson_title: str) -> Task | None:
     )
 
 
+def _scalar_int(query) -> int:
+    return int(query.scalar() or 0)
+
+
+def _scalar_float(query) -> float:
+    return float(query.scalar() or 0)
+
+
+def _percent(numerator: int | float, denominator: int | float) -> float:
+    if not denominator:
+        return 0.0
+    return round((float(numerator) / float(denominator)) * 100, 1)
+
+
+def _distribution(rows: list[tuple[str | None, int]]) -> list[dict]:
+    items = []
+    for label, value in rows:
+        normalized_label = getattr(label, 'value', label)
+        items.append({'label': str(normalized_label or 'unknown'), 'value': int(value or 0)})
+    return items
+
+
+def _build_activity_series(now: datetime, days: int = 14) -> list[dict]:
+    start_day = (now - timedelta(days=days - 1)).date()
+    series = {
+        (start_day + timedelta(days=offset)).isoformat(): {
+            'date': (start_day + timedelta(days=offset)).isoformat(),
+            'registrations': 0,
+            'lesson_completions': 0,
+            'practice_submissions': 0,
+        }
+        for offset in range(days)
+    }
+    window_start = datetime.combine(start_day, datetime.min.time(), tzinfo=UTC)
+
+    for (created_at,) in db.session.query(User.created_at).filter(User.created_at >= window_start).all():
+        if created_at:
+            key = created_at.date().isoformat()
+            if key in series:
+                series[key]['registrations'] += 1
+
+    for (completed_at,) in (
+        db.session.query(UserProgress.completed_at)
+        .filter(UserProgress.completed_at.isnot(None), UserProgress.completed_at >= window_start)
+        .all()
+    ):
+        if completed_at:
+            key = completed_at.date().isoformat()
+            if key in series:
+                series[key]['lesson_completions'] += 1
+
+    for (submitted_at,) in (
+        db.session.query(AssignmentSubmission.submitted_at)
+        .filter(AssignmentSubmission.submitted_at >= window_start)
+        .all()
+    ):
+        if submitted_at:
+            key = submitted_at.date().isoformat()
+            if key in series:
+                series[key]['practice_submissions'] += 1
+
+    return list(series.values())
+
+
+def _assignment_type_distribution() -> list[dict]:
+    counters: dict[str, int] = {}
+    for (description,) in db.session.query(Assignment.description).all():
+        metadata, _ = decode_assignment_description(description)
+        assignment_type = str(metadata.get('assignment_type') or 'lesson_practice')
+        counters[assignment_type] = counters.get(assignment_type, 0) + 1
+    return [
+        {'label': label, 'value': value}
+        for label, value in sorted(counters.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _lowest_completion_lessons(limit: int = 8) -> list[dict]:
+    completed_case = case((UserProgress.status == 'completed', 1), else_=0)
+    rows = (
+        db.session.query(
+            Lesson.id.label('lesson_id'),
+            Lesson.title.label('lesson_title'),
+            Module.title.label('module_title'),
+            func.count(UserProgress.id).label('started_count'),
+            func.sum(completed_case).label('completed_count'),
+            func.avg(UserProgress.score).label('average_score'),
+            func.sum(UserProgress.attempts).label('attempts'),
+        )
+        .join(Module, Module.id == Lesson.module_id)
+        .outerjoin(UserProgress, UserProgress.lesson_id == Lesson.id)
+        .filter(Lesson.is_published.is_(True), Module.is_published.is_(True))
+        .group_by(Lesson.id, Lesson.title, Module.title)
+        .all()
+    )
+
+    lessons: list[dict] = []
+    for row in rows:
+        started_count = int(row.started_count or 0)
+        if started_count <= 0:
+            continue
+        completed_count = int(row.completed_count or 0)
+        lessons.append(
+            {
+                'lesson_id': int(row.lesson_id),
+                'title': row.lesson_title,
+                'module_title': row.module_title,
+                'started_count': started_count,
+                'completed_count': completed_count,
+                'completion_rate': _percent(completed_count, started_count),
+                'average_score': round(float(row.average_score or 0), 1),
+                'attempts': int(row.attempts or 0),
+            }
+        )
+
+    lessons.sort(
+        key=lambda item: (
+            item['completion_rate'],
+            -item['started_count'],
+            item['average_score'],
+            item['title'],
+        )
+    )
+    return lessons[:limit]
+
+
 @admin_bp.get('/overview')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def overview(current_user: User):
@@ -410,6 +541,170 @@ def overview(current_user: User):
             'modules': Module.query.count(),
             'lessons': Lesson.query.count(),
         }
+    }
+
+
+@admin_bp.get('/telemetry')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def telemetry(current_user: User):
+    if cleanup_expired_teacher_requests():
+        db.session.commit()
+
+    now = datetime.now(UTC)
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    active_user_sessions = (
+        db.session.query(
+            User.role.label('role'),
+            func.count(func.distinct(User.id)).label('users_count'),
+        )
+        .join(RefreshToken, RefreshToken.user_id == User.id)
+        .filter(RefreshToken.expires_at > now, User.is_active.is_(True))
+        .group_by(User.role)
+        .all()
+    )
+    active_session_distribution = _distribution(
+        [(row.role, row.users_count) for row in active_user_sessions]
+    )
+    active_by_role = {item['label']: item['value'] for item in active_session_distribution}
+
+    students_count = User.query.filter_by(role=UserRole.STUDENT).count()
+    teachers_count = User.query.filter_by(
+        role=UserRole.TEACHER,
+        teacher_approval_status=TEACHER_APPROVAL_APPROVED,
+    ).count()
+    active_students = User.query.filter_by(role=UserRole.STUDENT, is_active=True).count()
+    active_teachers = User.query.filter_by(
+        role=UserRole.TEACHER,
+        teacher_approval_status=TEACHER_APPROVAL_APPROVED,
+        is_active=True,
+    ).count()
+    blocked_users = User.query.filter_by(is_active=False).count()
+    pending_teacher_requests = User.query.filter_by(
+        role=UserRole.TEACHER,
+        teacher_approval_status=TEACHER_APPROVAL_PENDING,
+    ).count()
+
+    progress_total = UserProgress.query.count()
+    completed_lessons = UserProgress.query.filter_by(status='completed').count()
+    progress_status_rows = (
+        db.session.query(UserProgress.status, func.count(UserProgress.id))
+        .group_by(UserProgress.status)
+        .order_by(UserProgress.status.asc())
+        .all()
+    )
+    submission_status_rows = (
+        db.session.query(AssignmentSubmission.status, func.count(AssignmentSubmission.id))
+        .group_by(AssignmentSubmission.status)
+        .order_by(AssignmentSubmission.status.asc())
+        .all()
+    )
+
+    submissions_total = AssignmentSubmission.query.count()
+    checked_submissions = AssignmentSubmission.query.filter_by(status='checked').count()
+    pending_review_submissions = AssignmentSubmission.query.filter(
+        AssignmentSubmission.status.in_(('submitted', 'pending_review'))
+    ).count()
+    needs_revision_submissions = AssignmentSubmission.query.filter_by(
+        status='needs_revision'
+    ).count()
+    assignments_total = Assignment.query.count()
+    assignments_with_submissions = _scalar_int(
+        db.session.query(func.count(func.distinct(AssignmentSubmission.assignment_id)))
+    )
+
+    return {
+        'generated_at': now.isoformat(),
+        'load': {
+            'active_users': sum(active_by_role.values()),
+            'active_students': active_by_role.get(UserRole.STUDENT.value, 0),
+            'active_teachers': active_by_role.get(UserRole.TEACHER.value, 0),
+            'active_admins': active_by_role.get(UserRole.ADMIN.value, 0),
+            'active_superadmins': active_by_role.get(UserRole.SUPERADMIN.value, 0),
+            'active_sessions': _scalar_int(
+                db.session.query(func.count(RefreshToken.id))
+                .join(User, User.id == RefreshToken.user_id)
+                .filter(
+                    RefreshToken.expires_at > now,
+                    User.is_active.is_(True),
+                )
+            ),
+            'logins_24h': User.query.filter(User.last_login_at >= day_ago).count(),
+            'logins_7d': User.query.filter(User.last_login_at >= week_ago).count(),
+            'lesson_completions_24h': UserProgress.query.filter(
+                UserProgress.status == 'completed',
+                UserProgress.completed_at >= day_ago,
+            ).count(),
+            'practice_submissions_24h': AssignmentSubmission.query.filter(
+                AssignmentSubmission.submitted_at >= day_ago
+            ).count(),
+            'pending_reviews': pending_review_submissions,
+            'pending_teacher_requests': pending_teacher_requests,
+            'pending_class_join_requests': ClassJoinRequest.query.filter_by(status='pending').count(),
+        },
+        'audience': {
+            'total_users': User.query.count(),
+            'students': students_count,
+            'teachers': teachers_count,
+            'admins': User.query.filter_by(role=UserRole.ADMIN).count(),
+            'superadmins': User.query.filter_by(role=UserRole.SUPERADMIN).count(),
+            'active_students': active_students,
+            'active_teachers': active_teachers,
+            'blocked_users': blocked_users,
+            'teacher_requests_pending': pending_teacher_requests,
+            'role_distribution': _distribution(
+                db.session.query(User.role, func.count(User.id))
+                .group_by(User.role)
+                .order_by(User.role.asc())
+                .all()
+            ),
+            'active_session_distribution': active_session_distribution,
+        },
+        'content': {
+            'modules': Module.query.count(),
+            'published_modules': Module.query.filter_by(is_published=True).count(),
+            'lessons': Lesson.query.count(),
+            'published_lessons': Lesson.query.filter_by(is_published=True).count(),
+            'custom_lessons': Lesson.query.join(Module).filter(
+                Module.slug.like(f'{CUSTOM_CLASSROOM_MODULE_PREFIX}%')
+            ).count(),
+            'tasks': Task.query.count(),
+            'classrooms': Classroom.query.count(),
+            'assignments': assignments_total,
+        },
+        'learning': {
+            'progress_rows': progress_total,
+            'completed_lessons': completed_lessons,
+            'completion_rate': _percent(completed_lessons, progress_total),
+            'average_score': round(
+                _scalar_float(db.session.query(func.avg(UserProgress.score))),
+                1,
+            ),
+            'total_attempts': _scalar_int(db.session.query(func.sum(UserProgress.attempts))),
+            'hints_used': _scalar_int(db.session.query(func.sum(UserProgress.hints_used))),
+            'status_distribution': _distribution(progress_status_rows),
+            'lowest_completion_lessons': _lowest_completion_lessons(),
+        },
+        'practice': {
+            'assignments': assignments_total,
+            'submissions': submissions_total,
+            'assignments_with_submissions': assignments_with_submissions,
+            'checked_submissions': checked_submissions,
+            'pending_review': pending_review_submissions,
+            'needs_revision': needs_revision_submissions,
+            'submission_rate': _percent(assignments_with_submissions, assignments_total),
+            'average_score': round(
+                _scalar_float(db.session.query(func.avg(AssignmentSubmission.score))),
+                1,
+            ),
+            'status_distribution': _distribution(submission_status_rows),
+            'assignment_type_distribution': _assignment_type_distribution(),
+        },
+        'activity': {
+            'days': 14,
+            'series': _build_activity_series(now, days=14),
+        },
     }
 
 

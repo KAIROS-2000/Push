@@ -41,6 +41,97 @@ export interface AdminOverviewData {
   }
 }
 
+export interface AdminTelemetryDistributionItem {
+  label: string
+  value: number
+}
+
+export interface AdminTelemetryActivityPoint {
+  date: string
+  registrations: number
+  lesson_completions: number
+  practice_submissions: number
+}
+
+export interface AdminTelemetryLessonCompletionItem {
+  lesson_id: number
+  title: string
+  module_title: string
+  started_count: number
+  completed_count: number
+  completion_rate: number
+  average_score: number
+  attempts: number
+}
+
+export interface AdminTelemetryData {
+  generated_at: string
+  load: {
+    active_users: number
+    active_students: number
+    active_teachers: number
+    active_admins: number
+    active_superadmins: number
+    active_sessions: number
+    logins_24h: number
+    logins_7d: number
+    lesson_completions_24h: number
+    practice_submissions_24h: number
+    pending_reviews: number
+    pending_teacher_requests: number
+    pending_class_join_requests: number
+  }
+  audience: {
+    total_users: number
+    students: number
+    teachers: number
+    admins: number
+    superadmins: number
+    active_students: number
+    active_teachers: number
+    blocked_users: number
+    teacher_requests_pending: number
+    role_distribution: AdminTelemetryDistributionItem[]
+    active_session_distribution: AdminTelemetryDistributionItem[]
+  }
+  content: {
+    modules: number
+    published_modules: number
+    lessons: number
+    published_lessons: number
+    custom_lessons: number
+    tasks: number
+    classrooms: number
+    assignments: number
+  }
+  learning: {
+    progress_rows: number
+    completed_lessons: number
+    completion_rate: number
+    average_score: number
+    total_attempts: number
+    hints_used: number
+    status_distribution: AdminTelemetryDistributionItem[]
+    lowest_completion_lessons: AdminTelemetryLessonCompletionItem[]
+  }
+  practice: {
+    assignments: number
+    submissions: number
+    assignments_with_submissions: number
+    checked_submissions: number
+    pending_review: number
+    needs_revision: number
+    submission_rate: number
+    average_score: number
+    status_distribution: AdminTelemetryDistributionItem[]
+    assignment_type_distribution: AdminTelemetryDistributionItem[]
+  }
+  activity: {
+    days: number
+    series: AdminTelemetryActivityPoint[]
+  }
+}
+
 export interface AdminUserListItem extends UserItem {
   created_at: string | null
   last_login_at: string | null

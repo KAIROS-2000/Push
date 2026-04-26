@@ -2,7 +2,14 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 
 type AdminArea = 'admin' | 'superadmin'
-type AdminSection = 'users' | 'teacher-requests' | 'admins' | 'lessons' | 'modules' | 'logs'
+type AdminSection =
+  | 'telemetry'
+  | 'users'
+  | 'teacher-requests'
+  | 'admins'
+  | 'lessons'
+  | 'modules'
+  | 'logs'
 
 interface NavItem {
   key: AdminSection
@@ -13,6 +20,12 @@ interface NavItem {
 
 const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
   admin: [
+    {
+      key: 'telemetry',
+      href: '/admin/telemetry',
+      label: 'Телеметрия',
+      description: 'Нагрузка и прогресс',
+    },
     {
       key: 'users',
       href: '/admin/users',
@@ -45,6 +58,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
     },
   ],
   superadmin: [
+    {
+      key: 'telemetry',
+      href: '/superadmin/telemetry',
+      label: 'Телеметрия',
+      description: 'Нагрузка и прогресс',
+    },
     {
       key: 'users',
       href: '/superadmin/users',

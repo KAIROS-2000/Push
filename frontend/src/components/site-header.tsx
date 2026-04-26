@@ -19,7 +19,8 @@ function resolveHeaderZone(pathname: string | null): HeaderZone {
 	if (pathname?.startsWith('/admin') || pathname?.startsWith('/superadmin'))
 		return 'admin'
 	if (pathname?.startsWith('/parent/')) return 'parent'
-	if (pathname === '/' || pathname === '/parent') return 'public'
+	if (pathname === '/' || pathname === '/parent' || pathname === '/tournament')
+		return 'public'
 	return 'app'
 }
 
@@ -54,6 +55,7 @@ export function SiteHeader() {
 			return zone === 'public'
 				? [
 						{ href: '/', label: 'Главная' },
+						{ href: '/tournament', label: 'Турнир' },
 						{ href: '/parent', label: 'Родителям' },
 					]
 				: [{ href: '/', label: 'Главная' }]
@@ -64,6 +66,7 @@ export function SiteHeader() {
 			{ href: '/messages', label: 'Сообщения' },
 			{ href: '/roadmap', label: 'Уроки' },
 			{ href: '/leaderboard', label: 'Рейтинг' },
+			{ href: '/tournament', label: 'Турнир' },
 			{ href: '/profile', label: 'Профиль' },
 		]
 
@@ -82,12 +85,14 @@ export function SiteHeader() {
 			return [
 				{ href: '/admin/users', label: 'Админ' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		} else if (role === 'superadmin') {
 			return [
 				{ href: '/superadmin/users', label: 'Суперадмин' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		} else if (role === 'teacher') {
@@ -97,6 +102,7 @@ export function SiteHeader() {
 				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/leaderboard', label: 'Рейтинг' },
+				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		}

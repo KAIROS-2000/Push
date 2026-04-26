@@ -564,6 +564,240 @@ class AdminManagementRegressionTests(unittest.TestCase):
             deleted_login = self.login(deleted_student_client, 'delete1', 'StudentPass123!')
             self.assertEqual(deleted_login.status_code, 401)
 
+    def test_admin_telemetry_reports_learning_and_site_metrics(self):
+        app = self.create_app()
+        self.create_user(
+            app,
+            full_name='Admin Example',
+            username='admin',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        teacher_id = self.create_user(
+            app,
+            full_name='Teacher Example',
+            username='teacher',
+            email='teacher@example.com',
+            password='TeacherPass123!',
+            role='teacher',
+            age_group='adult',
+        )
+        student_a_id = self.create_user(
+            app,
+            full_name='Student One',
+            username='student1',
+            email='student1@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+        student_b_id = self.create_user(
+            app,
+            full_name='Student Two',
+            username='student2',
+            email='student2@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+        student_c_id = self.create_user(
+            app,
+            full_name='Student Three',
+            username='student3',
+            email='student3@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.learning import (
+                Assignment,
+                AssignmentSubmission,
+                ClassMembership,
+                Classroom,
+                Lesson,
+                Module,
+                UserProgress,
+                encode_assignment_description,
+            )
+            from app.models.user import RefreshToken
+
+            now = datetime.now(UTC)
+            module = Module(
+                slug='analytics-roadmap',
+                title='Analytics roadmap',
+                description='Analytics test module',
+                age_group='middle',
+                icon='chart',
+                color='#4A90D9',
+                order_index=1,
+                is_published=True,
+            )
+            db.session.add(module)
+            db.session.flush()
+
+            low_lesson = Lesson(
+                module_id=module.id,
+                slug='low-completion',
+                title='Low completion',
+                summary='Lesson with low completion',
+                content_format='mixed',
+                theory_blocks=[],
+                interactive_steps=[],
+                order_index=1,
+                duration_minutes=15,
+                passing_score=70,
+                is_published=True,
+            )
+            high_lesson = Lesson(
+                module_id=module.id,
+                slug='high-completion',
+                title='High completion',
+                summary='Lesson with high completion',
+                content_format='mixed',
+                theory_blocks=[],
+                interactive_steps=[],
+                order_index=2,
+                duration_minutes=15,
+                passing_score=70,
+                is_published=True,
+            )
+            classroom = Classroom(
+                name='Analytics class',
+                description='Telemetry checks',
+                code='ANALYT',
+                teacher_id=teacher_id,
+            )
+            db.session.add_all([low_lesson, high_lesson, classroom])
+            db.session.flush()
+
+            db.session.add_all(
+                [
+                    ClassMembership(classroom_id=classroom.id, student_id=student_a_id),
+                    ClassMembership(classroom_id=classroom.id, student_id=student_b_id),
+                    ClassMembership(classroom_id=classroom.id, student_id=student_c_id),
+                    UserProgress(
+                        user_id=student_a_id,
+                        lesson_id=low_lesson.id,
+                        status='completed',
+                        score=80,
+                        attempts=2,
+                        hints_used=1,
+                        started_at=now - timedelta(days=1),
+                        completed_at=now,
+                    ),
+                    UserProgress(
+                        user_id=student_b_id,
+                        lesson_id=low_lesson.id,
+                        status='in_progress',
+                        score=20,
+                        attempts=1,
+                        hints_used=0,
+                        started_at=now - timedelta(days=1),
+                    ),
+                    UserProgress(
+                        user_id=student_c_id,
+                        lesson_id=low_lesson.id,
+                        status='in_progress',
+                        score=10,
+                        attempts=1,
+                        hints_used=0,
+                        started_at=now - timedelta(days=1),
+                    ),
+                    UserProgress(
+                        user_id=student_a_id,
+                        lesson_id=high_lesson.id,
+                        status='completed',
+                        score=95,
+                        attempts=1,
+                        hints_used=0,
+                        started_at=now - timedelta(days=2),
+                        completed_at=now,
+                    ),
+                    UserProgress(
+                        user_id=student_b_id,
+                        lesson_id=high_lesson.id,
+                        status='completed',
+                        score=90,
+                        attempts=1,
+                        hints_used=0,
+                        started_at=now - timedelta(days=2),
+                        completed_at=now,
+                    ),
+                    RefreshToken(
+                        user_id=student_a_id,
+                        token_id='student-active-session',
+                        expires_at=now + timedelta(days=1),
+                    ),
+                    RefreshToken(
+                        user_id=teacher_id,
+                        token_id='teacher-active-session',
+                        expires_at=now + timedelta(days=1),
+                    ),
+                ]
+            )
+            assignment = Assignment(
+                classroom_id=classroom.id,
+                lesson_id=low_lesson.id,
+                title='Practice assignment',
+                description=encode_assignment_description(
+                    'Practice body',
+                    assignment_type='lesson_practice',
+                    submission_format='text',
+                ),
+                difficulty='medium',
+                xp_reward=80,
+            )
+            db.session.add(assignment)
+            db.session.flush()
+            db.session.add_all(
+                [
+                    AssignmentSubmission(
+                        assignment_id=assignment.id,
+                        student_id=student_a_id,
+                        answer='Done',
+                        score=80,
+                        status='checked',
+                        submitted_at=now,
+                    ),
+                    AssignmentSubmission(
+                        assignment_id=assignment.id,
+                        student_id=student_b_id,
+                        answer='Please check',
+                        score=0,
+                        status='pending_review',
+                        submitted_at=now,
+                    ),
+                ]
+            )
+            low_lesson_id = low_lesson.id
+            db.session.commit()
+
+        with app.test_client() as admin_client:
+            login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            telemetry_response = admin_client.get('/api/admin/telemetry')
+            self.assertEqual(telemetry_response.status_code, 200)
+            payload = telemetry_response.get_json()
+
+        self.assertEqual(payload['load']['active_students'], 1)
+        self.assertEqual(payload['load']['active_teachers'], 1)
+        self.assertEqual(payload['practice']['submissions'], 2)
+        self.assertEqual(payload['practice']['assignments_with_submissions'], 1)
+        self.assertEqual(payload['practice']['submission_rate'], 100.0)
+        self.assertEqual(payload['practice']['pending_review'], 1)
+        self.assertEqual(payload['learning']['lowest_completion_lessons'][0]['lesson_id'], low_lesson_id)
+        self.assertAlmostEqual(
+            payload['learning']['lowest_completion_lessons'][0]['completion_rate'],
+            33.3,
+            places=1,
+        )
+
     def test_superadmin_can_manage_admins_and_filter_audit_logs(self):
         app = self.create_app()
         self.create_user(
