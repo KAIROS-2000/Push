@@ -199,6 +199,36 @@ export interface AdminAuditLogResponse {
     action: string
     actor_role: string
     target: string
+    actor_login: string
+    sort: string
+    order: 'asc' | 'desc' | string
+  }
+}
+
+export interface SiteActivityLogItem {
+  id: number
+  user_id: number | null
+  user_role: string
+  method: string
+  path: string
+  status_code: number
+  client_ip: string
+  created_at: string | null
+  user: { id: number | null; username: string | null; role: string }
+}
+
+export interface SiteActivityLogResponse {
+  site_activity_logs: SiteActivityLogItem[]
+  pagination: PaginationMeta
+  filters: {
+    username: string
+    method: string
+    path: string
+    status: string
+    role: string
+    ip: string
+    sort: string
+    order: 'asc' | 'desc' | string
   }
 }
 

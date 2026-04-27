@@ -1,4 +1,4 @@
-from .user import AdminAuditLog, RefreshToken, SecurityThrottle, User, UserRole
+from .user import AdminAuditLog, RefreshToken, SecurityThrottle, SiteActivityLog, User, UserRole
 from .messaging import Conversation, ConversationReadState, Message
 from .staff_messaging import StaffDirectMessage, StaffDirectReadState, StaffDirectThread
 from .learning import (
@@ -29,6 +29,7 @@ from .parent_cabinet import (
 
 __all__ = [
     'AdminAuditLog',
+    'SiteActivityLog',
     'RefreshToken',
     'SecurityThrottle',
     'User',

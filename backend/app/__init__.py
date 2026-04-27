@@ -364,6 +364,10 @@ def create_app() -> Flask:
     if not app.config.get("TESTING") and app.config.get("ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD"):
         _start_audit_log_export_thread(app)
 
+    from .services.site_activity_log import register_site_activity_logging
+
+    register_site_activity_logging(app)
+
     return app
 
 

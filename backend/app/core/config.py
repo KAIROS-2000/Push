@@ -138,3 +138,4 @@ class Config:
         os.getenv('ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD'),
         default=False,
     )
+    ENABLE_SITE_ACTIVITY_LOG = _as_bool(os.getenv('ENABLE_SITE_ACTIVITY_LOG'), default=True)

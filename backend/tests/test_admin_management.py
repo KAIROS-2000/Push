@@ -919,6 +919,66 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(dl.status_code, 200)
             self.assertIn('application/json', (dl.headers.get('Content-Type') or '').lower())
 
+    def test_site_activity_logs_and_audit_sorting(self):
+        app = self.create_app()
+        admin_id = self.create_user(
+            app,
+            full_name='Admin User',
+            username='zeta',
+            email='zeta@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import AdminAuditLog, SiteActivityLog, UserRole
+
+            db.session.add(
+                AdminAuditLog(
+                    actor_user_id=admin_id,
+                    actor_role=UserRole.ADMIN.value,
+                    action='user_blocked',
+                    entity_type='user',
+                    entity_id=2,
+                    entity_label='target',
+                    details_json={'actor_username': 'zeta', 'actor_name': 'Admin User'},
+                )
+            )
+            db.session.add(
+                SiteActivityLog(
+                    user_id=admin_id,
+                    user_role='admin',
+                    method='GET',
+                    path='/api/teacher/modules',
+                    status_code=200,
+                    client_ip='127.0.0.1',
+                )
+            )
+            db.session.commit()
+
+        with app.test_client() as client:
+            login_response = self.login(client, 'zeta@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            r_sort = client.get('/api/admin/audit-logs?sort=action&order=asc&page=1&page_size=20')
+            self.assertEqual(r_sort.status_code, 200)
+            self.assertEqual(r_sort.get_json()['filters']['sort'], 'action')
+
+            r_actor = client.get('/api/admin/audit-logs?actor_login=zeta&sort=username&order=desc')
+            self.assertEqual(r_actor.status_code, 200)
+            self.assertEqual(r_actor.get_json()['pagination']['total'], 1)
+
+            r_act = client.get(
+                '/api/admin/site-activity-logs?username=zeta&sort=path&order=asc&page=1&page_size=20'
+            )
+            self.assertEqual(r_act.status_code, 200)
+            body = r_act.get_json()
+            self.assertEqual(body['pagination']['total'], 1)
+            self.assertEqual(body['site_activity_logs'][0]['path'], '/api/teacher/modules')
+            self.assertEqual(body['site_activity_logs'][0]['user']['username'], 'zeta')
+            self.assertEqual(body['filters']['sort'], 'path')
+
 
 if __name__ == '__main__':
     unittest.main()
