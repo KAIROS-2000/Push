@@ -18,6 +18,7 @@ class UserRole(enum.Enum):
     SUPERADMIN = 'superadmin'
 
 
+USERNAME_MIN_LENGTH = 5
 USERNAME_MAX_LENGTH = 10
 JSONType = JSONB().with_variant(db.JSON(), 'sqlite')
 TEACHER_APPROVAL_PENDING = 'pending'

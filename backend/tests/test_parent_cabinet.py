@@ -74,7 +74,7 @@ class ParentCabinetTests(unittest.TestCase):
                 "/api/auth/register",
                 json={
                     "email": "parent1@example.com",
-                    "username": "p1",
+                    "username": "paren1",
                     "password": "ParentPass123!",
                     "phone": "+79990003344",
                     "role": "parent",
