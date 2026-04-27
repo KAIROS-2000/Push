@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from flask import Blueprint, request
+from flask import Blueprint, current_app, request, send_file
 from sqlalchemy import case, func, or_
 
 from ..core.db import db
@@ -1240,6 +1240,34 @@ def delete_admin(current_user: User, user_id: int):
     db.session.delete(user)
     db.session.commit()
     return {'message': 'Админ удалён'}
+
+
+@admin_bp.get('/audit-log-archives')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def list_audit_log_archives(current_user: User):
+    from ..services.audit_log_archive import get_archive_dir, list_archive_dates
+
+    archive_dir = get_archive_dir()
+    return {
+        'dates': list_archive_dates(archive_dir),
+        'export_hour_utc': current_app.config.get('AUDIT_LOG_DAILY_EXPORT_HOUR_UTC', 3),
+    }
+
+
+@admin_bp.get('/audit-log-archives/<string:date_key>')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def download_audit_log_archive(current_user: User, date_key: str):
+    from ..services.audit_log_archive import get_archive_dir, resolve_archive_file
+
+    path = resolve_archive_file(get_archive_dir(), date_key)
+    if not path or not path.is_file():
+        return {'message': 'Архив за эту дату не найден.'}, 404
+    return send_file(
+        str(path),
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=path.name,
+    )
 
 
 @admin_bp.get('/audit-logs')

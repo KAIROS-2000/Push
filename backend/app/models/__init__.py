@@ -1,5 +1,6 @@
 from .user import AdminAuditLog, RefreshToken, SecurityThrottle, User, UserRole
 from .messaging import Conversation, ConversationReadState, Message
+from .staff_messaging import StaffDirectMessage, StaffDirectReadState, StaffDirectThread
 from .learning import (
     Achievement,
     Assignment,
@@ -35,6 +36,9 @@ __all__ = [
     'Conversation',
     'ConversationReadState',
     'Message',
+    'StaffDirectMessage',
+    'StaffDirectReadState',
+    'StaffDirectThread',
     'Achievement',
     'Assignment',
     'AssignmentSubmission',

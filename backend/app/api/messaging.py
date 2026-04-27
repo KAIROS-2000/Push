@@ -10,6 +10,7 @@ from ..core.security import auth_required
 from ..models.learning import ClassMembership, Classroom
 from ..models.messaging import Conversation, ConversationReadState, Message
 from ..models.user import User, UserRole
+from ..services import staff_messaging as staff_messaging_service
 
 
 messaging_bp = Blueprint("messaging", __name__)
@@ -48,6 +49,14 @@ def _safe_limit(value, *, default: int = 50, maximum: int = 100) -> int:
 def _ensure_messaging_role(current_user: User) -> tuple[dict, int] | None:
     if current_user.role not in {UserRole.STUDENT, UserRole.TEACHER}:
         return {"message": "Messaging is available only to teachers and students."}, 403
+    return None
+
+
+def _ensure_messaging_summary_role(current_user: User) -> tuple[dict, int] | None:
+    if current_user.role not in {UserRole.STUDENT, UserRole.TEACHER, UserRole.PARENT}:
+        return {
+            "message": "Messaging summary is available only to teachers, students, and parents.",
+        }, 403
     return None
 
 
@@ -347,7 +356,7 @@ def _get_or_create_conversation(
 @messaging_bp.get("/summary")
 @auth_required()
 def summary(current_user: User):
-    role_error = _ensure_messaging_role(current_user)
+    role_error = _ensure_messaging_summary_role(current_user)
     if role_error:
         return role_error
 
@@ -357,13 +366,18 @@ def summary(current_user: User):
         for conversation in conversations
     ]
     total_unread = sum(row["unread_count"] for row in conversation_rows)
+    staff_direct = staff_messaging_service.peer_threads_summary_block(current_user)
+    total_unread += int(staff_direct.get("total_unread") or 0)
     payload = {
         "role": current_user.role.value,
         "total_unread": total_unread,
         "conversations": conversation_rows,
+        "staff_direct": staff_direct,
     }
     if current_user.role == UserRole.TEACHER:
         payload["classes"] = _teacher_summary_classes(current_user, conversations)
+    elif current_user.role == UserRole.PARENT:
+        payload["classes"] = []
     else:
         payload["classes"] = _student_summary_classes(current_user, conversations)
     return payload

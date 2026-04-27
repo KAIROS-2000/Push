@@ -141,6 +141,65 @@ class ParentCabinetTests(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertIn("paragraph", res.get_json() or {})
 
+    def test_parent_messaging_threads_lists_classroom_contacts_for_child_in_class(self):
+        app = self.create_app()
+        with app.app_context():
+            from app.core.db import db
+            from app.core.security import hash_password
+            from app.models.learning import ClassMembership, Classroom
+            from app.models.parent_cabinet import ParentChildLink
+            from app.models.user import TEACHER_APPROVAL_APPROVED, User, UserRole
+
+            parent = User(
+                full_name="Par",
+                username="parcc",
+                email="parcc@example.com",
+                password_hash=hash_password("ParentPass123!"),
+                role=UserRole.PARENT,
+            )
+            teacher = User(
+                full_name="Teach",
+                username="teacc",
+                email="teacc@example.com",
+                password_hash=hash_password("TeacherPass123!"),
+                role=UserRole.TEACHER,
+                teacher_approval_status=TEACHER_APPROVAL_APPROVED,
+            )
+            student = User(
+                full_name="Stud",
+                username="stacc",
+                email="stacc@example.com",
+                password_hash=hash_password("StudentPass123!"),
+                role=UserRole.STUDENT,
+                age_group="middle",
+            )
+            db.session.add_all([parent, teacher, student])
+            db.session.flush()
+            cr = Classroom(name="Cls1", description="d", code="ZZZ001", teacher_id=teacher.id)
+            db.session.add(cr)
+            db.session.flush()
+            db.session.add(ClassMembership(classroom_id=cr.id, student_id=student.id))
+            db.session.add(
+                ParentChildLink(parent_user_id=parent.id, child_user_id=student.id, active=True)
+            )
+            db.session.commit()
+            parent_email = parent.email
+            classroom_id = cr.id
+
+        with app.test_client() as client:
+            client.post(
+                "/api/auth/login",
+                json={"login": parent_email, "password": "ParentPass123!"},
+            )
+            res = client.get("/api/parent/messaging/threads")
+            self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+            payload = res.get_json() or {}
+            self.assertIn("classroom_contacts", payload)
+            contacts = payload["classroom_contacts"]
+            self.assertEqual(len(contacts), 1)
+            self.assertIsNone(contacts[0].get("thread_id"))
+            self.assertEqual(contacts[0]["classroom"]["id"], classroom_id)
+
 
 if __name__ == "__main__":
     unittest.main()

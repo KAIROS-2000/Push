@@ -202,6 +202,11 @@ export interface AdminAuditLogResponse {
   }
 }
 
+export interface AdminAuditLogArchivesResponse {
+  dates: string[]
+  export_hour_utc: number
+}
+
 export interface LessonSummary {
   id: number
   slug: string
@@ -467,7 +472,10 @@ export interface TeacherClassDetail {
   assignments: AssignmentItem[]
 }
 
-export type MessagingRole = 'student' | 'teacher'
+export type MessagingRole = 'student' | 'teacher' | 'parent'
+
+/** class_student: Per-class DM with a student. parent_thread: Parent–teacher thread tied to a child. */
+export type MessagingChatKind = 'class_student' | 'parent_thread'
 
 export interface MessagingConversationSummary {
   id?: number | null
@@ -517,19 +525,52 @@ export interface MessagingSummaryClass {
   students?: MessagingSummaryStudent[]
 }
 
+export interface StaffDirectUserRef {
+  id: number
+  username: string
+  full_name: string
+  role: UserRole
+}
+
+export interface StaffDirectThreadRow {
+  thread_id: number
+  other: StaffDirectUserRef
+  unread_count: number
+  latest_message_at: string | null
+  latest_message_preview: string | null
+}
+
+export interface StaffDirectPeerSummary {
+  total_unread: number
+  threads: StaffDirectThreadRow[]
+}
+
+export interface StaffMessagingDirectory {
+  teachers: StaffDirectUserRef[]
+  staff: StaffDirectUserRef[]
+}
+
+export interface StaffMessagingSummaryResponse {
+  total_unread: number
+  threads: StaffDirectThreadRow[]
+  directory: StaffMessagingDirectory
+}
+
 export interface MessagingSummaryResponse {
   role: MessagingRole
   total_unread: number
   conversations: MessagingConversationSummary[]
   classes?: MessagingSummaryClass[]
+  staff_direct?: StaffDirectPeerSummary
 }
 
 export interface MessagingMessage {
   id: number
-  conversation_id: number
+  conversation_id?: number | null
+  thread_id?: number | null
   sender_id: number
   sender_name?: string | null
-  sender_role?: MessagingRole | null
+  sender_role?: MessagingRole | string | null
   body: string
   created_at: string
 }
@@ -541,7 +582,23 @@ export interface MessagingConversationDetailResponse {
   messages: MessagingMessage[]
 }
 
+export interface TeacherParentThreadRow {
+  id: number
+  is_parent_conversation?: boolean
+  parent: { id: number; full_name: string | null }
+  student: { id: number; full_name: string | null }
+  classroom: { id: number; name: string | null }
+  unread_count: number
+  latest_preview?: string | null
+  updated_at?: string | null
+}
+
+export interface TeacherParentThreadsResponse {
+  parent_threads: TeacherParentThreadRow[]
+}
+
 export interface MessagingChatTarget {
+  kind?: MessagingChatKind
   classroomId: number
   classroomName: string
   conversationId?: number | null
@@ -549,6 +606,8 @@ export interface MessagingChatTarget {
   teacherName?: string | null
   studentId?: number | null
   studentName?: string | null
+  parentThreadId?: number | null
+  parentName?: string | null
 }
 
 export interface ParentChildProfile {

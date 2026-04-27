@@ -10,7 +10,11 @@ export default async function MessagesPage() {
 		redirect('/auth/login')
 	}
 
-	if (session.user.role !== 'student' && session.user.role !== 'teacher') {
+	if (
+		session.user.role !== 'student' &&
+		session.user.role !== 'teacher' &&
+		session.user.role !== 'parent'
+	) {
 		redirect('/dashboard')
 	}
 

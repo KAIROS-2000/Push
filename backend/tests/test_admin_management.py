@@ -847,6 +847,78 @@ class AdminManagementRegressionTests(unittest.TestCase):
             delete_response = superadmin_client.delete(f'/api/admin/admins/{admin_id}')
             self.assertEqual(delete_response.status_code, 200)
 
+    def test_audit_log_export_clears_db_and_archive_api(self):
+        import json
+
+        app = self.create_app()
+        archive_root = Path(self._tempdirs[-1].name) / 'audit_archives'
+        app.config['AUDIT_LOG_ARCHIVE_DIR'] = str(archive_root)
+
+        self.create_user(
+            app,
+            full_name='Admin Example',
+            username='admin',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import AdminAuditLog, User, UserRole
+
+            user = User.query.filter_by(username='admin').first()
+            assert user is not None
+            db.session.add(
+                AdminAuditLog(
+                    actor_user_id=user.id,
+                    actor_role=UserRole.ADMIN.value,
+                    action='test_action',
+                    entity_type='test',
+                    entity_id=1,
+                    entity_label='target',
+                    details_json={'note': 'unit'},
+                )
+            )
+            db.session.commit()
+
+        with app.test_client() as client:
+            login_response = self.login(client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+            list_before = client.get('/api/admin/audit-log-archives')
+            self.assertEqual(list_before.status_code, 200)
+            self.assertEqual(list_before.get_json()['dates'], [])
+
+        with app.app_context():
+            from app.services.audit_log_archive import run_audit_log_export
+
+            result = run_audit_log_export()
+            self.assertEqual(result['status'], 'ok')
+            self.assertEqual(result['row_count'], 1)
+
+        with app.app_context():
+            from app.models.user import AdminAuditLog
+
+            self.assertEqual(AdminAuditLog.query.count(), 0)
+
+        files = list(archive_root.glob('admin_audit_*.json'))
+        self.assertEqual(len(files), 1)
+        data = json.loads(files[0].read_text(encoding='utf-8'))
+        self.assertEqual(data['row_count'], 1)
+        self.assertEqual(data['items'][0]['action'], 'test_action')
+
+        with app.test_client() as client:
+            self.login(client, 'admin@example.com', 'AdminPass123!')
+            list_after = client.get('/api/admin/audit-log-archives')
+            self.assertEqual(list_after.status_code, 200)
+            dates = list_after.get_json()['dates']
+            self.assertEqual(len(dates), 1)
+            d = dates[0]
+            dl = client.get(f'/api/admin/audit-log-archives/{d}')
+            self.assertEqual(dl.status_code, 200)
+            self.assertIn('application/json', (dl.headers.get('Content-Type') or '').lower())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -125,3 +125,16 @@ class Config:
         SESSION_VERSION_CACHE = _session_ver_cache
     else:
         SESSION_VERSION_CACHE = 'redis' if IS_PRODUCTION else 'off'
+
+    def _audit_log_archive_dir() -> str:
+        raw = _env('AUDIT_LOG_ARCHIVE_DIR')
+        if raw:
+            return str(Path(raw).resolve())
+        return str((BACKEND_DIR / 'logs' / 'audit').resolve())
+
+    AUDIT_LOG_ARCHIVE_DIR = _audit_log_archive_dir()
+    AUDIT_LOG_DAILY_EXPORT_HOUR_UTC = int(_env('AUDIT_LOG_DAILY_EXPORT_HOUR_UTC') or '3')
+    ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD = _as_bool(
+        os.getenv('ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD'),
+        default=False,
+    )

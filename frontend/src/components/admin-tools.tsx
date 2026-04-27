@@ -7,10 +7,12 @@ import { UserLocalTime } from '@/components/user-local-time'
 
 import { AdminLessonBuilder } from '@/components/admin-lesson-builder'
 import { api } from '@/lib/api'
+import { PUBLIC_API_URL } from '@/lib/public-env'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import type {
   AdminAdminDirectoryResponse,
   AdminAuditLogItem,
+  AdminAuditLogArchivesResponse,
   AdminAuditLogResponse,
   AdminOverviewData,
   AdminTeacherRequestsResponse,
@@ -1310,7 +1312,30 @@ export function AdminAuditLogPanel({
   const [target, setTarget] = useState(initialData?.filters.target ?? '')
   const [page, setPage] = useState(initialData?.pagination.page ?? 1)
   const [loading, setLoading] = useState(!initialData)
+  const [archives, setArchives] = useState<AdminAuditLogArchivesResponse | null>(null)
+  const [archiveDate, setArchiveDate] = useState('')
+  const [archivesLoading, setArchivesLoading] = useState(true)
+  const [archiveDownloadBusy, setArchiveDownloadBusy] = useState(false)
   const skipInitialLoad = useRef(Boolean(initialData))
+
+  useEffect(() => {
+    let cancelled = false
+    void api<AdminAuditLogArchivesResponse>('/admin/audit-log-archives', undefined, 'required')
+      .then((data) => {
+        if (cancelled) return
+        setArchives(data)
+        setArchiveDate((prev) => (prev ? prev : data.dates[0] ?? ''))
+      })
+      .catch((error) => {
+        showErrorToast(describeError(error, 'Не удалось загрузить список архивов.'))
+      })
+      .finally(() => {
+        if (!cancelled) setArchivesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function load(next?: {
     action?: string
@@ -1362,15 +1387,93 @@ export function AdminAuditLogPanel({
     return () => window.clearTimeout(timer)
   }, [action, actorRole, initialData, page, target])
 
+  async function downloadAuditArchive() {
+    if (!archiveDate) return
+    setArchiveDownloadBusy(true)
+    try {
+      const r = await fetch(
+        `${PUBLIC_API_URL}/admin/audit-log-archives/${encodeURIComponent(archiveDate)}`,
+        { credentials: 'same-origin', cache: 'no-store' },
+      )
+      if (!r.ok) {
+        const text = await r.text()
+        let msg = 'Не удалось скачать архив.'
+        try {
+          const j = JSON.parse(text) as { message?: string }
+          if (j.message) msg = j.message
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `admin_audit_${archiveDate}.json`
+      a.rel = 'noopener'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      showErrorToast(describeError(error, 'Не удалось скачать архив.'))
+    } finally {
+      setArchiveDownloadBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <section className="codequest-card p-6 sm:p-7">
+        <div className="max-w-2xl space-y-3">
+          <p className="brand-eyebrow">Архив</p>
+          <h2 className="text-2xl font-black text-slate-900">Выгрузки по дням</h2>
+          <p className="text-sm leading-7 text-slate-500">
+            По расписанию (по UTC) накопленные с прошлой выгрузки записи пишутся в JSON-файл в каталоге <code className="text-slate-600">backend/logs/audit</code> на сервере, затем «горячая» таблица очищается. Ниже можно скачать файл по дате в его имени.
+            {archives && typeof archives.export_hour_utc === 'number' ? (
+              <span> Плановый час (UTC) для встроенного планировщика: {archives.export_hour_utc}:00.</span>
+            ) : null}
+          </p>
+        </div>
+        <div className="mt-6 flex max-w-2xl flex-col gap-4 sm:flex-row sm:items-end">
+          <label className="min-w-0 flex-1 space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Дата файла</span>
+            <select
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              value={archiveDate}
+              onChange={(e) => setArchiveDate(e.target.value)}
+              disabled={archivesLoading}
+            >
+              {archivesLoading ? (
+                <option value="">Загрузка…</option>
+              ) : (archives?.dates.length ?? 0) === 0 ? (
+                <option value="">Архивов пока нет</option>
+              ) : (
+                (archives?.dates ?? []).map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="brand-button-primary h-[3.15rem] shrink-0 px-6 text-sm"
+            onClick={() => void downloadAuditArchive()}
+            disabled={!archiveDate || archiveDownloadBusy || archivesLoading}
+          >
+            {archiveDownloadBusy ? 'Скачивание…' : 'Скачать JSON'}
+          </button>
+        </div>
+      </section>
+
+      <section className="codequest-card p-6 sm:p-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl space-y-3">
-            <p className="brand-eyebrow">Audit log</p>
-            <h2 className="text-2xl font-black text-slate-900">Журнал действий админских ролей</h2>
+            <p className="brand-eyebrow">Актуальный журнал</p>
+            <h2 className="text-2xl font-black text-slate-900">Записи с последней выгрузки</h2>
             <p className="text-sm leading-7 text-slate-500">
-              Здесь видна история блокировок, создания админов, публикации модулей и появления новых уроков с фильтрами по действию, роли и цели.
+              События, которые ещё не ушли в суточный архив. Ниже — поиск с фильтрами по действию, роли и цели.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

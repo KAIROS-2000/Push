@@ -1,6 +1,7 @@
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from .api.admin import admin_bp
 from .api.auth import auth_bp
 from .api.messaging import messaging_bp
+from .api.staff_messaging import staff_messaging_bp
 from .api.parent_cabinet import parent_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
@@ -287,6 +289,7 @@ def create_app() -> Flask:
     app.register_blueprint(parent_bp, url_prefix="/api/parent")
     app.register_blueprint(teacher_bp, url_prefix="/api/teacher")
     app.register_blueprint(messaging_bp, url_prefix="/api/messaging")
+    app.register_blueprint(staff_messaging_bp, url_prefix="/api/staff-messaging")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
 
     @app.get("/api/health")
@@ -358,4 +361,33 @@ def create_app() -> Flask:
     if app.config.get("METRICS_DEBUG", False):
         app.logger.info("create_app completed in %sms", int((time.perf_counter() - started_at) * 1000))
 
+    if not app.config.get("TESTING") and app.config.get("ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD"):
+        _start_audit_log_export_thread(app)
+
     return app
+
+
+def _start_audit_log_export_thread(app: Flask) -> None:
+    """In-process daily export. Disable on multi-worker deployments; use `flask export-audit-logs` + cron."""
+
+    def run_loop() -> None:
+        while True:
+            try:
+                hour_utc = int(app.config.get("AUDIT_LOG_DAILY_EXPORT_HOUR_UTC", 3))
+                hour_utc = max(0, min(23, hour_utc))
+                now = datetime.now(UTC)
+                target = now.replace(hour=hour_utc, minute=0, second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                sleep_s = (target - now).total_seconds()
+                time.sleep(sleep_s)
+                with app.app_context():
+                    from .services.audit_log_archive import run_audit_log_export
+
+                    result = run_audit_log_export()
+                    app.logger.info("audit_log_export %s", result)
+            except Exception:  # noqa: BLE001
+                app.logger.exception("audit_log_export loop failed")
+                time.sleep(60.0)
+
+    threading.Thread(target=run_loop, name="audit-log-export", daemon=True).start()

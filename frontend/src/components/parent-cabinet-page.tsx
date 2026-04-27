@@ -1,16 +1,34 @@
 'use client'
 
+import { ParentTeacherChatPanel } from '@/components/parent-teacher-chat-panel'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { useSessionUser } from '@/lib/auth-session'
 import { RolePill } from '@/components/role-pill'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import type { UserItem } from '@/types'
 
 type Child = { id: number; display_name: string; relationship_label?: string | null }
+
+type ParentClassroomContact = {
+  thread_id: number | null
+  child: { id: number; full_name: string | null }
+  teacher: { id: number; full_name: string | null }
+  classroom: { id: number; name: string | null }
+  updated_at: string | null
+  latest_preview: string | null
+  unread_count: number
+  can_message: boolean
+}
+
+type ParentChatOpen = {
+  threadId: number
+  canMessage: boolean
+  title: string
+}
 
 function severityRu(s: string) {
   if (s === 'warning') return 'важно'
@@ -35,7 +53,9 @@ export function ParentCabinetPage() {
   const [consent, setConsent] = useState<Record<string, unknown> | null>(null)
   const [billing, setBilling] = useState<Record<string, unknown> | null>(null)
   const [notes, setNotes] = useState<unknown[]>([])
-  const [threads, setThreads] = useState<unknown[]>([])
+  const [classroomContacts, setClassroomContacts] = useState<ParentClassroomContact[]>([])
+  const [chatOpen, setChatOpen] = useState<ParentChatOpen | null>(null)
+  const [chatStarting, setChatStarting] = useState(false)
   const [achievements, setAchievements] = useState<unknown[]>([])
   const [loadErr, setLoadErr] = useState('')
 
@@ -102,7 +122,10 @@ export function ParentCabinetPage() {
             'required',
           ),
           api<Record<string, unknown>>('/parent/billing', undefined, 'required'),
-          api<{ threads?: unknown[] }>('/parent/messaging/threads', undefined, 'required'),
+          api<{
+            threads?: Array<Record<string, unknown>>
+            classroom_contacts?: ParentClassroomContact[]
+          }>('/parent/messaging/threads', undefined, 'required'),
           api<{ notifications: unknown[] }>('/parent/notifications', undefined, 'required'),
           api<{ achievements: unknown[] }>(
             `/parent/children/${childId}/achievements`,
@@ -118,7 +141,35 @@ export function ParentCabinetPage() {
         setSafety(sa)
         setConsent(co)
         setBilling(bi)
-        setThreads(th.threads || [])
+        const raw = th.classroom_contacts
+        if (raw && raw.length) {
+          setClassroomContacts(raw)
+        } else if (th.threads?.length) {
+          setClassroomContacts(
+            (
+              th.threads as Array<{
+                id: number
+                child: ParentClassroomContact['child']
+                teacher: ParentClassroomContact['teacher']
+                classroom: ParentClassroomContact['classroom']
+                updated_at?: string | null
+                latest_preview?: string | null
+                unread_count?: number
+              }>
+            ).map(t => ({
+              thread_id: t.id,
+              child: t.child,
+              teacher: t.teacher,
+              classroom: t.classroom,
+              updated_at: t.updated_at ?? null,
+              latest_preview: t.latest_preview ?? null,
+              unread_count: t.unread_count ?? 0,
+              can_message: true,
+            })),
+          )
+        } else {
+          setClassroomContacts([])
+        }
         setNotes(n.notifications || [])
         setAchievements(ac.achievements || [])
       } catch (e) {
@@ -191,6 +242,77 @@ export function ParentCabinetPage() {
       showSuccessToast('Текст скопирован.')
     }
   }
+
+  const refreshMessaging = useCallback(async () => {
+    try {
+      const th = await api<{
+        classroom_contacts?: ParentClassroomContact[]
+        threads?: Array<{
+          id: number
+          child: ParentClassroomContact['child']
+          teacher: ParentClassroomContact['teacher']
+          classroom: ParentClassroomContact['classroom']
+          updated_at?: string | null
+          latest_preview?: string | null
+          unread_count?: number
+        }>
+      }>('/parent/messaging/threads', undefined, 'required')
+      const raw = th.classroom_contacts
+      if (raw && raw.length) {
+        setClassroomContacts(raw)
+      } else if (th.threads?.length) {
+        setClassroomContacts(
+          th.threads.map(t => ({
+            thread_id: t.id,
+            child: t.child,
+            teacher: t.teacher,
+            classroom: t.classroom,
+            updated_at: t.updated_at ?? null,
+            latest_preview: t.latest_preview ?? null,
+            unread_count: t.unread_count ?? 0,
+            can_message: true,
+          })),
+        )
+      } else {
+        setClassroomContacts([])
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const openParentTeacherChat = useCallback(
+    async (c: ParentClassroomContact) => {
+      const title = `${c.teacher.full_name || 'Педагог'} · ${c.classroom.name || 'Класс'}`
+      if (c.thread_id) {
+        setChatOpen({ threadId: c.thread_id, canMessage: c.can_message, title })
+        return
+      }
+      setChatStarting(true)
+      try {
+        const r = await api<{ id: number }>(
+          '/parent/messaging/threads',
+          {
+            method: 'POST',
+            body: JSON.stringify({ child_id: c.child.id, classroom_id: c.classroom.id }),
+          },
+          'required',
+        )
+        setChatOpen({ threadId: r.id, canMessage: c.can_message, title })
+        await refreshMessaging()
+      } catch (e) {
+        showErrorToast(getApiErrorMessage(e, 'Не удалось открыть чат.'))
+      } finally {
+        setChatStarting(false)
+      }
+    },
+    [refreshMessaging],
+  )
+
+  const contactsForChild = useMemo(
+    () => (selected ? classroomContacts.filter(c => c.child.id === selected) : []),
+    [selected, classroomContacts],
+  )
 
   if (status === 'unknown' || !user || user.role !== 'parent') {
     return <div className="codequest-card p-6">Загружаем кабинет…</div>
@@ -368,21 +490,53 @@ export function ParentCabinetPage() {
 
               <section className="codequest-card p-5" data-motion-item>
                 <p className="brand-eyebrow">Сообщения с педагогами</p>
-                <p className="mt-2 text-sm text-slate-600">Диалоги только с учителями классов вашего ребёнка.</p>
-                <ul className="mt-3 space-y-2 text-sm">
-                  {threads.map((t, i) => {
-                    const th = t as {
-                      teacher?: { full_name?: string | null }
-                      classroom?: { name?: string | null }
-                    }
-                    return (
-                      <li key={i} className="rounded-2xl border border-slate-100 px-3 py-2">
-                        {th.teacher?.full_name || 'Педагог'}{' '}
-                        <span className="text-slate-500">·</span> {th.classroom?.name || ''}
-                      </li>
-                    )
-                  })}
-                </ul>
+                <p className="mt-2 text-sm text-slate-600">
+                  Учителя классов, в которых учится выбранный ребёнок. Нажмите «Написать», чтобы открыть чат (если
+                  чата ещё не было, он создаётся).
+                </p>
+                {contactsForChild.length ? (
+                  <ul className="mt-3 space-y-2 text-sm">
+                    {contactsForChild.map(c => {
+                      const key = `${c.classroom.id}-${c.child.id}`
+                      return (
+                        <li
+                          key={key}
+                          className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-slate-50/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {c.teacher.full_name || 'Педагог'}{' '}
+                              <span className="font-normal text-slate-500">·</span>{' '}
+                              {c.classroom.name || 'Класс'}
+                            </p>
+                            {c.latest_preview ? (
+                              <p className="mt-1 line-clamp-2 text-xs text-slate-500">{c.latest_preview}</p>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {c.unread_count > 0 ? (
+                              <span className="messaging-unread-badge">{c.unread_count}</span>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="brand-button-secondary h-9 px-3 text-xs disabled:opacity-50"
+                              disabled={chatStarting || !c.can_message}
+                              onClick={() => void openParentTeacherChat(c)}
+                              title={!c.can_message ? 'Включите в разделе «Согласия»' : undefined}
+                            >
+                              {!c.can_message ? 'Связь отключена' : c.thread_id ? 'Открыть' : 'Написать'}
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-600">
+                    Пока нет классов, где состоит этот ребёнок. Пусть введёт код класса в своём кабинете, затем
+                    обновите эту страницу.
+                  </p>
+                )}
               </section>
             </div>
 
@@ -488,6 +642,18 @@ export function ParentCabinetPage() {
           Нужна помощь? <Link className="font-semibold text-sky-700" href="/parent">На главную</Link>
         </p>
       </div>
+      {chatOpen ? (
+        <ParentTeacherChatPanel
+          threadId={chatOpen.threadId}
+          currentUserId={user.id}
+          canMessage={chatOpen.canMessage}
+          title={chatOpen.title}
+          onClose={() => setChatOpen(null)}
+          onSent={() => {
+            void refreshMessaging()
+          }}
+        />
+      ) : null}
     </main>
   )
 }

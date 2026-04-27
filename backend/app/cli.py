@@ -51,3 +51,11 @@ def register_commands(app: Flask) -> None:
         upgrade_database()
         seed_all(enable_demo_data=enable_demo_data)
         click.echo(f"Bootstrap completed (demo={'on' if enable_demo_data else 'off'}).")
+
+    @app.cli.command("export-audit-logs")
+    @with_appcontext
+    def export_audit_logs_command() -> None:
+        from .services.audit_log_archive import run_audit_log_export
+
+        result = run_audit_log_export()
+        click.echo(str(result))

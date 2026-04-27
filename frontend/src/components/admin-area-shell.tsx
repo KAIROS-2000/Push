@@ -5,6 +5,7 @@ type AdminArea = 'admin' | 'superadmin'
 type AdminSection =
   | 'telemetry'
   | 'users'
+  | 'messages'
   | 'teacher-requests'
   | 'admins'
   | 'lessons'
@@ -31,6 +32,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/admin/users',
       label: 'Пользователи',
       description: 'Поиск и блокировка',
+    },
+    {
+      key: 'messages',
+      href: '/admin/messages',
+      label: 'Сообщения',
+      description: 'Связь с учителями и пользователями',
     },
     {
       key: 'teacher-requests',
@@ -69,6 +76,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/superadmin/users',
       label: 'Пользователи',
       description: 'Ученики и учителя',
+    },
+    {
+      key: 'messages',
+      href: '/superadmin/messages',
+      label: 'Сообщения',
+      description: 'Связь с учителями и пользователями',
     },
     {
       key: 'teacher-requests',
