@@ -13,6 +13,7 @@ from ..core.gamification import level_from_xp, rank_title, xp_to_next_level
 class UserRole(enum.Enum):
     STUDENT = 'student'
     TEACHER = 'teacher'
+    PARENT = 'parent'
     ADMIN = 'admin'
     SUPERADMIN = 'superadmin'
 

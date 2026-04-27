@@ -4,31 +4,122 @@ import { ThemeToggleButton } from '@/components/theme-toggle-button'
 import { api } from '@/lib/api'
 import { useSessionUser } from '@/lib/auth-session'
 import { setAnonymousSession } from '@/lib/session-store'
+import { Menu, X } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useMemo } from 'react'
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+	type TouchEvent as ReactTouchEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 
-type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
+type UserRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
 type HeaderZone = 'teacher' | 'public' | 'app' | 'parent' | 'admin'
 
-const roleSet = new Set<UserRole>(['student', 'teacher', 'admin', 'superadmin'])
+const roleSet = new Set<UserRole>(['student', 'teacher', 'parent', 'admin', 'superadmin'])
 
 function resolveHeaderZone(pathname: string | null): HeaderZone {
 	if (pathname?.startsWith('/teacher')) return 'teacher'
 	if (pathname?.startsWith('/admin') || pathname?.startsWith('/superadmin'))
 		return 'admin'
-	if (pathname?.startsWith('/parent/')) return 'parent'
-	if (pathname === '/' || pathname === '/parent' || pathname === '/tournament')
-		return 'public'
+	if (pathname?.startsWith('/parent/') || pathname === '/parent') return 'parent'
+	if (pathname === '/' || pathname === '/tournament') return 'public'
 	return 'app'
+}
+
+type NavLink = { href: string; label: string }
+
+function isCabinetLink(link: NavLink) {
+	if (
+		link.href === '/dashboard' ||
+		link.href === '/parent/dashboard' ||
+		link.href.startsWith('/admin') ||
+		link.href.startsWith('/superadmin')
+	)
+		return true
+	if (/кабинет/i.test(link.label)) return true
+	if (link.label === 'Админ' || link.label === 'Суперадмин') return true
+	return false
+}
+
+function isLessonsLink(link: NavLink) {
+	return link.href === '/roadmap' || link.label === 'Уроки'
+}
+
+/** «Кабинет» + «Уроки» в компактной шапке; остальное — в выезжающем меню. */
+function splitMobileNavLinks(links: NavLink[]): {
+	primary: NavLink[]
+	overflow: NavLink[]
+} {
+	const cabinet = links.find(isCabinetLink)
+	const lessons = links.find(isLessonsLink)
+
+	if (!cabinet && !lessons) {
+		return { primary: links, overflow: [] }
+	}
+
+	const primary: NavLink[] = []
+	if (cabinet) primary.push(cabinet)
+	if (lessons && lessons.href !== cabinet?.href) primary.push(lessons)
+
+	const primaryHrefs = new Set(primary.map(p => p.href))
+	const overflow = links.filter(l => !primaryHrefs.has(l.href))
+
+	if (overflow.length === 0) {
+		return { primary: links, overflow: [] }
+	}
+
+	return { primary, overflow }
+}
+
+const MOBILE_NAV_MQ = '(max-width: 767px)'
+
+function subscribeMobileNavMq(onChange: () => void) {
+	if (typeof window === 'undefined') return () => {}
+	const mq = window.matchMedia(MOBILE_NAV_MQ)
+	mq.addEventListener('change', onChange)
+	return () => mq.removeEventListener('change', onChange)
+}
+
+function getMobileNavSnapshot() {
+	if (typeof window === 'undefined') return false
+	return window.matchMedia(MOBILE_NAV_MQ).matches
+}
+
+function getMobileNavServerSnapshot() {
+	return false
+}
+
+function useMobileNavLayout() {
+	return useSyncExternalStore(
+		subscribeMobileNavMq,
+		getMobileNavSnapshot,
+		getMobileNavServerSnapshot,
+	)
 }
 
 export function SiteHeader() {
 	const pathname = usePathname()
 	const zone = resolveHeaderZone(pathname)
 	const { user } = useSessionUser({ auth: 'optional' })
-
+	const isMobileNav = useMobileNavLayout()
+	const [sidebarOpen, setSidebarOpen] = useState(false)
+	const [drawerPortalReady, setDrawerPortalReady] = useState(false)
+	const openEdgeSwipeRef = useRef<{
+		startX: number
+		startY: number
+		active: boolean
+	} | null>(null)
+	const closeSwipeRef = useRef<{
+		startX: number
+		startY: number
+	} | null>(null)
 	const role = useMemo<UserRole | null>(() => {
 		const value = user?.role
 		return value && roleSet.has(value as UserRole) ? (value as UserRole) : null
@@ -52,13 +143,21 @@ export function SiteHeader() {
 
 	const links = useMemo(() => {
 		if (!isAuthenticated) {
-			return zone === 'public'
-				? [
-						{ href: '/', label: 'Главная' },
-						{ href: '/tournament', label: 'Турнир' },
-						{ href: '/parent', label: 'Родителям' },
-					]
-				: [{ href: '/', label: 'Главная' }]
+			if (zone === 'public') {
+				return [
+					{ href: '/', label: 'Главная' },
+					{ href: '/tournament', label: 'Турнир' },
+					{ href: '/parent', label: 'Родителям' },
+				]
+			}
+			if (zone === 'parent') {
+				return [
+					{ href: '/', label: 'Главная' },
+					{ href: '/parent', label: 'Родителям' },
+					{ href: '/auth/register', label: 'Регистрация' },
+				]
+			}
+			return [{ href: '/', label: 'Главная' }]
 		}
 
 		const secured = [
@@ -107,7 +206,15 @@ export function SiteHeader() {
 			]
 		}
 
-		if (zone === 'parent') {
+		if (role === 'parent') {
+			return [
+				{ href: '/parent/dashboard', label: 'Семейный кабинет' },
+				{ href: '/tournament', label: 'Турнир' },
+				{ href: '/profile', label: 'Профиль' },
+			]
+		}
+
+		if (zone === 'parent' && role === 'student') {
 			return [
 				{ href: '/', label: 'Главная' },
 				{ href: '/dashboard', label: 'Кабинет ученика' },
@@ -116,6 +223,101 @@ export function SiteHeader() {
 
 		return secured
 	}, [isAuthenticated, role, zone])
+
+	const { primary: mobilePrimaryLinks, overflow: mobileOverflowLinks } =
+		useMemo(() => splitMobileNavLinks(links), [links])
+
+	const useMobileDrawer =
+		isMobileNav && mobileOverflowLinks.length > 0 && mobilePrimaryLinks.length > 0
+
+	const navLinks = useMobileDrawer ? mobilePrimaryLinks : links
+
+	useEffect(() => {
+		setDrawerPortalReady(true)
+	}, [])
+
+	useEffect(() => {
+		setSidebarOpen(false)
+	}, [pathname])
+
+	useEffect(() => {
+		if (!sidebarOpen) return
+		const prev = document.body.style.overflow
+		document.body.style.overflow = 'hidden'
+		return () => {
+			document.body.style.overflow = prev
+		}
+	}, [sidebarOpen])
+
+	useEffect(() => {
+		if (!sidebarOpen) return
+		function onKeyDown(e: KeyboardEvent) {
+			if (e.key === 'Escape') setSidebarOpen(false)
+		}
+		window.addEventListener('keydown', onKeyDown)
+		return () => window.removeEventListener('keydown', onKeyDown)
+	}, [sidebarOpen])
+
+	useEffect(() => {
+		if (!useMobileDrawer || sidebarOpen) return
+
+		const edgePx = 44
+
+		function onTouchStart(e: TouchEvent) {
+			if (e.touches.length !== 1) return
+			const t = e.touches[0]
+			if (t.clientX < window.innerWidth - edgePx) return
+			openEdgeSwipeRef.current = {
+				startX: t.clientX,
+				startY: t.clientY,
+				active: true,
+			}
+		}
+
+		function onTouchMove(e: TouchEvent) {
+			const s = openEdgeSwipeRef.current
+			if (!s?.active || e.touches.length !== 1) return
+			const t = e.touches[0]
+			if (Math.abs(t.clientY - s.startY) > 55) {
+				s.active = false
+			}
+		}
+
+		function onTouchEnd(e: TouchEvent) {
+			const s = openEdgeSwipeRef.current
+			openEdgeSwipeRef.current = null
+			if (!s?.active || e.changedTouches.length !== 1) return
+			const t = e.changedTouches[0]
+			const dx = t.clientX - s.startX
+			const dy = Math.abs(t.clientY - s.startY)
+			if (dx < -64 && dy < 72) setSidebarOpen(true)
+		}
+
+		document.addEventListener('touchstart', onTouchStart, { passive: true })
+		document.addEventListener('touchmove', onTouchMove, { passive: true })
+		document.addEventListener('touchend', onTouchEnd, { passive: true })
+		return () => {
+			document.removeEventListener('touchstart', onTouchStart)
+			document.removeEventListener('touchmove', onTouchMove)
+			document.removeEventListener('touchend', onTouchEnd)
+		}
+	}, [useMobileDrawer, sidebarOpen])
+
+	const onSidebarTouchStart = useCallback((e: ReactTouchEvent) => {
+		if (e.touches.length !== 1) return
+		const t = e.touches[0]
+		closeSwipeRef.current = { startX: t.clientX, startY: t.clientY }
+	}, [])
+
+	const onSidebarTouchEnd = useCallback((e: ReactTouchEvent) => {
+		const s = closeSwipeRef.current
+		closeSwipeRef.current = null
+		if (!s || e.changedTouches.length !== 1) return
+		const t = e.changedTouches[0]
+		const dx = t.clientX - s.startX
+		const dy = Math.abs(t.clientY - s.startY)
+		if (dx > 56 && dy < 80) setSidebarOpen(false)
+	}, [])
 
 	// const metaLabel =
 	//   zone === 'public'
@@ -137,11 +339,28 @@ export function SiteHeader() {
 	// 				? 'Рабочая панель платформы'
 	// 				: 'Личный кабинет ученика'
 
+	function renderNavLink(link: NavLink) {
+		const isActive =
+			pathname === link.href ||
+			(link.href !== '/' && pathname?.startsWith(link.href))
+		return (
+			<Link
+				key={link.href}
+				href={link.href}
+				className={`progyx-header__link ${isActive ? 'progyx-header__link--active' : ''}`}
+			>
+				{link.label}
+			</Link>
+		)
+	}
+
 	return (
 		<header
-			className={`progyx-header ${zone === 'public' ? 'progyx-header--public' : 'progyx-header--app'}`}
+			className={`progyx-header ${zone === 'public' ? 'progyx-header--public' : 'progyx-header--app'} ${useMobileDrawer ? 'progyx-header--mobile-drawer' : ''}`}
 		>
-			<div className='progyx-header__shell'>
+			<div
+				className={`progyx-header__shell ${useMobileDrawer ? 'progyx-header__shell--mobile-drawer' : ''}`}
+			>
 				<Link
 					href='/'
 					className={`progyx-header__brand ${isAuthenticated ? 'progyx-header__brand--auth' : ''}`}
@@ -163,26 +382,28 @@ export function SiteHeader() {
 					</div>
 				</Link>
 
-				<nav className='progyx-header__nav'>
-					{links.map(link => {
-						const isActive =
-							pathname === link.href ||
-							(link.href !== '/' && pathname?.startsWith(link.href))
-						return (
-							<Link
-								key={link.href}
-								href={link.href}
-								className={`progyx-header__link ${isActive ? 'progyx-header__link--active' : ''}`}
-							>
-								{link.label}
-							</Link>
-						)
-					})}
+				<nav
+					className={`progyx-header__nav ${useMobileDrawer ? 'progyx-header__nav--compact' : ''}`}
+					aria-label='Основная навигация'
+				>
+					{navLinks.map(renderNavLink)}
 				</nav>
 
 				<div
-					className={`progyx-header__actions ${isAuthenticated ? 'progyx-header__actions--auth' : 'progyx-header__actions--guest'}`}
+					className={`progyx-header__actions ${isAuthenticated ? 'progyx-header__actions--auth' : 'progyx-header__actions--guest'} ${useMobileDrawer ? 'progyx-header__actions--with-menu' : ''}`}
 				>
+					{useMobileDrawer ? (
+						<button
+							type='button'
+							className='progyx-header__icon-button progyx-header__icon-button--menu'
+							aria-label='Открыть меню'
+							aria-expanded={sidebarOpen}
+							aria-controls='site-header-mobile-drawer'
+							onClick={() => setSidebarOpen(true)}
+						>
+							<Menu className='progyx-header__icon-button-svg' strokeWidth={2.25} />
+						</button>
+					) : null}
 					{/* <span className='progyx-header__signal'>{metaLabel}</span> */}
 					<ThemeToggleButton user={user} />
 					{isAuthenticated ? (
@@ -210,6 +431,75 @@ export function SiteHeader() {
 					)}
 				</div>
 			</div>
+
+			{drawerPortalReady && useMobileDrawer
+				? createPortal(
+						<>
+							<div
+								className={`progyx-header__sidebar-backdrop ${sidebarOpen ? 'progyx-header__sidebar-backdrop--open' : ''}`}
+								aria-hidden={!sidebarOpen}
+								onClick={() => setSidebarOpen(false)}
+								onTouchStart={onSidebarTouchStart}
+								onTouchEnd={onSidebarTouchEnd}
+							/>
+							<aside
+								id='site-header-mobile-drawer'
+								className={`progyx-header__sidebar-panel ${sidebarOpen ? 'progyx-header__sidebar-panel--open' : ''}`}
+								aria-hidden={!sidebarOpen}
+								onTouchStart={onSidebarTouchStart}
+								onTouchEnd={onSidebarTouchEnd}
+							>
+								<div className='progyx-header__sidebar-head'>
+									<p className='progyx-header__sidebar-title'>Разделы</p>
+									<button
+										type='button'
+										className='progyx-header__icon-button progyx-header__icon-button--close'
+										aria-label='Закрыть меню'
+										onClick={() => setSidebarOpen(false)}
+									>
+										<X className='progyx-header__icon-button-svg' strokeWidth={2.25} />
+									</button>
+								</div>
+								<nav
+									className='progyx-header__sidebar-nav'
+									aria-label='Дополнительная навигация'
+								>
+									{mobileOverflowLinks.map(link => {
+										const isActive =
+											pathname === link.href ||
+											(link.href !== '/' &&
+												pathname?.startsWith(link.href))
+										return (
+											<Link
+												key={link.href}
+												href={link.href}
+												className={`progyx-header__sidebar-link ${isActive ? 'progyx-header__sidebar-link--active' : ''}`}
+												onClick={() => setSidebarOpen(false)}
+											>
+												{link.label}
+											</Link>
+										)
+									})}
+								</nav>
+								{isAuthenticated ? (
+									<div className='progyx-header__sidebar-foot'>
+										<button
+											type='button'
+											className='progyx-header__sidebar-logout'
+											onClick={() => {
+												setSidebarOpen(false)
+												handleLogout()
+											}}
+										>
+											Выйти
+										</button>
+									</div>
+								) : null}
+							</aside>
+						</>,
+						document.body,
+					)
+				: null}
 		</header>
 	)
 }

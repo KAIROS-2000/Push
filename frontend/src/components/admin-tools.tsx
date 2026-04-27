@@ -3,6 +3,8 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 
+import { UserLocalTime } from '@/components/user-local-time'
+
 import { AdminLessonBuilder } from '@/components/admin-lesson-builder'
 import { api } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
@@ -60,10 +62,6 @@ const AUDIT_ACTION_LABELS = Object.fromEntries(
   AUDIT_ACTION_OPTIONS.map((item) => [item.value, item.label]),
 ) as Record<string, string>
 
-const ABSOLUTE_TIME_FORMAT = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-})
 
 function buildQuery(params: Record<string, string | number | undefined>) {
   const searchParams = new URLSearchParams()
@@ -75,14 +73,6 @@ function buildQuery(params: Record<string, string | number | undefined>) {
   return queryString ? `?${queryString}` : ''
 }
 
-function formatAbsoluteDate(value: string | null | undefined) {
-  if (!value) return '—'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return '—'
-  }
-  return ABSOLUTE_TIME_FORMAT.format(parsed)
-}
 
 function describeError(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
@@ -176,16 +166,16 @@ function AccountCard({
           <div className="grid gap-2 text-sm text-slate-500 sm:grid-cols-2">
             <p>
               <span className="font-semibold text-slate-700">Создан:</span>{' '}
-              {formatAbsoluteDate(user.created_at)}
+              <UserLocalTime iso={user.created_at} variant="admin" />
             </p>
             <p>
               <span className="font-semibold text-slate-700">Последний вход:</span>{' '}
-              {formatAbsoluteDate(user.last_login_at)}
+              <UserLocalTime iso={user.last_login_at} variant="admin" />
             </p>
             {user.teacher_rejection_expires_at ? (
               <p>
                 <span className="font-semibold text-slate-700">Удалится:</span>{' '}
-                {formatAbsoluteDate(user.teacher_rejection_expires_at)}
+                <UserLocalTime iso={user.teacher_rejection_expires_at} variant="admin" />
               </p>
             ) : null}
           </div>
@@ -1456,7 +1446,7 @@ export function AdminAuditLogPanel({
                     </div>
                     <p className="text-lg font-black text-slate-900">{renderAuditSummary(log)}</p>
                     <p className="text-sm leading-7 text-slate-500">
-                      {log.entity_type} #{log.entity_id ?? '—'} · {formatAbsoluteDate(log.created_at)}
+                      {log.entity_type} #{log.entity_id ?? '—'} · <UserLocalTime iso={log.created_at} variant="admin" />
                     </p>
                   </div>
                   <div className="text-sm font-semibold text-slate-500">Показать детали</div>

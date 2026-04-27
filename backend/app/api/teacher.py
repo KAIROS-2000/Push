@@ -28,6 +28,7 @@ from ..models.learning import (
     normalize_task_validation,
 )
 from ..models.user import User, UserRole
+from ..services import parent_messaging
 from ..services.teacher_query_service import TeacherQueryService
 from ..seed.bootstrap import generate_code
 
@@ -685,3 +686,27 @@ def lesson_catalog(current_user: User):
         classroom = Classroom.query.filter_by(id=classroom_id, teacher_id=current_user.id).first_or_404()
     lessons = _catalog_lessons_for_teacher(current_user, classroom)
     return {'lessons': [_lesson_catalog_item(lesson) for lesson in lessons]}
+
+
+@teacher_bp.get('/parent-threads')
+@auth_required([UserRole.TEACHER])
+def teacher_parent_threads(current_user: User):
+    return parent_messaging.summary_for_teacher(current_user)
+
+
+@teacher_bp.get('/parent-threads/<int:thread_id>/messages')
+@auth_required([UserRole.TEACHER])
+def teacher_parent_thread_messages(current_user: User, thread_id: int):
+    return parent_messaging.list_messages_teacher(current_user, thread_id)
+
+
+@teacher_bp.post('/parent-threads/<int:thread_id>/messages')
+@auth_required([UserRole.TEACHER])
+def teacher_parent_thread_send(current_user: User, thread_id: int):
+    return parent_messaging.send_message_teacher(current_user, thread_id)
+
+
+@teacher_bp.post('/parent-threads/<int:thread_id>/read')
+@auth_required([UserRole.TEACHER])
+def teacher_parent_thread_read(current_user: User, thread_id: int):
+    return parent_messaging.mark_read_teacher(current_user, thread_id)

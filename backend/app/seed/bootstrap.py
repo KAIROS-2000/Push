@@ -15,7 +15,6 @@ from ..models.learning import (
     Classroom,
     Lesson,
     Module,
-    ParentInvite,
     Quiz,
     Task,
     age_group_supports_code,
@@ -973,29 +972,6 @@ def seed_classes_and_assignments() -> None:
     db.session.commit()
 
 
-def seed_parent_invite() -> None:
-    if ParentInvite.query.count() > 0:
-        return
-    student_email = (current_app.config.get('DEMO_STUDENT_EMAIL') or '').strip().lower()
-    if not student_email:
-        return
-    student = User.query.filter_by(email=student_email).first()
-    if not student:
-        return
-    parent_code = ((current_app.config.get('DEMO_PARENT_CODE') or '').strip().upper() or f"PAR-{generate_code(8)}")
-    db.session.add(
-        ParentInvite(
-            student_id=student.id,
-            code=parent_code,
-            label='Родительский кабинет',
-            weekly_limit_minutes=180,
-            modules_whitelist=['middle-python-intro', 'middle-conditions'],
-            expires_at=ParentInvite.next_month_expiry(),
-        )
-    )
-    db.session.commit()
-
-
 def repair_legacy_code_task_validations() -> None:
     updates = _legacy_seeded_code_task_updates()
     changed = False
@@ -1076,4 +1052,3 @@ def seed_all(enable_demo_data: bool = True) -> None:
     if enable_demo_data:
         seed_demo_users()
         seed_classes_and_assignments()
-        seed_parent_invite()

@@ -64,7 +64,7 @@ def normalize_age_group(value: str | None) -> str | None:
 @auth_bp.get('/options')
 def register_options():
     return {
-        'roles': [UserRole.STUDENT.value, UserRole.TEACHER.value],
+        'roles': [UserRole.STUDENT.value, UserRole.TEACHER.value, UserRole.PARENT.value],
         'age_groups': sorted(VALID_AGE_GROUPS),
     }
 
@@ -83,10 +83,12 @@ def register():
     age_group = normalize_age_group(data.get('age_group'))
     password_error = validate_password(password)
 
-    if role not in {UserRole.STUDENT.value, UserRole.TEACHER.value}:
+    if role not in {UserRole.STUDENT.value, UserRole.TEACHER.value, UserRole.PARENT.value}:
         register_register_failure(email, ip)
         db.session.commit()
-        return {'message': 'Самостоятельная регистрация доступна только ученикам и учителям.'}, 400
+        return {
+            'message': 'Самостоятельная регистрация доступна только ученикам, учителям и родителям.',
+        }, 400
     if not email or not username or not password or not (data.get('phone') or '').strip():
         register_register_failure(email, ip)
         db.session.commit()
@@ -111,6 +113,10 @@ def register():
         register_register_failure(email, ip)
         db.session.commit()
         return {'message': 'Выберите возрастную группу ученика.'}, 400
+    if role == UserRole.PARENT.value and age_group:
+        register_register_failure(email, ip)
+        db.session.commit()
+        return {'message': 'Для роли «родитель» возрастная группа не используется.'}, 400
     if cleanup_expired_teacher_requests():
         db.session.commit()
     if User.query.filter((User.email == email) | (User.username == username)).first():
@@ -123,6 +129,7 @@ def register():
         return {'message': 'Пользователь с таким номером телефона уже зарегистрирован.'}, 409
 
     is_teacher_registration = role == UserRole.TEACHER.value
+    is_parent_registration = role == UserRole.PARENT.value
     user = User(
         full_name=data.get('full_name') or username,
         username=username,

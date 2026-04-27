@@ -1,5 +1,6 @@
 'use client'
 
+import { UserLocalTime } from '@/components/user-local-time'
 import { useReactHotkeys } from '@/hooks/use-react-hotkeys'
 import { api } from '@/lib/api'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
@@ -86,18 +87,6 @@ function normalizeConversation(
 function normalizeMessages(payload: MessagingConversationDetailResponse): MessagingMessage[] {
 	if (Array.isArray(payload.messages)) return payload.messages
 	return []
-}
-
-function formatChatTime(value?: string | null) {
-	if (!value) return ''
-	const date = new Date(value)
-	if (Number.isNaN(date.getTime())) return ''
-	return date.toLocaleString('ru-RU', {
-		day: '2-digit',
-		month: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-	})
 }
 
 function isOwnMessage(
@@ -335,7 +324,9 @@ export function MessagingPanel({
 										</p>
 										<div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.12em] opacity-70'>
 											<span>{own ? 'Вы' : message.sender_name || (role === 'teacher' ? 'Ученик' : 'Учитель')}</span>
-											<span>{formatChatTime(message.created_at)}</span>
+											<span>
+												<UserLocalTime iso={message.created_at} variant="chat" emptyLabel="" />
+											</span>
 										</div>
 									</div>
 								</div>

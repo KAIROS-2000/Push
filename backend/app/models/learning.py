@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -886,50 +886,3 @@ class UserAchievement(db.Model):
     achievement = db.relationship("Achievement", back_populates="users")
 
 
-class ParentInvite(db.Model):
-    __tablename__ = "parent_invites"
-    __table_args__ = (Index("ix_parent_invite_student_active", "student_id", "active"),)
-
-    id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    code = db.Column(db.String(32), unique=True, nullable=False, index=True)
-    label = db.Column(db.String(80), nullable=False, default="Родительский доступ")
-    active = db.Column(db.Boolean, nullable=False, default=True)
-    weekly_limit_minutes = db.Column(db.Integer, nullable=True)
-    modules_whitelist = db.Column(JSONType, nullable=False, default=list)
-    expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    created_at = db.Column(
-        db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-
-    student = db.relationship("User")
-
-    @property
-    def is_expired(self) -> bool:
-        return bool(self.expires_at and self.expires_at < datetime.now(UTC))
-
-    @classmethod
-    def next_month_expiry(cls) -> datetime:
-        return datetime.now(UTC) + timedelta(days=30)
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "student_id": self.student_id,
-            "code": self.code,
-            "label": self.label,
-            "active": self.active,
-            "weekly_limit_minutes": self.weekly_limit_minutes,
-            "modules_whitelist": self.modules_whitelist,
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-            "created_at": self.created_at.isoformat(),
-        }
-
-    def to_public_dict(self) -> dict:
-        return {
-            "label": self.label,
-            "active": self.active,
-            "weekly_limit_minutes": self.weekly_limit_minutes,
-            "modules_whitelist": self.modules_whitelist,
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-        }

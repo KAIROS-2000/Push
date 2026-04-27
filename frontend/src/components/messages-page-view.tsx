@@ -1,6 +1,7 @@
 'use client'
 
 import { MessagingPanel } from '@/components/messaging-panel'
+import { UserLocalTime } from '@/components/user-local-time'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
@@ -66,18 +67,6 @@ interface StudentChatRow {
 	unread: number
 	latestAt: string | null
 	latestPreview: string | null
-}
-
-function formatMessagingTime(value?: string | null) {
-	if (!value) return 'нет сообщений'
-	const date = new Date(value)
-	if (Number.isNaN(date.getTime())) return 'нет сообщений'
-	return date.toLocaleString('ru-RU', {
-		day: '2-digit',
-		month: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-	})
 }
 
 function messageTimestamp(value?: string | null) {
@@ -553,7 +542,12 @@ export function MessagesPageView({
 													</p>
 												) : null}
 												<p className='mt-1 text-xs font-semibold text-slate-500'>
-													{formatMessagingTime(student.latestAt)}
+													<UserLocalTime
+														iso={student.latestAt}
+														variant='chat'
+														emptyLabel='нет сообщений'
+														invalidLabel='нет сообщений'
+													/>
 												</p>
 											</div>
 											{student.unread > 0 ? (
@@ -636,7 +630,12 @@ export function MessagesPageView({
 									{chat.classroomName}
 								</p>
 								<p className='mt-1 text-xs font-semibold text-slate-500'>
-									{formatMessagingTime(chat.latestAt)}
+									<UserLocalTime
+										iso={chat.latestAt}
+										variant='chat'
+										emptyLabel='нет сообщений'
+										invalidLabel='нет сообщений'
+									/>
 								</p>
 							</div>
 							{chat.unread > 0 ? (

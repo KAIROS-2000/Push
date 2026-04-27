@@ -25,7 +25,6 @@ from ..models.learning import (
     Module,
     Task,
     Assignment,
-    ParentInvite,
     UserProgress,
     age_group_supports_code,
     custom_classroom_module_slug_prefix,
@@ -34,6 +33,7 @@ from ..models.learning import (
     normalize_task_validation,
 )
 from ..models.messaging import Conversation, ConversationReadState, Message
+from ..models.parent_cabinet import ParentLinkCode
 from ..models.user import (
     TEACHER_APPROVAL_APPROVED,
     TEACHER_APPROVAL_PENDING,
@@ -297,7 +297,7 @@ def _delete_managed_user_dependencies(user: User) -> dict:
     AssignmentSubmission.query.filter(AssignmentSubmission.student_id == user.id).delete(
         synchronize_session=False
     )
-    ParentInvite.query.filter(ParentInvite.student_id == user.id).delete(
+    ParentLinkCode.query.filter(ParentLinkCode.child_user_id == user.id).delete(
         synchronize_session=False
     )
     ClassMembership.query.filter(ClassMembership.student_id == user.id).delete(
@@ -1012,11 +1012,6 @@ def delete_module(current_user: User, module_id: int):
         assignment = Assignment.query.filter(Assignment.lesson_id.in_(lesson_ids)).first()
         if assignment is not None:
             return {'message': 'Нельзя удалить модуль: его уроки уже используются в назначенных заданиях.'}, 400
-
-    for invite in ParentInvite.query.all():
-        whitelist = invite.modules_whitelist or []
-        if module.slug in whitelist:
-            invite.modules_whitelist = [slug for slug in whitelist if slug != module.slug]
 
     _log_admin_action(
         current_user,

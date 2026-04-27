@@ -1,5 +1,7 @@
 import Link from 'next/link'
 
+import { UserLocalTime } from '@/components/user-local-time'
+import { formatApiCalendarDayLabelRu } from '@/lib/user-local-time'
 import type {
   AdminTelemetryActivityPoint,
   AdminTelemetryData,
@@ -8,14 +10,6 @@ import type {
 } from '@/types'
 
 const NUMBER_FORMAT = new Intl.NumberFormat('ru-RU')
-const DATE_FORMAT = new Intl.DateTimeFormat('ru-RU', {
-  day: '2-digit',
-  month: 'short',
-})
-const DATE_TIME_FORMAT = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-})
 
 const ROLE_LABELS: Record<string, string> = {
   student: 'Ученики',
@@ -55,16 +49,7 @@ function formatPercent(value: number | null | undefined) {
 }
 
 function formatDate(value: string) {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return DATE_FORMAT.format(parsed)
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return 'Нет данных'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return 'Нет данных'
-  return DATE_TIME_FORMAT.format(parsed)
+  return formatApiCalendarDayLabelRu(value)
 }
 
 function labelFor(value: string, labels: Record<string, string>) {
@@ -305,7 +290,12 @@ export function AdminTelemetryPanel({ telemetry }: { telemetry: AdminTelemetryDa
             </p>
           </div>
           <span className="brand-chip brand-chip--soft">
-            Обновлено {formatDateTime(telemetry.generated_at)}
+            Обновлено{' '}
+            {telemetry.generated_at ? (
+              <UserLocalTime iso={telemetry.generated_at} variant="admin" emptyLabel="Нет данных" />
+            ) : (
+              'Нет данных'
+            )}
           </span>
         </div>
       </section>

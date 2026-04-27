@@ -287,4 +287,7 @@ def sync_achievements_for_user(user: User, *, award_xp: bool = True) -> list[Ach
 
     if newly_earned:
         db.session.flush()
+        from ..services import parent_event_notifications
+
+        parent_event_notifications.notify_achievements_earned(user, newly_earned)
     return newly_earned

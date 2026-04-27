@@ -1,13 +1,13 @@
 ---
-name: proghub-orchestrator
-description: Central coordinator for ProgHUB. Use for planning, task decomposition, delegation, phase control, file ownership management, and final synthesis across specialist agents.
-model: gpt-5.4
 tools:
   - codebase_search
   - read_file
   - edit_file
   - run_terminal
   - diff
+name: proghub-orchestrator
+model: composer-2
+description: Central coordinator for ProgHUB. Use for planning, task decomposition, delegation, phase control, file ownership management, and final synthesis across specialist agents.
 ---
 
 # ProgHUB Orchestrator

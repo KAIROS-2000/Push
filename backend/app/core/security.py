@@ -34,7 +34,7 @@ CSRF_HEADER_NAME = 'X-CSRF-Token'
 DEFAULT_PASSWORD_MIN_LENGTH = 10
 ADMIN_PASSWORD_MIN_LENGTH = 12
 LOGIN_THROTTLE_SCOPE = 'login'
-PARENT_ACCESS_THROTTLE_SCOPE = 'parent_access'
+PARENT_LINK_REDEEM_THROTTLE_SCOPE = 'parent_link_redeem'
 REGISTER_THROTTLE_SCOPE = 'register'
 REFRESH_THROTTLE_SCOPE = 'refresh'
 SESSION_VERSION_CACHE_TTL_SECONDS = 30
@@ -113,11 +113,11 @@ def _throttle_settings(scope: str) -> tuple[int, int, int]:
             int(current_app.config.get('LOGIN_RATE_LIMIT_MAX_FAILURES', 8)),
             int(current_app.config.get('LOGIN_RATE_LIMIT_BLOCK_SECONDS', 900)),
         )
-    if scope == PARENT_ACCESS_THROTTLE_SCOPE:
+    if scope == PARENT_LINK_REDEEM_THROTTLE_SCOPE:
         return (
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS', 600)),
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES', 20)),
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS', 900)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_WINDOW_SECONDS', 600)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_MAX_FAILURES', 20)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_BLOCK_SECONDS', 900)),
         )
     if scope == REGISTER_THROTTLE_SCOPE:
         return (
@@ -269,16 +269,22 @@ def clear_login_failures(login_identifier: str, ip_address: str | None = None) -
     clear_throttle_failures(LOGIN_THROTTLE_SCOPE, login_identifier or 'unknown', ip_address)
 
 
-def parent_access_allowed(ip_address: str | None = None) -> bool:
-    return throttle_allowed(PARENT_ACCESS_THROTTLE_SCOPE, 'invite_lookup', ip_address)
+def parent_link_redeem_allowed(user_id: int, ip_address: str | None = None) -> bool:
+    return throttle_allowed(
+        PARENT_LINK_REDEEM_THROTTLE_SCOPE, f"parent_redeem:{int(user_id)}", ip_address
+    )
 
 
-def register_parent_access_failure(ip_address: str | None = None) -> bool:
-    return register_throttle_failure(PARENT_ACCESS_THROTTLE_SCOPE, 'invite_lookup', ip_address)
+def register_parent_link_redeem_failure(user_id: int, ip_address: str | None = None) -> bool:
+    return register_throttle_failure(
+        PARENT_LINK_REDEEM_THROTTLE_SCOPE, f"parent_redeem:{int(user_id)}", ip_address
+    )
 
 
-def clear_parent_access_failures(ip_address: str | None = None) -> None:
-    clear_throttle_failures(PARENT_ACCESS_THROTTLE_SCOPE, 'invite_lookup', ip_address)
+def clear_parent_link_redeem_failures(user_id: int, ip_address: str | None = None) -> None:
+    clear_throttle_failures(
+        PARENT_LINK_REDEEM_THROTTLE_SCOPE, f"parent_redeem:{int(user_id)}", ip_address
+    )
 
 
 def register_attempt_allowed(email: str, ip_address: str | None = None) -> bool:

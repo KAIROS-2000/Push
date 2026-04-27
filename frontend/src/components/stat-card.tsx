@@ -30,7 +30,7 @@ export function StatCard({
 
 	return (
 		<article
-			className={`brand-stat-card student-metric student-metric--${tone} codequest-card p-4`}
+			className={`brand-stat-card student-metric student-metric--${tone} codequest-card p-3 xl:p-4`}
 			data-kicker={kicker}
 			data-motion-item
 			data-motion-hover

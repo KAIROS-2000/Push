@@ -156,76 +156,44 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(second.status_code, 401)
             self.assertEqual(third.status_code, 429)
 
-    def test_parent_access_is_redacted_and_rate_limited(self):
+    def test_parent_link_redeem_is_rate_limited(self):
         app = self.create_app(
-            PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES='2',
-            PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS='60',
-            PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS='300',
+            PARENT_LINK_REDEEM_MAX_FAILURES='2',
+            PARENT_LINK_REDEEM_BLOCK_SECONDS='60',
+            PARENT_LINK_REDEEM_WINDOW_SECONDS='300',
         )
-        user_id = self.create_user(app)
-
-        from app.core.db import db
-        from app.models.learning import ParentInvite
-
+        self.create_user(app)
         with app.app_context():
-            invite = ParentInvite(
-                student_id=user_id,
-                code='PAR-SECURE1',
-                label='Family Access',
-                weekly_limit_minutes=90,
-                modules_whitelist=['middle-python-intro'],
+            from app.core.db import db
+            from app.core.security import hash_password
+            from app.models.user import User, UserRole
+
+            parent = User(
+                full_name='Parent',
+                username='par1',
+                email='par1@example.com',
+                phone='+79990001122',
+                password_hash=hash_password('ParentPass123!'),
+                role=UserRole.PARENT,
             )
-            db.session.add(invite)
+            db.session.add(parent)
             db.session.commit()
-
         with app.test_client() as client:
-            valid = client.get('/api/parent/access/PAR-SECURE1')
-            self.assertEqual(valid.status_code, 200)
-            payload = valid.get_json()
-            self.assertNotIn('email', payload['child'])
-            self.assertNotIn('username', payload['child'])
-            self.assertNotIn('code', payload['invite'])
-            self.assertNotIn('student_id', payload['invite'])
-
-            first = client.get('/api/parent/access/PAR-NOT-REAL')
-            second = client.get('/api/parent/access/PAR-NOT-REAL')
-            third = client.get('/api/parent/access/PAR-NOT-REAL')
-            self.assertEqual(first.status_code, 404)
-            self.assertEqual(second.status_code, 404)
+            client.post(
+                '/api/auth/login', json={'login': 'par1@example.com', 'password': 'ParentPass123!'}
+            )
+            first = client.post(
+                '/api/parent/children/link', json={'code': 'INVALIDINVAL'}
+            )
+            second = client.post(
+                '/api/parent/children/link', json={'code': 'INVALIDINVAL'}
+            )
+            third = client.post(
+                '/api/parent/children/link', json={'code': 'INVALIDINVAL'}
+            )
+            self.assertIn(first.status_code, (400, 404))
+            self.assertIn(second.status_code, (400, 404))
             self.assertEqual(third.status_code, 429)
-
-    def test_parent_access_filters_modules_by_whitelist(self):
-        app = self.create_app()
-
-        from app.core.db import db
-        from app.models.learning import Module, ParentInvite
-
-        with app.app_context():
-            target_module = (
-                Module.query
-                .filter_by(is_published=True, age_group='middle')
-                .order_by(Module.order_index.asc())
-                .first()
-            )
-            self.assertIsNotNone(target_module)
-        user_id = self.create_user(app, age_group='middle')
-
-        with app.app_context():
-            invite = ParentInvite(
-                student_id=user_id,
-                code='PAR-WHITELIST1',
-                label='Family Access',
-                modules_whitelist=[target_module.slug],
-            )
-            db.session.add(invite)
-            db.session.commit()
-
-        with app.test_client() as client:
-            response = client.get('/api/parent/access/PAR-WHITELIST1')
-            self.assertEqual(response.status_code, 200)
-            payload = response.get_json()
-            self.assertEqual(len(payload['modules']), 1)
-            self.assertEqual(payload['modules'][0]['title'], target_module.title)
 
     def test_lesson_open_does_not_persist_progress_row(self):
         app = self.create_app()

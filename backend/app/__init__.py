@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from .api.admin import admin_bp
 from .api.auth import auth_bp
 from .api.messaging import messaging_bp
+from .api.parent_cabinet import parent_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
 from .cli import register_commands
@@ -283,6 +284,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(student_bp, url_prefix="/api")
+    app.register_blueprint(parent_bp, url_prefix="/api/parent")
     app.register_blueprint(teacher_bp, url_prefix="/api/teacher")
     app.register_blueprint(messaging_bp, url_prefix="/api/messaging")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")

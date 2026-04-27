@@ -429,9 +429,9 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 ClassMembership,
                 Classroom,
                 Module,
-                ParentInvite,
                 custom_classroom_module_slug_prefix,
             )
+            from app.models.parent_cabinet import ParentLinkCode
             from app.models.messaging import Conversation, ConversationReadState, Message
 
             classroom = Classroom(
@@ -469,10 +469,10 @@ class AdminManagementRegressionTests(unittest.TestCase):
                         decided_by_id=teacher_id,
                     ),
                     assignment,
-                    ParentInvite(
-                        student_id=student_id,
-                        code='parent-delete-check',
-                        label='Parent check',
+                    ParentLinkCode(
+                        child_user_id=student_id,
+                        code_hash='a' * 64,
+                        expires_at=datetime.now(UTC) + timedelta(days=7),
                     ),
                 ]
             )
@@ -543,8 +543,8 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 ClassMembership,
                 Classroom,
                 Module,
-                ParentInvite,
             )
+            from app.models.parent_cabinet import ParentLinkCode
             from app.models.messaging import Conversation, ConversationReadState, Message
             from app.models.user import User
 
@@ -555,7 +555,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(ClassMembership.query.filter_by(student_id=student_id).count(), 0)
             self.assertEqual(ClassJoinRequest.query.filter_by(student_id=student_id).count(), 0)
             self.assertEqual(AssignmentSubmission.query.filter_by(student_id=student_id).count(), 0)
-            self.assertEqual(ParentInvite.query.filter_by(student_id=student_id).count(), 0)
+            self.assertEqual(ParentLinkCode.query.filter_by(child_user_id=student_id).count(), 0)
             self.assertEqual(Conversation.query.count(), 0)
             self.assertEqual(Message.query.count(), 0)
             self.assertEqual(ConversationReadState.query.count(), 0)

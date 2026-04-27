@@ -9,11 +9,21 @@ from .learning import (
     Classroom,
     Lesson,
     Module,
-    ParentInvite,
     Quiz,
     Task,
     UserAchievement,
     UserProgress,
+)
+from .parent_cabinet import (
+    ParentChildLink,
+    ParentConsentSettings,
+    ParentLinkCode,
+    ParentNotification,
+    ParentNotificationType,
+    ParentSafetySettings,
+    ParentTeacherMessage,
+    ParentTeacherReadState,
+    ParentTeacherThread,
 )
 
 __all__ = [
@@ -33,9 +43,17 @@ __all__ = [
     'Classroom',
     'Lesson',
     'Module',
-    'ParentInvite',
     'Quiz',
     'Task',
     'UserAchievement',
     'UserProgress',
+    'ParentChildLink',
+    'ParentConsentSettings',
+    'ParentLinkCode',
+    'ParentNotification',
+    'ParentNotificationType',
+    'ParentSafetySettings',
+    'ParentTeacherMessage',
+    'ParentTeacherReadState',
+    'ParentTeacherThread',
 ]

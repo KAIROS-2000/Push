@@ -6,6 +6,8 @@ import { StatCard } from '@/components/stat-card'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
+import { UserLocalTime } from '@/components/user-local-time'
+import { formatUserInstantRu } from '@/lib/user-local-time'
 import { DashboardData } from '@/types'
 import {
 	BookOpenCheck,
@@ -81,21 +83,28 @@ export function DashboardView({
 		}
 	}
 
-	async function generateParentInvite() {
+	async function createParentLinkCode() {
 		try {
-			await api(
-				'/parent/invite',
+			const res = await api<{
+				code: string
+				expires_at: string
+				message?: string
+			}>(
+				'/student/parent-link-code',
 				{
 					method: 'POST',
-					body: JSON.stringify({ label: 'Родительский кабинет' }),
+					body: JSON.stringify({}),
 				},
 				'required',
 			)
-			showSuccessToast('Семейная ссылка обновлена.')
+			const hint = res.message
+				? `${res.message} Код: ${res.code}`
+				: `Скопируйте код и передайте родителю. Код: ${res.code} (истекает ${formatUserInstantRu(res.expires_at)})`
+			showSuccessToast(hint)
 			await loadDashboard()
 		} catch (e) {
 			showErrorToast(
-				getApiErrorMessage(e, 'Не удалось обновить семейную ссылку.'),
+				getApiErrorMessage(e, 'Не удалось создать код для родителя.'),
 			)
 		}
 	}
@@ -219,7 +228,7 @@ export function DashboardView({
 			</section>
 
 			<section
-				className='student-metrics-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4'
+				className='student-metrics-grid grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4'
 				data-motion-stagger
 			>
 				<StatCard
@@ -501,36 +510,38 @@ export function DashboardView({
 						</p>
 
 						<div className='mt-5 rounded-[26px] bg-slate-50 p-5'>
-							{data.parent_invite ? (
-								<>
-									<p className='break-words font-bold text-slate-900'>
-										Активный код: {data.parent_invite.code}
-									</p>
-									<p className='mt-2 break-words text-sm text-slate-500'>
-										Открыть кабинет:{' '}
-										<Link
-											href={`/parent/${data.parent_invite.code}`}
-											className='break-all font-semibold text-sky-700'
-										>
-											/parent/{data.parent_invite.code}
-										</Link>
-									</p>
-									<p className='mt-2 text-sm text-slate-500'>
-										Лимит: {data.parent_invite.weekly_limit_minutes || 'не задан'}{' '}
-										мин/нед
-									</p>
-								</>
+							{data.parent_link_code?.active ? (
+								<p className='text-sm text-slate-700'>
+									Семейный код для родителя действует до{' '}
+									<span className='font-semibold text-slate-900'>
+										{data.parent_link_code.expires_at ? (
+											<UserLocalTime
+												iso={data.parent_link_code.expires_at}
+												variant='parentExpiry'
+											/>
+										) : (
+											'—'
+										)}
+									</span>
+									. Код виден только в момент создания — при необходимости создайте новый.
+								</p>
 							) : (
-								<p className='text-sm text-slate-500'>Ещё нет семейной ссылки.</p>
+								<p className='text-sm text-slate-500'>Семейный код ещё не создавался.</p>
 							)}
 						</div>
-
+						<p className='mt-3 text-sm text-slate-600'>
+							Пусть родитель зарегистрируется с ролью «Родитель» и введёт код в{' '}
+							<Link className='font-semibold text-sky-700' href='/parent/dashboard'>
+								семейном кабинете
+							</Link>
+							.
+						</p>
 						<button
 							type='button'
-							onClick={generateParentInvite}
+							onClick={createParentLinkCode}
 							className='brand-button-primary mt-4 w-full sm:w-auto'
 						>
-							Создать или обновить семейную ссылку
+							Создать или обновить код
 						</button>
 					</article>
 				) : null}

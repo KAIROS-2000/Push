@@ -37,7 +37,9 @@ function hasPasswordWhitespace(value: string) {
 }
 
 function roleLabel(role: string) {
-	return role === 'teacher' ? 'Учитель' : 'Ученик'
+	if (role === 'teacher') return 'Учитель'
+	if (role === 'parent') return 'Родитель'
+	return 'Ученик'
 }
 
 export function AuthForm({
@@ -63,9 +65,10 @@ export function AuthForm({
 	})
 
 	const isTeacherRegistration = mode === 'register' && form.role === 'teacher'
+	const isParentRegistration = mode === 'register' && form.role === 'parent'
 	const strength = useMemo(() => strengthLabel(form.password), [form.password])
 
-	useUserPageMotion(rootRef, [mode, isTeacherRegistration, strength])
+	useUserPageMotion(rootRef, [mode, isTeacherRegistration, isParentRegistration, strength])
 
 	async function handleSubmit(event: FormEvent) {
 		event.preventDefault()
@@ -101,7 +104,12 @@ export function AuthForm({
 			showErrorToast('Пароль не должен содержать пробелы.')
 			return
 		}
-		if (mode === 'register' && !isTeacherRegistration && !form.age_group) {
+		if (
+			mode === 'register'
+			&& !isTeacherRegistration
+			&& !isParentRegistration
+			&& !form.age_group
+		) {
 			showErrorToast('Выберите возрастную группу ученика.')
 			return
 		}
@@ -135,7 +143,11 @@ export function AuthForm({
 							password: form.password,
 							role: form.role,
 							theme: form.theme,
-							...(isTeacherRegistration ? {} : { age_group: form.age_group }),
+							...(
+								isTeacherRegistration || isParentRegistration
+									? {}
+									: { age_group: form.age_group }
+							),
 						}
 
 			const result = await api<{
@@ -162,7 +174,18 @@ export function AuthForm({
 			if (mode === 'register' && result.user?.role === 'student') {
 				queueMascotScenario('post_register_intro')
 			}
-			window.location.href = '/dashboard'
+			const r = result.user?.role
+			if (r === 'parent') {
+				window.location.href = '/parent/dashboard'
+			} else if (r === 'teacher') {
+				window.location.href = '/teacher'
+			} else if (r === 'admin') {
+				window.location.href = '/admin/users'
+			} else if (r === 'superadmin') {
+				window.location.href = '/superadmin/users'
+			} else {
+				window.location.href = '/dashboard'
+			}
 		} catch (e) {
 			showErrorToast(
 				getApiErrorMessage(e, 'Не удалось выполнить действие.'),
@@ -293,7 +316,9 @@ export function AuthForm({
 									? 'Введите email или username и продолжайте с того места, где остановились.'
 									: isTeacherRegistration
 										? 'Заполните профиль учителя. После отправки администратор подтвердит доступ к кабинету.'
-										: 'Заполните профиль, чтобы открыть свой маршрут внутри платформы.'}
+										: isParentRegistration
+											? 'Создайте семейный кабинет: позже привяжите детей по коду из их учётных записей.'
+											: 'Заполните профиль, чтобы открыть свой маршрут внутри платформы.'}
 							</p>
 						</div>
 						<Link
@@ -448,7 +473,7 @@ export function AuthForm({
 							)}
 						</label>
 
-						{mode === 'register' && !isTeacherRegistration && (
+						{mode === 'register' && !isTeacherRegistration && !isParentRegistration && (
 							<label className='space-y-2'>
 								<span className='auth-label text-sm font-semibold text-slate-700'>
 									Возрастная группа

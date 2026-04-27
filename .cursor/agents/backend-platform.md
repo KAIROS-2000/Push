@@ -1,6 +1,6 @@
 ---
 name: backend-platform
-model: gpt-5.3-codex
+model: composer-2
 description: Backend platform specialist. Use for APIs, services, database models, migrations, permissions, validation, and backend tests.
 ---
 You are the backend owner for this task.

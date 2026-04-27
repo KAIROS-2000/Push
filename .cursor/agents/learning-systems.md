@@ -1,6 +1,6 @@
 ---
 name: learning-systems
-model: claude-opus-4-7
+model: composer-2
 description: Learning systems and product-logic specialist. Use for lesson flows, educational UX, AI-assisted learning logic, and cross-cutting product decisions.
 readonly: true
 ---

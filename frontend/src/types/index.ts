@@ -1,4 +1,4 @@
-export type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
+export type UserRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
 export type TeacherApprovalStatus = 'pending' | 'approved' | 'rejected'
 export type ProgressStatus = 'not_started' | 'in_progress' | 'pending_review' | 'needs_revision' | 'completed'
 export type SubmissionStatus = 'submitted' | 'pending_review' | 'checked' | 'needs_revision'
@@ -363,7 +363,7 @@ export interface DashboardData {
   recent_achievements: Array<{ id: number; name: string; description: string; xp_reward: number }>
   my_classes: ClassroomItem[]
   assignments_preview: AssignmentItem[]
-  parent_invite: ParentInvite | null
+  parent_link_code: { active: boolean; expires_at: string | null }
 }
 
 export interface AuthOptions {
@@ -551,26 +551,6 @@ export interface MessagingChatTarget {
   studentName?: string | null
 }
 
-export interface ParentInvite {
-  id: number
-  student_id: number
-  code: string
-  label: string
-  active: boolean
-  weekly_limit_minutes: number | null
-  modules_whitelist: string[]
-  expires_at: string | null
-  created_at: string
-}
-
-export interface ParentInvitePublic {
-  label: string
-  active: boolean
-  weekly_limit_minutes: number | null
-  modules_whitelist: string[]
-  expires_at: string | null
-}
-
 export interface ParentChildProfile {
   full_name: string
   age_group: string | null
@@ -588,32 +568,3 @@ export interface ParentAssignmentSummary {
   submitted_at: string
 }
 
-export interface ParentAccessData {
-  invite: ParentInvitePublic
-  child: ParentChildProfile
-  summary: {
-    completed_lessons: number
-    average_score: number
-    tasks_submitted: number
-    current_level: number
-    xp: number
-    streak: number
-  }
-  weekly_activity: Array<{
-    date: string
-    label: string
-    lessons: number
-    assignments: number
-    average_score: number
-  }>
-  modules: Array<{
-    id: number
-    title: string
-    color: string
-    completed_lessons: number
-    total_lessons: number
-    progress_percent: number
-  }>
-  recent_achievements: Array<{ id: number; name: string; description: string; xp_reward: number }>
-  recent_assignments: ParentAssignmentSummary[]
-}

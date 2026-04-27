@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 import { SiteFooter } from '@/components/site-footer'
+import { UserLocalTime } from '@/components/user-local-time'
 import { getTournamentData, type TournamentOfficeRow } from '@/lib/tournament-data'
 
 export const dynamic = 'force-dynamic'
@@ -29,20 +30,6 @@ function formatPercent(value: number | null) {
 	return `${new Intl.NumberFormat('ru-RU', {
 		maximumFractionDigits: 3,
 	}).format(value)}%`
-}
-
-function formatSourceDate(value: string | null) {
-	if (!value) return 'нет данных'
-
-	const date = new Date(value)
-	if (Number.isNaN(date.getTime())) return 'нет данных'
-
-	return new Intl.DateTimeFormat('ru-RU', {
-		day: '2-digit',
-		month: 'long',
-		hour: '2-digit',
-		minute: '2-digit',
-	}).format(date)
 }
 
 function filledWeeksCount(rows: TournamentOfficeRow[]) {
@@ -83,7 +70,17 @@ export default async function TournamentPage() {
 					<div className='tournament-hero__meta'>
 						<span className='brand-chip brand-chip--warm'>
 							<RefreshCw aria-hidden size={16} />
-							Обновлено: {formatSourceDate(data.meta.modified)}
+							Обновлено:{' '}
+							{data.meta.modified ? (
+								<UserLocalTime
+									iso={data.meta.modified}
+									variant='tournament'
+									emptyLabel='нет данных'
+									invalidLabel='нет данных'
+								/>
+							) : (
+								'нет данных'
+							)}
 						</span>
 						<span className='brand-chip brand-chip--soft'>
 							<CalendarDays aria-hidden size={16} />

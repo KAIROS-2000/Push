@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import redis
-from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from flask import Blueprint, abort, request
@@ -25,10 +24,7 @@ from ..core.gigachat import (
 )
 from ..core.security import (
     auth_required,
-    clear_parent_access_failures,
     hash_password,
-    parent_access_allowed,
-    register_parent_access_failure,
     revoke_refresh_tokens_for_user,
     validate_password,
 )
@@ -41,15 +37,16 @@ from ..models.learning import (
     Classroom,
     Lesson,
     Module,
-    ParentInvite,
     Quiz,
     Task,
     UserAchievement,
     UserProgress,
     lesson_requires_teacher_review as lesson_requires_teacher_review_helper,
 )
+from ..models.parent_cabinet import ParentLinkCode
 from ..models.user import User, UserRole
-from ..seed.bootstrap import generate_code
+from ..services import parent_insights
+from ..services.parent_privacy import child_hidden_from_public_catalog
 
 
 student_bp = Blueprint("student", __name__)
@@ -171,7 +168,20 @@ def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
     age_key = _leaderboard_cache_age_key(age_group)
     redis_rows = _read_leaderboard_from_cache(age_key)
     if redis_rows is not None:
-        return [row.copy() for row in redis_rows]
+        visible: list[dict] = []
+        for row in redis_rows:
+            sid = row.get("id")
+            try:
+                if sid is not None and child_hidden_from_public_catalog(int(sid)):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            visible.append(dict(row))
+            if len(visible) >= LEADERBOARD_LIMIT:
+                break
+        return [
+            {**r, "position": idx} for idx, r in enumerate(visible[:LEADERBOARD_LIMIT], start=1)
+        ]
 
     cache_key = (str(db.engine.url), age_key)
     cached = _global_leaderboard_cache.get(cache_key)
@@ -184,9 +194,12 @@ def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
 
     students = (
         query.order_by(User.xp.desc(), User.created_at.asc())
-        .limit(LEADERBOARD_LIMIT)
+        .limit(LEADERBOARD_LIMIT * 3)
         .all()
     )
+    students = [s for s in students if not child_hidden_from_public_catalog(s.id)][
+        :LEADERBOARD_LIMIT
+    ]
     rows = [_leaderboard_row(student, idx) for idx, student in enumerate(students, start=1)]
     _global_leaderboard_cache[cache_key] = (
         now + GLOBAL_LEADERBOARD_REFRESH_INTERVAL,
@@ -205,9 +218,12 @@ def _class_leaderboard_rows(classroom_id: int) -> list[dict]:
             User.is_active.is_(True),
         )
         .order_by(User.xp.desc(), User.created_at.asc())
-        .limit(LEADERBOARD_LIMIT)
+        .limit(LEADERBOARD_LIMIT * 3)
         .all()
     )
+    students = [s for s in students if not child_hidden_from_public_catalog(s.id)][
+        :LEADERBOARD_LIMIT
+    ]
     return [_leaderboard_row(student, idx) for idx, student in enumerate(students, start=1)]
 
 
@@ -386,156 +402,6 @@ def _question_is_correct(question: dict, actual) -> bool:
     return False
 
 
-def _normalized_parent_module_whitelist(raw_value) -> set[str] | None:
-    if not isinstance(raw_value, list):
-        return None
-    values = {str(item or "").strip() for item in raw_value if str(item or "").strip()}
-    return values or None
-
-
-def _lesson_allowed_for_parent(
-    lesson: Lesson | None, allowed_module_slugs: set[str] | None
-) -> bool:
-    if allowed_module_slugs is None:
-        return True
-    return bool(lesson and lesson.module and lesson.module.slug in allowed_module_slugs)
-
-
-def _assignment_allowed_for_parent(
-    assignment: Assignment | None, allowed_module_slugs: set[str] | None
-) -> bool:
-    if allowed_module_slugs is None:
-        return True
-    return bool(
-        assignment
-        and assignment.lesson
-        and _lesson_allowed_for_parent(assignment.lesson, allowed_module_slugs)
-    )
-
-
-def _compact_progress_report(
-    student: User, allowed_module_slugs: set[str] | None = None
-) -> dict:
-    progresses = [
-        row
-        for row in UserProgress.query.filter_by(user_id=student.id).all()
-        if _lesson_allowed_for_parent(row.lesson, allowed_module_slugs)
-    ]
-    completed = [row for row in progresses if row.status == "completed"]
-    total_score = sum(row.score for row in completed)
-    assignments = [
-        row
-        for row in AssignmentSubmission.query.filter_by(student_id=student.id).all()
-        if _assignment_allowed_for_parent(row.assignment, allowed_module_slugs)
-    ]
-    return {
-        "completed_lessons": len(completed),
-        "average_score": round(total_score / len(completed), 1) if completed else 0,
-        "tasks_submitted": len(assignments),
-        "current_level": student.level,
-        "xp": student.xp,
-        "streak": student.streak,
-    }
-
-
-def _weekly_activity(
-    student: User, allowed_module_slugs: set[str] | None = None
-) -> list[dict]:
-    rows = []
-    progresses = [
-        row
-        for row in UserProgress.query.filter_by(user_id=student.id).all()
-        if _lesson_allowed_for_parent(row.lesson, allowed_module_slugs)
-    ]
-    assignments = [
-        row
-        for row in AssignmentSubmission.query.filter_by(student_id=student.id).all()
-        if _assignment_allowed_for_parent(row.assignment, allowed_module_slugs)
-    ]
-    grouped: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"lessons": 0, "assignments": 0, "score_sum": 0, "score_count": 0}
-    )
-    for progress in progresses:
-        if progress.status == "completed" and progress.completed_at:
-            key = progress.completed_at.date().isoformat()
-            grouped[key]["lessons"] += 1
-            grouped[key]["score_sum"] += progress.score
-            grouped[key]["score_count"] += 1
-    for submission in assignments:
-        key = submission.submitted_at.date().isoformat()
-        grouped[key]["assignments"] += 1
-        grouped[key]["score_sum"] += submission.score
-        grouped[key]["score_count"] += 1
-    today = datetime.now(UTC).date()
-    for offset in range(6, -1, -1):
-        day = today - timedelta(days=offset)
-        key = day.isoformat()
-        score_count = grouped[key]["score_count"]
-        rows.append(
-            {
-                "date": key,
-                "label": day.strftime("%d.%m"),
-                "lessons": grouped[key]["lessons"],
-                "assignments": grouped[key]["assignments"],
-                "average_score": (
-                    round(grouped[key]["score_sum"] / score_count, 1)
-                    if score_count
-                    else 0
-                ),
-            }
-        )
-    return rows
-
-
-def _module_report(
-    student: User, allowed_module_slugs: set[str] | None = None
-) -> list[dict]:
-    modules = (
-        Module.query.filter_by(
-            is_published=True, age_group=student.age_group or "middle"
-        )
-        .order_by(Module.order_index.asc())
-        .all()
-    )
-    payload = []
-    for module in modules:
-        if allowed_module_slugs is not None and module.slug not in allowed_module_slugs:
-            continue
-        completed = 0
-        total = len(module.lessons)
-        for idx, lesson in enumerate(module.lessons):
-            state = _lesson_state_for_user(student, module, lesson, idx)
-            if state == "completed":
-                completed += 1
-        payload.append(
-            {
-                "id": module.id,
-                "title": module.title,
-                "color": module.color,
-                "completed_lessons": completed,
-                "total_lessons": total,
-                "progress_percent": int((completed / max(total, 1)) * 100),
-            }
-        )
-    return payload
-
-
-def _assignment_summary(
-    student: User, allowed_module_slugs: set[str] | None = None
-) -> list[dict]:
-    submissions = (
-        AssignmentSubmission.query.filter_by(student_id=student.id)
-        .order_by(AssignmentSubmission.submitted_at.desc())
-        .all()
-    )
-    visible_submissions = [
-        submission
-        for submission in submissions
-        if _assignment_allowed_for_parent(submission.assignment, allowed_module_slugs)
-    ]
-    return [submission.to_parent_dict() for submission in visible_submissions[:5]]
-
-
 def _assignment_payload_for_student(
     student: User, assignment: Assignment, classroom_name: str | None = None
 ) -> dict:
@@ -567,7 +433,7 @@ def bootstrap_public():
         "stats": {
             "modules": len(modules),
             "lessons": sum(len(module.lessons) for module in modules),
-            "roles": 4,
+            "roles": 5,
         },
         "featured_modules": [
             module.to_dict(include_lessons=True) for module in modules[:4]
@@ -578,6 +444,10 @@ def bootstrap_public():
 @student_bp.get("/dashboard")
 @auth_required()
 def dashboard(current_user: User):
+    if current_user.role == UserRole.PARENT:
+        return {
+            "message": "Семейный кабинет: откройте /parent/dashboard.",
+        }, 403
     progresses = UserProgress.query.filter_by(user_id=current_user.id).all()
     completed_lessons = [item for item in progresses if item.status == "completed"]
     achievements = UserAchievement.query.filter_by(user_id=current_user.id).all()
@@ -613,13 +483,19 @@ def dashboard(current_user: User):
         if continue_lesson:
             break
 
-    parent_invite = (
-        ParentInvite.query.filter_by(student_id=current_user.id, active=True)
-        .order_by(ParentInvite.created_at.desc())
-        .first()
-        if current_user.role == UserRole.STUDENT
-        else None
-    )
+    active_parent_code = None
+    if current_user.role == UserRole.STUDENT:
+        now = datetime.now(UTC)
+        active_parent_code = (
+            ParentLinkCode.query.filter(
+                ParentLinkCode.child_user_id == current_user.id,
+                ParentLinkCode.used_at.is_(None),
+                ParentLinkCode.revoked_at.is_(None),
+                ParentLinkCode.expires_at > now,
+            )
+            .order_by(ParentLinkCode.created_at.desc())
+            .first()
+        )
     assignments_preview = (
         [
             _assignment_payload_for_student(current_user, assignment)
@@ -665,7 +541,10 @@ def dashboard(current_user: User):
             membership.classroom.to_dict() for membership in current_user.memberships
         ],
         "assignments_preview": assignments_preview,
-        "parent_invite": parent_invite.to_dict() if parent_invite else None,
+        "parent_link_code": {
+            "active": bool(active_parent_code),
+            "expires_at": active_parent_code.expires_at.isoformat() if active_parent_code else None,
+        },
     }
 
 
@@ -1215,7 +1094,7 @@ def submit_assignment(current_user: User, assignment_id: int):
 def my_profile(current_user: User):
     return {
         "user": current_user.to_dict(),
-        "report": _compact_progress_report(current_user),
+        "report": parent_insights.compact_progress_report(current_user),
     }
 
 
@@ -1239,98 +1118,75 @@ def update_profile(current_user: User):
     return {"user": current_user.to_dict()}
 
 
-@student_bp.post("/parent/invite")
+@student_bp.post("/student/parent-link-code")
 @auth_required([UserRole.STUDENT])
-def create_parent_invite(current_user: User):
-    data = request.get_json() or {}
-    # New invite replaces any active one so "create or refresh" always issues a new code.
-    for old in ParentInvite.query.filter_by(
-        student_id=current_user.id, active=True
-    ).all():
-        old.active = False
-    code = f"PAR-{generate_code(8)}"
-    for _ in range(5):
-        if not ParentInvite.query.filter_by(code=code).first():
-            break
-        code = f"PAR-{generate_code(8)}"
-    if ParentInvite.query.filter_by(code=code).first():
-        return {"message": "Не удалось сгенерировать уникальный код. Повторите попытку."}, 500
-    invite = ParentInvite(
-        student_id=current_user.id,
-        code=code,
-        label=data.get("label") or "Родительский доступ",
-        weekly_limit_minutes=data.get("weekly_limit_minutes"),
-        modules_whitelist=data.get("modules_whitelist") or [],
-        expires_at=ParentInvite.next_month_expiry(),
-    )
-    db.session.add(invite)
-    db.session.commit()
-    return {"invite": invite.to_dict(), "url": f"/parent/{invite.code}"}, 201
-
-
-@student_bp.get("/parent/invites")
-@auth_required([UserRole.STUDENT])
-def list_parent_invites(current_user: User):
-    invites = (
-        ParentInvite.query.filter_by(student_id=current_user.id)
-        .order_by(ParentInvite.created_at.desc())
-        .all()
-    )
-    return {"invites": [invite.to_dict() for invite in invites]}
-
-
-@student_bp.patch("/parent/invite/<string:code>")
-@auth_required([UserRole.STUDENT])
-def update_parent_invite(current_user: User, code: str):
-    invite = ParentInvite.query.filter_by(
-        code=code, student_id=current_user.id
-    ).first_or_404()
-    data = request.get_json() or {}
-    if "active" in data:
-        invite.active = bool(data["active"])
-    if "weekly_limit_minutes" in data:
-        invite.weekly_limit_minutes = (
-            int(data["weekly_limit_minutes"]) if data["weekly_limit_minutes"] else None
+def create_student_parent_link_code(current_user: User):
+    now = datetime.now(UTC)
+    open_codes = (
+        ParentLinkCode.query.filter(
+            ParentLinkCode.child_user_id == current_user.id,
+            ParentLinkCode.used_at.is_(None),
+            ParentLinkCode.revoked_at.is_(None),
         )
-    if "modules_whitelist" in data:
-        invite.modules_whitelist = data["modules_whitelist"] or []
-    db.session.commit()
-    return {"invite": invite.to_dict()}
-
-
-@student_bp.get("/parent/access/<string:code>")
-def parent_access(code: str):
-    if not parent_access_allowed():
-        return {"message": "Слишком много попыток доступа. Повторите позже."}, 429
-    invite = ParentInvite.query.filter_by(code=code, active=True).first()
-    if (
-        not invite
-        or invite.is_expired
-        or not invite.student
-        or not invite.student.is_active
-    ):
-        register_parent_access_failure()
-        db.session.commit()
-        return {"message": "Ссылка недействительна или истекла."}, 404
-
-    student = invite.student
-    clear_parent_access_failures()
-    db.session.commit()
-    allowed_module_slugs = _normalized_parent_module_whitelist(invite.modules_whitelist)
-    achievements = (
-        UserAchievement.query.filter_by(user_id=student.id)
-        .order_by(UserAchievement.earned_at.desc())
         .all()
     )
+    for row in open_codes:
+        row.revoked_at = now
+    for _ in range(8):
+        plain = parent_insights.generate_parent_link_code_plain()
+        digest = parent_insights.hash_parent_link_code(plain)
+        if not ParentLinkCode.query.filter_by(code_hash=digest).first():
+            break
+    else:
+        return {"message": "Не удалось сгенерировать уникальный код. Повторите попытку."}, 500
+    expires = ParentLinkCode.default_expiry()
+    row = ParentLinkCode(
+        child_user_id=current_user.id,
+        code_hash=digest,
+        expires_at=expires,
+    )
+    db.session.add(row)
+    db.session.commit()
     return {
-        "invite": invite.to_public_dict(),
-        "child": student.to_parent_dict(),
-        "summary": _compact_progress_report(student, allowed_module_slugs),
-        "weekly_activity": _weekly_activity(student, allowed_module_slugs),
-        "modules": _module_report(student, allowed_module_slugs),
-        "recent_achievements": [row.achievement.to_dict() for row in achievements[:4]],
-        "recent_assignments": _assignment_summary(student, allowed_module_slugs),
-    }
+        "code": plain,
+        "expires_at": expires.isoformat(),
+        "message": "Передайте этот код родителю. Он сможет привязать кабинет в разделе для родителей.",
+    }, 201
+
+
+@student_bp.get("/student/parent-link-codes")
+@auth_required([UserRole.STUDENT])
+def list_student_parent_link_codes(current_user: User):
+    rows = (
+        ParentLinkCode.query.filter_by(child_user_id=current_user.id)
+        .order_by(ParentLinkCode.created_at.desc())
+        .all()
+    )
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "id": row.id,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                "used_at": row.used_at.isoformat() if row.used_at else None,
+                "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+    return {"codes": out}
+
+
+@student_bp.post("/student/parent-link-codes/<int:code_id>/revoke")
+@auth_required([UserRole.STUDENT])
+def revoke_student_parent_link_code(current_user: User, code_id: int):
+    row = ParentLinkCode.query.filter_by(id=code_id, child_user_id=current_user.id).first()
+    if not row:
+        return {"message": "Код не найден."}, 404
+    if row.used_at:
+        return {"message": "Код уже был использован."}, 400
+    row.revoked_at = datetime.now(UTC)
+    db.session.commit()
+    return {"ok": True}
 
 
 def _award_achievement_if_needed(user: User, code: str, *, award_xp: bool = True) -> None:

@@ -1,5 +1,6 @@
 'use client'
 
+import { UserLocalTime } from '@/components/user-local-time'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import {
@@ -546,17 +547,6 @@ function getJoinRequestStudentName(request: ClassJoinRequestItem) {
 		request.student_username ||
 		`Ученик #${request.student_id}`
 	)
-}
-
-function formatJoinRequestDate(value: string) {
-	const date = new Date(value)
-	if (Number.isNaN(date.getTime())) return 'дата не указана'
-	return date.toLocaleString('ru-RU', {
-		day: '2-digit',
-		month: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-	})
 }
 
 export function TeacherWorkspace({
@@ -1458,7 +1448,12 @@ export function TeacherWorkspace({
 													{joinRequest.classroom_name || 'класс без названия'}
 												</p>
 												<p className='mt-1 text-xs font-semibold text-slate-500'>
-													Отправлена {formatJoinRequestDate(joinRequest.created_at)}
+													Отправлена{' '}
+													<UserLocalTime
+														iso={joinRequest.created_at}
+														variant='joinRequest'
+														invalidLabel='дата не указана'
+													/>
 												</p>
 											</div>
 											<div className='flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end'>
@@ -2052,9 +2047,7 @@ export function TeacherWorkspace({
 													@{submission.student_username}
 												</p>
 												<p className='text-sm text-slate-500'>
-													{new Date(submission.submitted_at).toLocaleString(
-														'ru-RU',
-													)}
+													<UserLocalTime iso={submission.submitted_at} variant='submission' />
 												</p>
 											</div>
 											<div className='flex flex-wrap items-center gap-2'>

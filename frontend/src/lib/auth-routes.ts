@@ -7,6 +7,7 @@ export const PROTECTED_ROUTE_PREFIXES = [
   '/lessons',
   '/leaderboard',
   '/profile',
+  '/parent/dashboard',
   '/teacher',
   '/admin',
   '/superadmin',

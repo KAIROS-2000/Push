@@ -54,11 +54,11 @@ def _settings(scope: str) -> tuple[int, int, int]:
             int(current_app.config.get('LOGIN_RATE_LIMIT_MAX_FAILURES', 8)),
             int(current_app.config.get('LOGIN_RATE_LIMIT_BLOCK_SECONDS', 900)),
         )
-    if scope == 'parent_access':
+    if scope == 'parent_link_redeem':
         return (
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_WINDOW_SECONDS', 600)),
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_MAX_FAILURES', 20)),
-            int(current_app.config.get('PARENT_ACCESS_RATE_LIMIT_BLOCK_SECONDS', 900)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_WINDOW_SECONDS', 600)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_MAX_FAILURES', 20)),
+            int(current_app.config.get('PARENT_LINK_REDEEM_BLOCK_SECONDS', 900)),
         )
     if scope == 'register':
         return (

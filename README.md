@@ -6,7 +6,7 @@
 
 - регистрация и вход через backend-set `HttpOnly` session cookies
 - роли: `student`, `teacher`, `admin`, `superadmin`
-- bootstrap суперадмина включается только явно через `.env`
+- **суперадмин** (роль `superadmin`): при `SUPERADMIN_BOOTSTRAP=true` и заданных `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` учётка создаётся при `flask bootstrap-app` (в шаблоне `.env.example` для локалки задано по умолчанию; это не то же, что демо-админ из `DEMO_ADMIN_*` ниже)
 - ученик: dashboard, roadmap, уроки, теория, практика, мини‑тесты, достижения, рейтинг, вступление в класс
 - teacher workflow: создание классов, назначение заданий, просмотр учеников, проверка сдач
 - teacher practice builder: ручная проверка, авто‑проверка по ключевым словам и настоящие автотесты для `Python`/`JavaScript`
@@ -36,6 +36,7 @@ docker compose up --build
 
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000/api
+- **Суперадмин:** логин `superadmin@codequest.local` или `superadmin`, пароль — значение `SUPERADMIN_PASSWORD` в `.env` (в `.env.example` для локалки: `LocalOnlySuperAdmin123!`). Учётка появляется только при `SUPERADMIN_BOOTSTRAP=true` и успешном `bootstrap-app`; роль `admin` из блока `DEMO_ADMIN_*` — это отдельный демо-пользователь.
 - фронтенд в `development` использует `NEXT_PUBLIC_API_URL=http://localhost:3000/api`
 - фронтенд в `production` должен получать `NEXT_PUBLIC_API_URL` только из env
 - server-side proxy фронтенда ходит в backend через `INTERNAL_API_URL`
