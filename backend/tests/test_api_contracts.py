@@ -423,6 +423,82 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual([row['username'] for row in class_payload['leaderboard']], ['classmate', 'student'])
         self.assertEqual(global_payload['leaderboard'], cached_global_payload['leaderboard'])
 
+    def test_student_lesson_access_gate_for_locked_lesson_in_module(self):
+        app = self.create_app()
+        from app.core.db import db
+        from app.core.security import hash_password
+        from app.models.learning import Lesson, Module
+        from app.models.user import User, UserRole
+
+        with app.app_context():
+            student = User(
+                full_name='Gate Student',
+                username='gstudent',
+                email='gstudent@example.com',
+                password_hash=hash_password('StudentPass123!'),
+                role=UserRole.STUDENT,
+                age_group='middle',
+            )
+            teacher = User(
+                full_name='Gate Teacher',
+                username='gteacher',
+                email='gteacher@example.com',
+                password_hash=hash_password('TeacherPass123!'),
+                role=UserRole.TEACHER,
+            )
+            db.session.add_all([student, teacher])
+            db.session.flush()
+            module = Module(
+                slug='gate-mod',
+                title='Gate',
+                description='Gate fixture',
+                age_group='middle',
+                icon='code',
+                color='#4A90D9',
+                order_index=1,
+                is_published=True,
+            )
+            db.session.add(module)
+            db.session.flush()
+            first = Lesson(
+                module_id=module.id,
+                slug='gate-l1',
+                title='First',
+                summary='A',
+                order_index=1,
+                passing_score=70,
+                theory_blocks=[],
+                interactive_steps=[],
+            )
+            second = Lesson(
+                module_id=module.id,
+                slug='gate-l2',
+                title='Second',
+                summary='B',
+                order_index=2,
+                passing_score=70,
+                theory_blocks=[],
+                interactive_steps=[],
+            )
+            db.session.add_all([first, second])
+            db.session.commit()
+            first_id, second_id = first.id, second.id
+
+        with app.test_client() as client:
+            self.login(client, 'gstudent@example.com', 'StudentPass123!')
+            locked_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
+            open_gate = client.get(f'/api/student/lesson-access/{first_id}').get_json()
+
+        self.assertEqual(open_gate, {'allowed': True})
+        self.assertFalse(locked_gate['allowed'])
+        self.assertEqual(locked_gate['redirect_lesson_id'], first_id)
+
+        with app.test_client() as client:
+            self.login(client, 'gteacher@example.com', 'TeacherPass123!')
+            teacher_payload = client.get(f'/api/student/lesson-access/{second_id}').get_json()
+
+        self.assertEqual(teacher_payload, {'allowed': True})
+
     def test_teacher_detail_contract_matches_frontend_assumptions(self):
         app = self.create_app()
         ids = self.seed_fixture(app)

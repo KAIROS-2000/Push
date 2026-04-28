@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { AUTH_ROUTE_PREFIXES, pathMatches } from '@/lib/auth-routes'
-import { INTERNAL_API_URL } from '@/lib/server-env'
+import { getInternalApiBaseUrl } from '@/lib/internal-api-base'
 
 function buildContentSecurityPolicy() {
 	const nonce = crypto.randomUUID().replace(/-/g, '')
@@ -147,13 +147,66 @@ function accessRoleFromRequest(request: NextRequest) {
 	}
 }
 
+type LessonAccessPayload = {
+	allowed?: boolean
+	redirect_lesson_id?: number | null
+}
+
+async function studentLessonGateResponse(
+	request: NextRequest,
+	role: UserRole | null,
+	csp: string,
+	refreshUpstream: Response | null,
+): Promise<NextResponse | null> {
+	if (role !== 'student') {
+		return null
+	}
+	const match = request.nextUrl.pathname.match(/^\/lessons\/(\d+)\/?$/)
+	if (!match) {
+		return null
+	}
+	const lessonId = match[1]
+	try {
+		const accessResponse = await fetch(
+			`${getInternalApiBaseUrl()}/student/lesson-access/${encodeURIComponent(lessonId)}`,
+			{
+				method: 'GET',
+				headers: {
+					accept: 'application/json',
+					cookie: authCookieHeader(request),
+				},
+				cache: 'no-store',
+			},
+		)
+		if (!accessResponse.ok) {
+			return null
+		}
+		const data = (await accessResponse.json()) as LessonAccessPayload
+		if (data.allowed !== false) {
+			return null
+		}
+		const targetId = data.redirect_lesson_id
+		const dest =
+			targetId != null && String(targetId) !== lessonId
+				? new URL(`/lessons/${targetId}`, request.url)
+				: new URL('/roadmap', request.url)
+		let redirect = NextResponse.redirect(dest)
+		if (refreshUpstream) {
+			redirect = applyUpstreamAuthCookies(redirect, refreshUpstream)
+		}
+		return withCsp(redirect, csp)
+	} catch {
+		return null
+	}
+}
+
 async function refreshSession(request: NextRequest) {
 	const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value
 	if (!refreshToken) return null
 
 	try {
 		const csrf = request.cookies.get(CSRF_COOKIE)?.value?.trim()
-		const response = await fetch(`${INTERNAL_API_URL}/auth/refresh`, {
+		const response = await fetch(`${getInternalApiBaseUrl()}/auth/refresh`, {
 			method: 'POST',
 			headers: {
 				accept: 'application/json',
@@ -200,6 +253,10 @@ export async function proxy(request: NextRequest) {
 		if (roleRule && !roleRule.roles.includes(currentRole)) {
 			return redirectWithCsp(dashboardUrl(request))
 		}
+		const lessonGate = await studentLessonGateResponse(request, currentRole, csp, null)
+		if (lessonGate) {
+			return lessonGate
+		}
 		return nextWithCsp()
 	}
 
@@ -212,10 +269,22 @@ export async function proxy(request: NextRequest) {
 			)
 		}
 
-		const response =
-			roleRule && !roleRule.roles.includes(refreshedSession.role)
-				? NextResponse.redirect(dashboardUrl(request))
-				: NextResponse.next({ request: { headers: requestHeaders } })
+		if (roleRule && !roleRule.roles.includes(refreshedSession.role)) {
+			return withCsp(
+				applyUpstreamAuthCookies(NextResponse.redirect(dashboardUrl(request)), refreshedSession.response),
+				csp,
+			)
+		}
+		const refreshedLessonGate = await studentLessonGateResponse(
+			request,
+			refreshedSession.role,
+			csp,
+			refreshedSession.response,
+		)
+		if (refreshedLessonGate) {
+			return refreshedLessonGate
+		}
+		const response = NextResponse.next({ request: { headers: requestHeaders } })
 		return withCsp(applyUpstreamAuthCookies(response, refreshedSession.response), csp)
 	}
 

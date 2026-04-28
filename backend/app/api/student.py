@@ -375,6 +375,34 @@ def _effective_lesson_state_for_student(student: User, lesson: Lesson) -> str:
     return state
 
 
+def _continue_lesson_for_student(student: User) -> Lesson | None:
+    modules = (
+        Module.query.filter_by(
+            is_published=True, age_group=student.age_group or "middle"
+        )
+        .order_by(Module.order_index.asc())
+        .all()
+    )
+    for module in modules:
+        for idx, lesson in enumerate(module.lessons):
+            if not _user_can_access_lesson(student, lesson):
+                continue
+            if (
+                _effective_lesson_state_for_student(student, lesson)
+                == STATE_MAP["current"]
+            ):
+                return lesson
+    return None
+
+
+def _continue_lesson_summary_for_student(student: User) -> dict | None:
+    lesson = _continue_lesson_for_student(student)
+    if lesson is None:
+        return None
+    module = lesson.module
+    return {"module_title": module.title, **lesson.to_summary_dict()}
+
+
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
 
@@ -474,25 +502,28 @@ def dashboard(current_user: User):
         else []
     )
 
-    continue_lesson = None
-    modules = (
-        Module.query.filter_by(
-            is_published=True, age_group=current_user.age_group or "middle"
+    if current_user.role == UserRole.STUDENT:
+        continue_lesson = _continue_lesson_summary_for_student(current_user)
+    else:
+        continue_lesson = None
+        modules = (
+            Module.query.filter_by(
+                is_published=True, age_group=current_user.age_group or "middle"
+            )
+            .order_by(Module.order_index.asc())
+            .all()
         )
-        .order_by(Module.order_index.asc())
-        .all()
-    )
-    for module in modules:
-        for idx, lesson in enumerate(module.lessons):
-            state = _lesson_state_for_user(current_user, module, lesson, idx)
-            if state == "current":
-                continue_lesson = {
-                    "module_title": module.title,
-                    **lesson.to_summary_dict(),
-                }
+        for module in modules:
+            for idx, lesson in enumerate(module.lessons):
+                state = _lesson_state_for_user(current_user, module, lesson, idx)
+                if state == "current":
+                    continue_lesson = {
+                        "module_title": module.title,
+                        **lesson.to_summary_dict(),
+                    }
+                    break
+            if continue_lesson:
                 break
-        if continue_lesson:
-            break
 
     active_parent_code = None
     if current_user.role == UserRole.STUDENT:
@@ -605,6 +636,32 @@ def module_lessons(current_user: User, module_id: int):
             }
         )
     return {"module": module.to_dict(), "lessons": lessons}
+
+
+@student_bp.get("/student/lesson-access/<int:lesson_id>")
+@auth_required()
+def student_lesson_access(current_user: User, lesson_id: int):
+    if current_user.role != UserRole.STUDENT:
+        return {"allowed": True}
+    lesson = db.session.get(Lesson, lesson_id)
+    if lesson is None:
+        return {"allowed": True}
+    if not _user_can_access_lesson(current_user, lesson):
+        target = _continue_lesson_for_student(current_user)
+        return {
+            "allowed": False,
+            "redirect_lesson_id": target.id if target else None,
+        }
+    if (
+        _effective_lesson_state_for_student(current_user, lesson)
+        == STATE_MAP["locked"]
+    ):
+        target = _continue_lesson_for_student(current_user)
+        return {
+            "allowed": False,
+            "redirect_lesson_id": target.id if target else None,
+        }
+    return {"allowed": True}
 
 
 @student_bp.get("/lessons/<int:lesson_id>")

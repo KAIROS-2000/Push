@@ -5764,16 +5764,24 @@ html[data-theme='dark'] .home-code-panel {
 	}
 
 	.admin-area__sidebar {
-		display: block;
+		display: flex;
+		flex-direction: column;
 		max-height: calc(100vh - 7rem);
+		min-height: 0;
 		overflow: hidden;
 	}
 
 	.admin-area__sidebar-shell {
-		height: 100%;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+
+	.admin-area__sidebar-shell > div:first-of-type {
+		flex-shrink: 0;
 	}
 
 	.admin-area__sidebar-nav {
+		flex: 1 1 auto;
 		min-height: 0;
 		overflow-y: auto;
 		padding-right: 0.35rem;
