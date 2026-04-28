@@ -488,6 +488,23 @@ export interface TeacherJoinRequestsResponse {
   requests: ClassJoinRequestItem[]
 }
 
+export interface TeacherPracticeHeatmapRow {
+  assignment_id: number
+  title: string
+  failed: number
+  reviewed: number
+  failure_rate: number | null
+}
+
+export interface TeacherPracticeHeatmap {
+  summary: {
+    failed: number
+    reviewed: number
+    failure_rate: number | null
+  }
+  assignments: TeacherPracticeHeatmapRow[]
+}
+
 export interface TeacherClassDetail {
   classroom: ClassroomItem
   students: Array<{
@@ -500,6 +517,8 @@ export interface TeacherClassDetail {
     average_score: number
   }>
   assignments: AssignmentItem[]
+  /** Present when API returns aggregated practice stats for the class */
+  practice_heatmap?: TeacherPracticeHeatmap
 }
 
 export type MessagingRole = 'student' | 'teacher' | 'parent'

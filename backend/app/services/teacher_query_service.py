@@ -7,10 +7,18 @@ from werkzeug.exceptions import NotFound
 
 from ..core.db import db
 from ..core.gamification import level_from_xp
-from ..models.learning import Assignment, AssignmentSubmission, ClassMembership, Classroom, UserProgress
+from ..models.learning import (
+    Assignment,
+    AssignmentSubmission,
+    ClassMembership,
+    Classroom,
+    UserProgress,
+    decode_assignment_description,
+)
 from ..models.user import User
 
 REVIEWED_SUBMISSION_STATUSES = {'checked', 'needs_revision'}
+_TEACHER_REVIEWED_STATUSES_SQL = ('checked', 'needs_revision')
 
 
 @dataclass(frozen=True)
@@ -69,6 +77,72 @@ class TeacherQueryService:
                 checked_count=int(checked_count or 0),
             )
             for assignment_id, submissions_count, checked_count in rows
+        }
+
+    def _practice_review_heatmap(self, assignments: list[Assignment]) -> dict:
+        """lesson_practice only: failures = needs_revision; denominator = checked + needs_revision."""
+        practice_assignments: list[Assignment] = []
+        for assignment in assignments:
+            meta, _ = decode_assignment_description(assignment.description)
+            if meta.get('assignment_type') != 'lesson_practice':
+                continue
+            practice_assignments.append(assignment)
+
+        if not practice_assignments:
+            return {
+                'summary': {'failed': 0, 'reviewed': 0, 'failure_rate': None},
+                'assignments': [],
+            }
+
+        practice_ids = [a.id for a in practice_assignments]
+
+        aggregated = (
+            self.session.query(
+                AssignmentSubmission.assignment_id,
+                func.sum(case((AssignmentSubmission.status == 'needs_revision', 1), else_=0)).label(
+                    'failed'
+                ),
+                func.sum(
+                    case(
+                        (AssignmentSubmission.status.in_(_TEACHER_REVIEWED_STATUSES_SQL), 1),
+                        else_=0,
+                    )
+                ).label('reviewed'),
+            )
+            .filter(AssignmentSubmission.assignment_id.in_(practice_ids))
+            .group_by(AssignmentSubmission.assignment_id)
+            .all()
+        )
+        agg_map = {
+            aid: (int(failed or 0), int(reviewed or 0)) for aid, failed, reviewed in aggregated
+        }
+
+        failed_total = 0
+        reviewed_total = 0
+        items: list[dict] = []
+        for assignment in practice_assignments:
+            failed, reviewed = agg_map.get(assignment.id, (0, 0))
+            failed_total += failed
+            reviewed_total += reviewed
+            rate = round(100.0 * failed / reviewed, 1) if reviewed else None
+            items.append(
+                {
+                    'assignment_id': assignment.id,
+                    'title': assignment.title,
+                    'failed': failed,
+                    'reviewed': reviewed,
+                    'failure_rate': rate,
+                }
+            )
+
+        summary_rate = round(100.0 * failed_total / reviewed_total, 1) if reviewed_total else None
+        return {
+            'summary': {
+                'failed': failed_total,
+                'reviewed': reviewed_total,
+                'failure_rate': summary_rate,
+            },
+            'assignments': items,
         }
 
     def _assignment_payload(self, assignment: Assignment, stats: AssignmentStats | None = None) -> dict:
@@ -191,6 +265,7 @@ class TeacherQueryService:
                 self._assignment_payload(assignment, assignment_stats.get(assignment.id))
                 for assignment in assignments
             ],
+            'practice_heatmap': self._practice_review_heatmap(assignments),
         }
 
     def class_assignments_payload(self, teacher: User, classroom_id: int) -> dict:
