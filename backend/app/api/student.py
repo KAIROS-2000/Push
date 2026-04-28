@@ -1104,8 +1104,15 @@ def update_profile(current_user: User):
     data = request.get_json() or {}
     if "full_name" in data and data["full_name"]:
         current_user.full_name = data["full_name"]
-    if "theme" in data and data["theme"] in {"light", "dark"}:
-        current_user.theme = data["theme"]
+    if "theme" in data:
+        from ..models.cosmetics import CATALOG_BY_KEY, UserOwnedCosmetic as _UOC
+        theme_key = str(data["theme"]).strip()
+        theme_item = CATALOG_BY_KEY.get(theme_key)
+        if theme_item and theme_item["type"] == "theme":
+            if theme_item["price"] == 0 or db.session.query(_UOC).filter_by(
+                user_id=current_user.id, item_key=theme_key
+            ).first():
+                current_user.theme = theme_key
     if "password" in data:
         password = data.get("password") or ""
         if password:

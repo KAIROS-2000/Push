@@ -5,11 +5,13 @@ import { api, getApiErrorMessage } from '@/lib/api'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { RolePill } from '@/components/role-pill'
+import { CosmeticsShop } from '@/components/cosmetics-shop'
+import { UserAvatar } from '@/components/user-avatar'
 import { setAnonymousSession, setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
 import { formatRuPhoneForDisplay } from '@/lib/phone'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
-import { UserItem } from '@/types'
+import { AppTheme, UserItem } from '@/types'
 
 interface AchievementItem {
   id: number
@@ -19,28 +21,41 @@ interface AchievementItem {
   earned: boolean
 }
 
-const THEME_OPTIONS: Array<{ value: UserItem['theme']; label: string }> = [
-  { value: 'light', label: 'Светлая' },
-  { value: 'dark', label: 'Темная' },
+const THEME_OPTIONS: Array<{ value: AppTheme; label: string }> = [
+  { value: 'light', label: 'Классическая' },
+  { value: 'dark', label: 'Тёмная' },
+  { value: 'sky', label: 'Небесная' },
+  { value: 'forest', label: 'Лесная' },
+  { value: 'sunset', label: 'Закат' },
+  { value: 'lavender', label: 'Лавандовая' },
+  { value: 'sakura', label: 'Сакура' },
+  { value: 'mint', label: 'Мятная' },
 ]
+
+const THEME_LABEL: Record<AppTheme, string> = Object.fromEntries(
+  THEME_OPTIONS.map((o) => [o.value, o.label])
+) as Record<AppTheme, string>
 
 export function ProfileView() {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [profile, setProfile] = useState<UserItem | null>(null)
   const [achievements, setAchievements] = useState<AchievementItem[]>([])
+  const [ownedThemes, setOwnedThemes] = useState<Set<string>>(new Set(['light', 'dark']))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [error, setError] = useState('')
+  const [shopOpen, setShopOpen] = useState(false)
   const [form, setForm] = useState({
     full_name: '',
-    theme: 'light' as UserItem['theme'],
+    theme: 'light' as AppTheme,
   })
 
   async function load() {
-    const [profileResponse, achievementsResponse] = await Promise.all([
+    const [profileResponse, achievementsResponse, cosmeticsResponse] = await Promise.all([
       fetchSessionUser({ auth: 'required' }).then((user) => ({ user })),
       api<{ achievements: AchievementItem[] }>('/achievements', undefined, true),
+      api<{ items: Array<{ key: string; type: string; owned: boolean }> }>('/cosmetics', undefined, true).catch(() => ({ items: [] })),
     ])
 
     if (!profileResponse.user) {
@@ -50,10 +65,16 @@ export function ProfileView() {
     setProfile(profileResponse.user)
     setForm({
       full_name: profileResponse.user.full_name,
-      theme: profileResponse.user.theme,
+      theme: profileResponse.user.theme as AppTheme,
     })
-    setTheme(profileResponse.user.theme)
+    setTheme(profileResponse.user.theme as AppTheme)
     setAchievements(achievementsResponse.achievements)
+
+    const owned = new Set<string>(['light', 'dark'])
+    for (const item of cosmeticsResponse.items) {
+      if (item.type === 'theme' && item.owned) owned.add(item.key)
+    }
+    setOwnedThemes(owned)
   }
 
   useEffect(() => {
@@ -88,9 +109,9 @@ export function ProfileView() {
       setAuthenticatedSession(result.user)
       setForm({
         full_name: result.user.full_name,
-        theme: result.user.theme,
+        theme: result.user.theme as AppTheme,
       })
-      setTheme(result.user.theme)
+      setTheme(result.user.theme as AppTheme)
       showSuccessToast('Изменения профиля сохранены.')
     } catch (e) {
       showErrorToast(getApiErrorMessage(e, 'Не удалось сохранить профиль.'))
@@ -121,13 +142,40 @@ export function ProfileView() {
 
   const phoneDisplay = formatRuPhoneForDisplay(profile.phone)
 
+  function handleShopUserUpdate(updatedUser: UserItem, newOwnedThemeKey?: string) {
+    setProfile(updatedUser)
+    setAuthenticatedSession(updatedUser)
+    setForm((f) => ({ ...f, theme: updatedUser.theme as AppTheme }))
+    if (newOwnedThemeKey) {
+      setOwnedThemes((prev) => new Set([...prev, newOwnedThemeKey]))
+    }
+  }
+
   return (
     <div ref={rootRef} className="space-y-6">
+      {shopOpen && (
+        <CosmeticsShop
+          user={profile}
+          onClose={() => setShopOpen(false)}
+          onUserUpdate={(u, themeKey) => handleShopUserUpdate(u, themeKey)}
+        />
+      )}
       <section className="profile-identity codequest-card p-5 sm:p-8" data-motion-reveal>
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <div data-motion-hero-copy>
-            <RolePill role={profile.role} />
-            <h1 className="mt-4 text-4xl font-black leading-tight text-slate-900 sm:text-5xl">
+            <div className="flex items-center gap-4 mb-4">
+              <UserAvatar avatarId={profile.avatar_id} frameId={profile.frame_id} size={72} />
+              <div className="flex flex-col gap-2">
+                <RolePill role={profile.role} />
+                <button
+                  className="shop-open-btn"
+                  onClick={() => setShopOpen(true)}
+                >
+                  ✦ Украшения профиля
+                </button>
+              </div>
+            </div>
+            <h1 className="text-4xl font-black leading-tight text-slate-900 sm:text-5xl">
               {profile.full_name}
             </h1>
             <p className="mt-3 break-words text-base leading-7 text-slate-600 sm:text-lg">
@@ -152,7 +200,7 @@ export function ProfileView() {
               ['Текущий ранг', profile.rank_title],
               ['Всего XP', String(profile.xp)],
               ['Получено достижений', String(earnedStats.earnedCount)],
-              ['Тема кабинета', form.theme === 'light' ? 'Светлая' : 'Темная'],
+              ['Тема кабинета', THEME_LABEL[form.theme] ?? form.theme],
             ].map(([label, value]) => (
               <div key={label} className="rounded-[24px] bg-slate-50 p-4" data-motion-item data-motion-hover>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{label}</p>
@@ -183,7 +231,7 @@ export function ProfileView() {
                 value={form.theme}
                 onChange={(e) => setForm({ ...form, theme: e.target.value as UserItem['theme'] })}
               >
-                {THEME_OPTIONS.map((option) => (
+                {THEME_OPTIONS.filter((o) => ownedThemes.has(o.value)).map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -215,7 +263,7 @@ export function ProfileView() {
           <p className="mt-3 text-sm leading-7 text-slate-500">
             Получено: {earnedStats.earnedCount} · XP: +{earnedStats.earnedXp}
           </p>
-          <div className="mt-5 space-y-3">
+          <div className="mt-5 space-y-3 overflow-y-auto max-h-72 pr-1">
             {achievements.map((item) => (
               <div
                 key={item.id}

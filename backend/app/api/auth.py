@@ -42,7 +42,6 @@ from ..models.user import (
     RefreshToken,
     User,
     UserRole,
-    USERNAME_MIN_LENGTH,
     USERNAME_MAX_LENGTH,
 )
 from ..services.teacher_approval_service import cleanup_expired_teacher_requests
@@ -98,10 +97,6 @@ def register():
         register_register_failure(email, ip)
         db.session.commit()
         return {'message': phone_validation_message()}, 400
-    if len(username) < USERNAME_MIN_LENGTH:
-        register_register_failure(email, ip)
-        db.session.commit()
-        return {'message': f'Логин должен содержать не менее {USERNAME_MIN_LENGTH} символов.'}, 400
     if len(username) > USERNAME_MAX_LENGTH:
         register_register_failure(email, ip)
         db.session.commit()

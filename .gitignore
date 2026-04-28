@@ -17,9 +17,6 @@ frontend/dist/
 frontend/coverage/
 *.tsbuildinfo
 
-# --- Backend audit JSON exports ---
-backend/logs/
-
 # --- Python ---
 __pycache__/
 *.py[cod]

@@ -56,9 +56,9 @@ def summary_for_parent(user: User) -> dict:
     )
     rows = []
     for t in threads:
-        child = db.session.get(User, t.child_user_id)
-        teacher = db.session.get(User, t.teacher_id)
-        classroom = db.session.get(Classroom, t.classroom_id)
+        child = User.query.get(t.child_user_id)
+        teacher = User.query.get(t.teacher_id)
+        classroom = Classroom.query.get(t.classroom_id)
         latest = (
             ParentTeacherMessage.query.filter_by(thread_id=t.id)
             .order_by(ParentTeacherMessage.id.desc())
@@ -79,92 +79,7 @@ def summary_for_parent(user: User) -> dict:
                 "unread_count": unread,
             }
         )
-
-    # One row per (parent, child, class): so parents always see teachers of linked children, even
-    # before the first message (thread is created on demand via open_thread).
-    classroom_contacts: list[dict] = []
-    seen_pairs: set[tuple[int, int]] = set()
-    links = (
-        ParentChildLink.query.filter_by(parent_user_id=user.id, active=True)
-        .filter(ParentChildLink.revoked_at.is_(None))
-        .all()
-    )
-    for link in links:
-        child = db.session.get(User, link.child_user_id)
-        child_name = child.full_name if child else None
-        memberships = ClassMembership.query.filter_by(student_id=link.child_user_id).all()
-        for m in memberships:
-            classroom = db.session.get(Classroom, m.classroom_id)
-            if not classroom:
-                continue
-            key = (link.child_user_id, classroom.id)
-            if key in seen_pairs:
-                continue
-            seen_pairs.add(key)
-            teacher = db.session.get(User, classroom.teacher_id)
-            th = ParentTeacherThread.query.filter_by(
-                parent_user_id=user.id,
-                child_user_id=link.child_user_id,
-                classroom_id=classroom.id,
-            ).first()
-            thread_id = th.id if th else None
-            latest = None
-            unread = 0
-            updated: str | None = None
-            preview: str | None = None
-            if th:
-                latest = (
-                    ParentTeacherMessage.query.filter_by(thread_id=th.id)
-                    .order_by(ParentTeacherMessage.id.desc())
-                    .first()
-                )
-                unread = _unread_for(th, user.id)
-                updated = _iso(th.updated_at)
-                preview = (latest.body or "")[:120] if latest else None
-            classroom_contacts.append(
-                {
-                    "thread_id": thread_id,
-                    "child": {"id": link.child_user_id, "full_name": child_name},
-                    "teacher": {
-                        "id": classroom.teacher_id,
-                        "full_name": teacher.full_name if teacher else None,
-                    },
-                    "classroom": {"id": classroom.id, "name": classroom.name},
-                    "updated_at": updated,
-                    "latest_preview": preview,
-                    "unread_count": unread,
-                    "can_message": _parent_can_message(user.id, link.child_user_id),
-                }
-            )
-
-    def _contact_sort_key(c: dict) -> tuple:
-        u = c.get("updated_at") or ""
-        return (u, c["classroom"]["id"], c["child"]["id"])
-
-    classroom_contacts.sort(key=_contact_sort_key, reverse=True)
-    return {"threads": rows, "classroom_contacts": classroom_contacts}
-
-
-def _user_sender_fields(user: User | None) -> dict:
-    if user is None:
-        return {"sender_name": None, "sender_role": None}
-    return {
-        "sender_name": user.full_name,
-        "sender_role": user.role.value,
-    }
-
-
-def _parent_message_api_row(message: ParentTeacherMessage) -> dict:
-    sender = db.session.get(User, message.sender_id)
-    row = {
-        "id": message.id,
-        "thread_id": message.thread_id,
-        "sender_id": message.sender_id,
-        "body": message.body,
-        "created_at": _iso(message.created_at),
-    }
-    row.update(_user_sender_fields(sender))
-    return row
+    return {"threads": rows}
 
 
 def _unread_for(thread: ParentTeacherThread, user_id: int) -> int:
@@ -205,7 +120,15 @@ def list_messages_parent(user: User, thread_id: int) -> dict | tuple:
     )
     return {
         "thread": _thread_metadata(thread),
-        "messages": [_parent_message_api_row(m) for m in messages],
+        "messages": [
+            {
+                "id": m.id,
+                "sender_id": m.sender_id,
+                "body": m.body,
+                "created_at": _iso(m.created_at),
+            }
+            for m in messages
+        ],
     }
 
 
@@ -228,9 +151,13 @@ def send_message_parent(user: User, thread_id: int) -> dict | tuple:
     thread.updated_at = datetime.now(UTC)
     db.session.add(m)
     db.session.commit()
-    row = _parent_message_api_row(m)
     return {
-        "message": {k: v for k, v in row.items() if k != "thread_id"},
+        "message": {
+            "id": m.id,
+            "sender_id": m.sender_id,
+            "body": m.body,
+            "created_at": _iso(m.created_at),
+        }
     }, 201
 
 
@@ -269,8 +196,6 @@ def open_thread(user: User) -> dict | tuple:
     )
     if not link:
         return {"message": "Нет привязки к этому ребёнку."}, 403
-    if not _parent_can_message(user.id, child_id):
-        return {"message": "Связь с педагогом отключена в настройках согласия."}, 403
     if not ClassMembership.query.filter_by(classroom_id=classroom_id, student_id=child_id).first():
         return {"message": "Ребёнок не в этом классе."}, 403
     classroom = Classroom.query.get(classroom_id)
@@ -341,7 +266,15 @@ def list_messages_teacher(user: User, thread_id: int) -> dict | tuple:
     )
     return {
         "thread": _thread_metadata(thread),
-        "messages": [_parent_message_api_row(m) for m in messages],
+        "messages": [
+            {
+                "id": m.id,
+                "sender_id": m.sender_id,
+                "body": m.body,
+                "created_at": _iso(m.created_at),
+            }
+            for m in messages
+        ],
     }
 
 
@@ -362,9 +295,13 @@ def send_message_teacher(user: User, thread_id: int) -> dict | tuple:
     thread.updated_at = datetime.now(UTC)
     db.session.add(m)
     db.session.commit()
-    row = _parent_message_api_row(m)
     return {
-        "message": {k: v for k, v in row.items() if k != "thread_id"},
+        "message": {
+            "id": m.id,
+            "sender_id": m.sender_id,
+            "body": m.body,
+            "created_at": _iso(m.created_at),
+        }
     }, 201
 
 

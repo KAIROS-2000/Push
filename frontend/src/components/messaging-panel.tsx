@@ -89,43 +89,6 @@ function normalizeMessages(payload: MessagingConversationDetailResponse): Messag
 	return []
 }
 
-function isParentThreadTarget(target: MessagingChatTarget): target is MessagingChatTarget & {
-	kind: 'parent_thread'
-	parentThreadId: number
-} {
-	return target.kind === 'parent_thread' && typeof target.parentThreadId === 'number'
-}
-
-function formatMessageSenderLine(message: MessagingMessage, own: boolean): string {
-	if (own) return 'Вы'
-	const name = message.sender_name?.trim()
-	const r = String(message.sender_role || '').toLowerCase()
-	const roleLabel =
-		r === 'teacher'
-			? 'Учитель'
-			: r === 'student'
-				? 'Ученик'
-				: r === 'parent'
-					? 'Родитель'
-					: ''
-	if (name && roleLabel) return `${name} · ${roleLabel}`
-	if (roleLabel) return roleLabel
-	if (name) return name
-	return 'Собеседник'
-}
-
-interface ParentThreadMessagesResponse {
-	thread?: {
-		classroom?: { id?: number; name?: string | null }
-		child?: { id?: number; name?: string | null }
-	}
-	messages: Array<
-		MessagingMessage & {
-			thread_id?: number
-		}
-	>
-}
-
 function isOwnMessage(
 	message: MessagingMessage,
 	role: 'student' | 'teacher',
@@ -155,61 +118,16 @@ export function MessagingPanel({
 	const mountedRef = useRef(true)
 	const draftRef = useRef<HTMLTextAreaElement | null>(null)
 
-	const isParentThread = isParentThreadTarget(target)
-
-	const title = useMemo(() => {
-		if (isParentThread) {
-			const p = target.parentName?.trim() || 'Родитель'
-			const c = target.studentName?.trim() || 'Ребёнок'
-			return `${p} — ${c}`
-		}
-		return role === 'teacher' ? target.studentName || 'Ученик' : target.teacherName || 'Учитель'
-	}, [isParentThread, role, target.parentName, target.studentName, target.teacherName])
-
-	const subtitle = useMemo(() => {
-		if (isParentThread) {
-			return `${target.classroomName} · чат с родителем`
-		}
-		return `${target.classroomName} · ${role === 'teacher' ? 'чат с учеником' : 'чат с учителем'}`
-	}, [isParentThread, role, target.classroomName])
-
+	const title = role === 'teacher' ? target.studentName || 'Ученик' : target.teacherName || 'Учитель'
+	const subtitle = `${target.classroomName} · ${role === 'teacher' ? 'чат с учеником' : 'чат с учителем'}`
 	const lastMessageId = useMemo(() => messages.at(-1)?.id ?? null, [messages])
-	const activeChannelId = conversation.conversation_id
-	const canUseComposer = !loading && !sending && Boolean(activeChannelId)
+	const canUseComposer = !loading && !sending && Boolean(conversation.conversation_id)
 	const canSend = canUseComposer && Boolean(draft.trim())
 
 	const loadConversation = useCallback(async () => {
 		setLoading(true)
 		setError('')
 		try {
-			if (isParentThreadTarget(target)) {
-				const tid = target.parentThreadId
-				const detail = await api<ParentThreadMessagesResponse>(
-					`/teacher/parent-threads/${tid}/messages`,
-					undefined,
-					'required',
-				)
-				if (!mountedRef.current) return
-				const thread = detail.thread
-				const classroomName =
-					thread?.classroom?.name?.trim() || target.classroomName
-				const studentName = thread?.child?.name?.trim() || target.studentName || 'Ребёнок'
-				setConversation({
-					conversation_id: tid,
-					classroom_id: thread?.classroom?.id ?? target.classroomId,
-					classroom_name: classroomName,
-					teacher_id: target.teacherId ?? null,
-					teacher_name: target.teacherName ?? 'Учитель',
-					student_id: thread?.child?.id ?? target.studentId ?? null,
-					student_name: studentName,
-					latest_message_at: null,
-					latest_message_preview: null,
-					unread_count: 0,
-				})
-				setMessages(Array.isArray(detail.messages) ? detail.messages : [])
-				return
-			}
-
 			const createBody: Record<string, number> = {
 				classroom_id: target.classroomId,
 			}
@@ -253,37 +171,29 @@ export function MessagingPanel({
 	}, [role, target])
 
 	const markRead = useCallback(
-		async (channelId: number, messageId: number | null) => {
+		async (conversationId: number, messageId: number | null) => {
 			try {
-				if (isParentThreadTarget(target)) {
-					await api(
-						`/teacher/parent-threads/${channelId}/read`,
-						{ method: 'POST', body: '{}' },
-						'required',
-					)
-				} else {
-					await api(
-						`/messaging/conversations/${channelId}/read`,
-						{
-							method: 'POST',
-							body: JSON.stringify(
-								messageId ? { last_message_id: messageId } : {},
-							),
-						},
-						'required',
-					)
-				}
+				await api(
+					`/messaging/conversations/${conversationId}/read`,
+					{
+						method: 'POST',
+						body: JSON.stringify(
+							messageId ? { last_message_id: messageId } : {},
+						),
+					},
+					'required',
+				)
 				setConversation(current =>
-					current.conversation_id === channelId
+					current.conversation_id === conversationId
 						? { ...current, unread_count: 0 }
 						: current,
 				)
-				onConversationRead?.(channelId)
+				onConversationRead?.(conversationId)
 			} catch {
 				// Keep the thread usable if read-state update races with polling.
 			}
 		},
-		[onConversationRead, target],
+		[onConversationRead],
 	)
 
 	useEffect(() => {
@@ -306,31 +216,14 @@ export function MessagingPanel({
 		setSending(true)
 		setError('')
 		try {
-			const cid = conversation.conversation_id
-			if (isParentThreadTarget(target)) {
-				await api(`/teacher/parent-threads/${cid}/messages`, {
-					method: 'POST',
-					body: JSON.stringify({ body }),
-				}, 'required')
-				setDraft('')
-				const detail = await api<ParentThreadMessagesResponse>(
-					`/teacher/parent-threads/${cid}/messages`,
-					undefined,
-					'required',
-				)
-				setMessages(Array.isArray(detail.messages) ? detail.messages : [])
-				showSuccessToast('Сообщение отправлено.')
-				return
-			}
-
 			await api(
-				`/messaging/conversations/${cid}/messages`,
+				`/messaging/conversations/${conversation.conversation_id}/messages`,
 				{ method: 'POST', body: JSON.stringify({ body }) },
 				'required',
 			)
 			setDraft('')
 			const detail = await api<MessagingConversationDetailResponse>(
-				`/messaging/conversations/${cid}/messages?limit=80`,
+				`/messaging/conversations/${conversation.conversation_id}/messages?limit=80`,
 				undefined,
 				'required',
 			)
@@ -430,7 +323,7 @@ export function MessagingPanel({
 											{message.body}
 										</p>
 										<div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.12em] opacity-70'>
-											<span>{formatMessageSenderLine(message, own)}</span>
+											<span>{own ? 'Вы' : message.sender_name || (role === 'teacher' ? 'Ученик' : 'Учитель')}</span>
 											<span>
 												<UserLocalTime iso={message.created_at} variant="chat" emptyLabel="" />
 											</span>

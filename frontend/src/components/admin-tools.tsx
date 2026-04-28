@@ -7,12 +7,10 @@ import { UserLocalTime } from '@/components/user-local-time'
 
 import { AdminLessonBuilder } from '@/components/admin-lesson-builder'
 import { api } from '@/lib/api'
-import { PUBLIC_API_URL } from '@/lib/public-env'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import type {
   AdminAdminDirectoryResponse,
   AdminAuditLogItem,
-  AdminAuditLogArchivesResponse,
   AdminAuditLogResponse,
   AdminOverviewData,
   AdminTeacherRequestsResponse,
@@ -20,8 +18,6 @@ import type {
   AdminUserListItem,
   ModuleItem,
   PaginationMeta,
-  SiteActivityLogItem,
-  SiteActivityLogResponse,
   TeacherApprovalStatus,
 } from '@/types'
 
@@ -65,46 +61,6 @@ const AUDIT_ACTION_OPTIONS = [
 const AUDIT_ACTION_LABELS = Object.fromEntries(
   AUDIT_ACTION_OPTIONS.map((item) => [item.value, item.label]),
 ) as Record<string, string>
-
-const ORDER_OPTIONS = [
-  { value: 'desc', label: 'По убыванию' },
-  { value: 'asc', label: 'По возрастанию' },
-] as const
-
-const AUDIT_SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: 'created_at', label: 'По дате' },
-  { value: 'action', label: 'По действию' },
-  { value: 'username', label: 'По логину исполнителя' },
-]
-
-const SITE_SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: 'created_at', label: 'По дате' },
-  { value: 'method', label: 'По методу' },
-  { value: 'path', label: 'По пути' },
-  { value: 'status_code', label: 'По коду ответа' },
-  { value: 'username', label: 'По логину' },
-  { value: 'role', label: 'По роли' },
-  { value: 'client_ip', label: 'По IP' },
-]
-
-const SITE_METHOD_OPTIONS = [
-  { value: 'ALL', label: 'Все методы' },
-  { value: 'GET', label: 'GET' },
-  { value: 'POST', label: 'POST' },
-  { value: 'PUT', label: 'PUT' },
-  { value: 'PATCH', label: 'PATCH' },
-  { value: 'DELETE', label: 'DELETE' },
-] as const
-
-const SITE_ROLE_FILTER_OPTIONS = [
-  { value: 'all', label: 'Все роли' },
-  { value: 'anonymous', label: 'Без сессии' },
-  { value: 'student', label: 'student' },
-  { value: 'teacher', label: 'teacher' },
-  { value: 'parent', label: 'parent' },
-  { value: 'admin', label: 'admin' },
-  { value: 'superadmin', label: 'superadmin' },
-] as const
 
 
 function buildQuery(params: Record<string, string | number | undefined>) {
@@ -1343,100 +1299,38 @@ function renderAuditSummary(log: AdminAuditLogItem) {
   return `${actorLabel} · ${actionLabel} · ${targetLabel}`
 }
 
-function siteActivitySummary(log: SiteActivityLogItem) {
-  const who = log.user?.username
-    ? `@${log.user.username}`
-    : log.user_role === 'anonymous'
-      ? 'без сессии'
-      : log.user_role
-  return `${log.method} ${log.path} · ${who} · ${log.status_code}`
-}
-
 export function AdminAuditLogPanel({
   initialData,
 }: {
   initialData: AdminAuditLogResponse | null
 }) {
-  const [logTab, setLogTab] = useState<'admin' | 'site'>('admin')
   const [response, setResponse] = useState(initialData)
   const [action, setAction] = useState(initialData?.filters.action ?? 'all')
   const [actorRole, setActorRole] = useState(initialData?.filters.actor_role ?? 'all')
-  const [actorLogin, setActorLogin] = useState(initialData?.filters.actor_login ?? '')
   const [target, setTarget] = useState(initialData?.filters.target ?? '')
-  const [auditSort, setAuditSort] = useState(initialData?.filters.sort ?? 'created_at')
-  const [auditOrder, setAuditOrder] = useState(
-    (initialData?.filters.order === 'asc' || initialData?.filters.order === 'desc'
-      ? initialData.filters.order
-      : 'desc') as 'asc' | 'desc',
-  )
   const [page, setPage] = useState(initialData?.pagination.page ?? 1)
   const [loading, setLoading] = useState(!initialData)
-  const [archives, setArchives] = useState<AdminAuditLogArchivesResponse | null>(null)
-  const [archiveDate, setArchiveDate] = useState('')
-  const [archivesLoading, setArchivesLoading] = useState(true)
-  const [archiveDownloadBusy, setArchiveDownloadBusy] = useState(false)
   const skipInitialLoad = useRef(Boolean(initialData))
-
-  const [siteResponse, setSiteResponse] = useState<SiteActivityLogResponse | null>(null)
-  const [siteUser, setSiteUser] = useState('')
-  const [siteMethod, setSiteMethod] = useState('ALL')
-  const [sitePath, setSitePath] = useState('')
-  const [siteStatus, setSiteStatus] = useState('')
-  const [siteRole, setSiteRole] = useState('all')
-  const [siteIp, setSiteIp] = useState('')
-  const [siteSort, setSiteSort] = useState('created_at')
-  const [siteOrder, setSiteOrder] = useState<'asc' | 'desc'>('desc')
-  const [sitePage, setSitePage] = useState(1)
-  const [siteLoading, setSiteLoading] = useState(false)
-  const siteSkipDebounce = useRef(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void api<AdminAuditLogArchivesResponse>('/admin/audit-log-archives', undefined, 'required')
-      .then((data) => {
-        if (cancelled) return
-        setArchives(data)
-        setArchiveDate((prev) => (prev ? prev : data.dates[0] ?? ''))
-      })
-      .catch((error) => {
-        showErrorToast(describeError(error, 'Не удалось загрузить список архивов.'))
-      })
-      .finally(() => {
-        if (!cancelled) setArchivesLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   async function load(next?: {
     action?: string
     actorRole?: string
-    actorLogin?: string
     target?: string
     page?: number
-    sort?: string
-    order?: 'asc' | 'desc'
   }) {
     const nextAction = next?.action ?? action
     const nextActorRole = next?.actorRole ?? actorRole
-    const nextActorLogin = next?.actorLogin ?? actorLogin
     const nextTarget = next?.target ?? target
     const nextPage = next?.page ?? page
-    const nextSort = next?.sort ?? auditSort
-    const nextOrder = next?.order ?? auditOrder
     setLoading(true)
     try {
       const data = await api<AdminAuditLogResponse>(
         `/admin/audit-logs${buildQuery({
           action: nextAction,
           actor_role: nextActorRole,
-          actor_login: nextActorLogin,
           target: nextTarget,
           page: nextPage,
           page_size: DIRECTORY_PAGE_SIZE,
-          sort: nextSort,
-          order: nextOrder,
         })}`,
         undefined,
         'required',
@@ -1449,69 +1343,12 @@ export function AdminAuditLogPanel({
     }
   }
 
-  async function loadSite(next?: { page?: number }) {
-    const p = next?.page ?? sitePage
-    setSiteLoading(true)
-    try {
-      const data = await api<SiteActivityLogResponse>(
-        `/admin/site-activity-logs${buildQuery({
-          username: siteUser,
-          method: siteMethod,
-          path: sitePath,
-          status: siteStatus,
-          role: siteRole,
-          ip: siteIp,
-          page: p,
-          page_size: DIRECTORY_PAGE_SIZE,
-          sort: siteSort,
-          order: siteOrder,
-        })}`,
-        undefined,
-        'required',
-      )
-      setSiteResponse(data)
-    } catch (error) {
-      showErrorToast(describeError(error, 'Не удалось загрузить журнал API-запросов.'))
-    } finally {
-      setSiteLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (logTab !== 'site') return
-    if (siteSkipDebounce.current) {
-      siteSkipDebounce.current = false
-      void loadSite()
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void loadSite()
-    }, 280)
-    return () => window.clearTimeout(timer)
-  }, [
-    logTab,
-    siteUser,
-    siteMethod,
-    sitePath,
-    siteStatus,
-    siteRole,
-    siteIp,
-    siteSort,
-    siteOrder,
-    sitePage,
-  ])
-
   useEffect(() => {
     if (
       skipInitialLoad.current &&
       action === (initialData?.filters.action ?? 'all') &&
       actorRole === (initialData?.filters.actor_role ?? 'all') &&
       target === (initialData?.filters.target ?? '') &&
-      (initialData?.filters.actor_login ?? '') === actorLogin &&
-      (initialData?.filters.sort ?? 'created_at') === auditSort &&
-      (initialData?.filters.order === 'asc' || initialData?.filters.order === 'desc'
-        ? initialData.filters.order
-        : 'desc') === auditOrder &&
       page === (initialData?.pagination.page ?? 1)
     ) {
       skipInitialLoad.current = false
@@ -1519,469 +1356,134 @@ export function AdminAuditLogPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void load({ action, actorRole, actorLogin, target, page, sort: auditSort, order: auditOrder })
+      void load({ action, actorRole, target, page })
     }, 280)
 
     return () => window.clearTimeout(timer)
-  }, [action, actorRole, actorLogin, auditOrder, auditSort, initialData, page, target])
-
-  async function downloadAuditArchive() {
-    if (!archiveDate) return
-    setArchiveDownloadBusy(true)
-    try {
-      const r = await fetch(
-        `${PUBLIC_API_URL}/admin/audit-log-archives/${encodeURIComponent(archiveDate)}`,
-        { credentials: 'same-origin', cache: 'no-store' },
-      )
-      if (!r.ok) {
-        const text = await r.text()
-        let msg = 'Не удалось скачать архив.'
-        try {
-          const j = JSON.parse(text) as { message?: string }
-          if (j.message) msg = j.message
-        } catch {
-          /* ignore */
-        }
-        throw new Error(msg)
-      }
-      const blob = await r.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `admin_audit_${archiveDate}.json`
-      a.rel = 'noopener'
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (error) {
-      showErrorToast(describeError(error, 'Не удалось скачать архив.'))
-    } finally {
-      setArchiveDownloadBusy(false)
-    }
-  }
+  }, [action, actorRole, initialData, page, target])
 
   return (
     <div className="space-y-6">
       <section className="codequest-card p-6 sm:p-7">
-        <div className="max-w-2xl space-y-3">
-          <p className="brand-eyebrow">Архив</p>
-          <h2 className="text-2xl font-black text-slate-900">Выгрузки по дням</h2>
-          <p className="text-sm leading-7 text-slate-500">
-            По расписанию (по UTC) накопленные с прошлой выгрузки записи пишутся в JSON-файл в каталоге <code className="text-slate-600">backend/logs/audit</code> на сервере, затем «горячая» таблица очищается. Ниже можно скачать файл по дате в его имени.
-            {archives && typeof archives.export_hour_utc === 'number' ? (
-              <span> Плановый час (UTC) для встроенного планировщика: {archives.export_hour_utc}:00.</span>
-            ) : null}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl space-y-3">
+            <p className="brand-eyebrow">Audit log</p>
+            <h2 className="text-2xl font-black text-slate-900">Журнал действий админских ролей</h2>
+            <p className="text-sm leading-7 text-slate-500">
+              Здесь видна история блокировок, создания админов, публикации модулей и появления новых уроков с фильтрами по действию, роли и цели.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="brand-chip brand-chip--soft">
+              {loading ? 'Загрузка…' : `${response?.pagination.total ?? 0} записей`}
+            </span>
+          </div>
         </div>
-        <div className="mt-6 flex max-w-2xl flex-col gap-4 sm:flex-row sm:items-end">
-          <label className="min-w-0 flex-1 space-y-2">
-            <span className="text-sm font-semibold text-slate-700">Дата файла</span>
+
+        <div className="mt-6 grid gap-4 xl:grid-cols-[14rem_14rem_minmax(0,1fr)]">
+          <label className="space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Действие</span>
             <select
               className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              value={archiveDate}
-              onChange={(e) => setArchiveDate(e.target.value)}
-              disabled={archivesLoading}
+              value={action}
+              onChange={(event) => {
+                setAction(event.target.value)
+                setPage(1)
+              }}
             >
-              {archivesLoading ? (
-                <option value="">Загрузка…</option>
-              ) : (archives?.dates.length ?? 0) === 0 ? (
-                <option value="">Архивов пока нет</option>
-              ) : (
-                (archives?.dates ?? []).map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))
-              )}
+              {AUDIT_ACTION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
-          <button
-            type="button"
-            className="brand-button-primary h-[3.15rem] shrink-0 px-6 text-sm"
-            onClick={() => void downloadAuditArchive()}
-            disabled={!archiveDate || archiveDownloadBusy || archivesLoading}
-          >
-            {archiveDownloadBusy ? 'Скачивание…' : 'Скачать JSON'}
-          </button>
+          <label className="space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Роль исполнителя</span>
+            <select
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              value={actorRole}
+              onChange={(event) => {
+                setActorRole(event.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="all">Все роли</option>
+              <option value="admin">admin</option>
+              <option value="superadmin">superadmin</option>
+            </select>
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-semibold text-slate-700">Цель</span>
+            <input
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              placeholder="Логин пользователя или название модуля"
+              value={target}
+              onChange={(event) => {
+                setTarget(event.target.value)
+                setPage(1)
+              }}
+            />
+          </label>
         </div>
       </section>
 
-      <section className="codequest-card overflow-hidden p-0 sm:p-0">
-        <div className="flex flex-wrap gap-2 border-b border-slate-200 px-4 py-3 sm:px-6 sm:py-4">
-          <button
-            type="button"
-            className={
-              logTab === 'admin'
-                ? 'brand-button-primary min-h-[2.5rem] px-4 py-2 text-sm'
-                : 'brand-button-secondary min-h-[2.5rem] px-4 py-2 text-sm'
-            }
-            onClick={() => setLogTab('admin')}
-          >
-            Админ-действия
-          </button>
-          <button
-            type="button"
-            className={
-              logTab === 'site'
-                ? 'brand-button-primary min-h-[2.5rem] px-4 py-2 text-sm'
-                : 'brand-button-secondary min-h-[2.5rem] px-4 py-2 text-sm'
-            }
-            onClick={() => {
-              if (logTab !== 'site') {
-                siteSkipDebounce.current = true
-              }
-              setLogTab('site')
-            }}
-          >
-            Все API-запросы
-          </button>
-        </div>
-
-        {logTab === 'admin' ? (
-          <div className="space-y-6 p-6 sm:p-7">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-2xl space-y-3">
-                <p className="brand-eyebrow">Актуальный журнал</p>
-                <h2 className="text-2xl font-black text-slate-900">Записи с последней выгрузки</h2>
-                <p className="text-sm leading-7 text-slate-500">
-                  События администрирования, ещё не ушедшие в суточный архив. Фильтры, сортировка по дате, действию и
-                  логину исполнителя.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="brand-chip brand-chip--soft">
-                  {loading ? 'Загрузка…' : `${response?.pagination.total ?? 0} записей`}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Действие</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={action}
-                  onChange={(event) => {
-                    setAction(event.target.value)
-                    setPage(1)
-                  }}
-                >
-                  {AUDIT_ACTION_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Роль исполнителя</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={actorRole}
-                  onChange={(event) => {
-                    setActorRole(event.target.value)
-                    setPage(1)
-                  }}
-                >
-                  <option value="all">Все роли</option>
-                  <option value="admin">admin</option>
-                  <option value="superadmin">superadmin</option>
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Логин исполнителя</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Часть логина"
-                  value={actorLogin}
-                  onChange={(event) => {
-                    setActorLogin(event.target.value)
-                    setPage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Цель</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Логин цели / метка"
-                  value={target}
-                  onChange={(event) => {
-                    setTarget(event.target.value)
-                    setPage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Сортировка</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={auditSort}
-                  onChange={(event) => {
-                    setAuditSort(event.target.value)
-                    setPage(1)
-                  }}
-                >
-                  {AUDIT_SORT_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Порядок</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={auditOrder}
-                  onChange={(event) => {
-                    setAuditOrder(event.target.value as 'asc' | 'desc')
-                    setPage(1)
-                  }}
-                >
-                  {ORDER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6 p-6 sm:p-7">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-2xl space-y-3">
-                <p className="brand-eyebrow">Живой след</p>
-                <h2 className="text-2xl font-black text-slate-900">Все обращения к API</h2>
-                <p className="text-sm leading-7 text-slate-500">
-                  Каждый запрос к <code className="text-slate-600">/api/…</code> (кроме служебных путей): метод, путь, код
-                  ответа, сессия или «без сессии» для входа и публичных вызовов.
-                </p>
-              </div>
-              <span className="brand-chip brand-chip--soft">
-                {siteLoading ? 'Загрузка…' : `${siteResponse?.pagination.total ?? 0} записей`}
-              </span>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Логин</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Часть логина"
-                  value={siteUser}
-                  onChange={(e) => {
-                    setSiteUser(e.target.value)
-                    setSitePage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Метод</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={siteMethod}
-                  onChange={(e) => {
-                    setSiteMethod(e.target.value)
-                    setSitePage(1)
-                  }}
-                >
-                  {SITE_METHOD_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Путь (фрагмент)</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="/api/…"
-                  value={sitePath}
-                  onChange={(e) => {
-                    setSitePath(e.target.value)
-                    setSitePage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">HTTP-статус</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Напр. 200"
-                  value={siteStatus}
-                  onChange={(e) => {
-                    setSiteStatus(e.target.value)
-                    setSitePage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Роль в токене</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={siteRole}
-                  onChange={(e) => {
-                    setSiteRole(e.target.value)
-                    setSitePage(1)
-                  }}
-                >
-                  {SITE_ROLE_FILTER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">IP</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Фрагмент IP"
-                  value={siteIp}
-                  onChange={(e) => {
-                    setSiteIp(e.target.value)
-                    setSitePage(1)
-                  }}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Сортировка</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={siteSort}
-                  onChange={(e) => {
-                    setSiteSort(e.target.value)
-                    setSitePage(1)
-                  }}
-                >
-                  {SITE_SORT_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Порядок</span>
-                <select
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  value={siteOrder}
-                  onChange={(e) => {
-                    setSiteOrder(e.target.value as 'asc' | 'desc')
-                    setSitePage(1)
-                  }}
-                >
-                  {ORDER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {logTab === 'admin' ? (
-        <section className="codequest-card p-6 sm:p-7">
-          <div className="space-y-4">
-            {(response?.audit_logs ?? []).map((log) => (
-              <details
-                key={log.id}
-                className="admin-log-entry rounded-[1.75rem] border border-slate-200 bg-white/85 p-5"
-              >
-                <summary className="cursor-pointer list-none">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <AuditActionBadge action={log.action} />
-                        <span className="brand-chip brand-chip--soft min-h-[2rem] px-3 py-1 text-[0.68rem]">
-                          {log.actor_role}
-                        </span>
-                      </div>
-                      <p className="text-lg font-black text-slate-900">{renderAuditSummary(log)}</p>
-                      <p className="text-sm leading-7 text-slate-500">
-                        {log.entity_type} #{log.entity_id ?? '—'} ·{' '}
-                        <UserLocalTime iso={log.created_at} variant="admin" />
-                      </p>
+      <section className="codequest-card p-6 sm:p-7">
+        <div className="space-y-4">
+          {(response?.audit_logs ?? []).map((log) => (
+            <details
+              key={log.id}
+              className="admin-log-entry rounded-[1.75rem] border border-slate-200 bg-white/85 p-5"
+            >
+              <summary className="cursor-pointer list-none">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <AuditActionBadge action={log.action} />
+                      <span className="brand-chip brand-chip--soft min-h-[2rem] px-3 py-1 text-[0.68rem]">
+                        {log.actor_role}
+                      </span>
                     </div>
-                    <div className="text-sm font-semibold text-slate-500">Показать детали</div>
+                    <p className="text-lg font-black text-slate-900">{renderAuditSummary(log)}</p>
+                    <p className="text-sm leading-7 text-slate-500">
+                      {log.entity_type} #{log.entity_id ?? '—'} · <UserLocalTime iso={log.created_at} variant="admin" />
+                    </p>
                   </div>
-                </summary>
-
-                <div className="mt-5 grid gap-3 border-t border-slate-200 pt-5 text-sm text-slate-600 sm:grid-cols-2">
-                  {Object.entries(log.details).map(([key, value]) => (
-                    <div key={key} className="rounded-2xl bg-slate-50 px-4 py-3">
-                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-slate-400">
-                        {key}
-                      </p>
-                      <p className="mt-2 break-words font-semibold text-slate-700">
-                        {String(value ?? '—')}
-                      </p>
-                    </div>
-                  ))}
+                  <div className="text-sm font-semibold text-slate-500">Показать детали</div>
                 </div>
-              </details>
-            ))}
-          </div>
+              </summary>
 
-          {!loading && (response?.audit_logs.length ?? 0) === 0 ? (
-            <div className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-              <p className="text-lg font-black text-slate-900">Записи не найдены</p>
-              <p className="mt-3 text-sm leading-7 text-slate-500">
-                Попробуйте ослабить фильтры по действию, роли или цели.
-              </p>
-            </div>
-          ) : null}
-
-          <PaginationControls
-            pagination={response?.pagination}
-            loading={loading}
-            onPageChange={(nextPage) => setPage(nextPage)}
-          />
-        </section>
-      ) : (
-        <section className="codequest-card p-6 sm:p-7">
-          <div className="space-y-3">
-            {(siteResponse?.site_activity_logs ?? []).map((log) => (
-              <div
-                key={log.id}
-                className="rounded-[1.75rem] border border-slate-200 bg-white/85 p-4 sm:p-5"
-              >
-                <p className="text-sm font-black text-slate-900">{siteActivitySummary(log)}</p>
-                <p className="mt-2 text-sm leading-7 text-slate-500">
-                  <span
-                    className={
-                      log.status_code >= 500
-                        ? 'text-rose-600'
-                        : log.status_code >= 400
-                          ? 'text-amber-700'
-                          : 'text-slate-500'
-                    }
-                  >
-                    {log.status_code}
-                  </span>{' '}
-                  · {log.client_ip || '—'} · <UserLocalTime iso={log.created_at} variant="admin" />
-                </p>
+              <div className="mt-5 grid gap-3 border-t border-slate-200 pt-5 text-sm text-slate-600 sm:grid-cols-2">
+                {Object.entries(log.details).map(([key, value]) => (
+                  <div key={key} className="rounded-2xl bg-slate-50 px-4 py-3">
+                    <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-slate-400">
+                      {key}
+                    </p>
+                    <p className="mt-2 break-words font-semibold text-slate-700">
+                      {String(value ?? '—')}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
+            </details>
+          ))}
+        </div>
+
+        {!loading && (response?.audit_logs.length ?? 0) === 0 ? (
+          <div className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+            <p className="text-lg font-black text-slate-900">Записи не найдены</p>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              Попробуйте ослабить фильтры по действию, роли или цели.
+            </p>
           </div>
-          {!siteLoading && (siteResponse?.site_activity_logs.length ?? 0) === 0 ? (
-            <div className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-              <p className="text-lg font-black text-slate-900">Записи не найдены</p>
-              <p className="mt-3 text-sm leading-7 text-slate-500">Поменяйте фильтры или выполните действия в приложении.</p>
-            </div>
-          ) : null}
-          <PaginationControls
-            pagination={siteResponse?.pagination}
-            loading={siteLoading}
-            onPageChange={(nextPage) => setSitePage(nextPage)}
-          />
-        </section>
-      )}
+        ) : null}
+
+        <PaginationControls
+          pagination={response?.pagination}
+          loading={loading}
+          onPageChange={(nextPage) => setPage(nextPage)}
+        />
+      </section>
     </div>
   )
 }

@@ -1,9 +1,11 @@
-export type AppTheme = 'light' | 'dark'
+export type AppTheme = 'light' | 'dark' | 'sky' | 'forest' | 'sunset' | 'lavender' | 'sakura' | 'mint'
 
 const THEME_KEY = 'codequest_theme'
 export const DEFAULT_THEME: AppTheme = 'light'
 export const THEME_CHANGE_EVENT = 'progyx:theme-change'
 export const THEME_TRANSITION_DURATION_MS = 620
+
+const ALL_THEMES: AppTheme[] = ['light', 'dark', 'sky', 'forest', 'sunset', 'lavender', 'sakura', 'mint']
 
 type ThemeTransitionOptions = {
   origin?: { x: number; y: number }
@@ -11,7 +13,7 @@ type ThemeTransitionOptions = {
 }
 
 export function isAppTheme(value: unknown): value is AppTheme {
-  return value === 'light' || value === 'dark'
+  return ALL_THEMES.includes(value as AppTheme)
 }
 
 export function resolveTheme(value: unknown, fallback: AppTheme = DEFAULT_THEME): AppTheme {
@@ -36,7 +38,7 @@ export function applyTheme(theme: AppTheme = DEFAULT_THEME) {
   const previousTheme = resolveTheme(root.dataset.theme)
 
   root.dataset.theme = nextTheme
-  root.style.colorScheme = nextTheme
+  root.style.colorScheme = nextTheme === 'dark' ? 'dark' : 'light'
 
   if (typeof window !== 'undefined' && previousTheme !== nextTheme) {
     window.dispatchEvent(new CustomEvent<AppTheme>(THEME_CHANGE_EVENT, { detail: nextTheme }))
@@ -167,13 +169,14 @@ export function getThemeInitScript() {
   return `(() => {
     try {
       const key = ${JSON.stringify(THEME_KEY)};
+      const all = ${JSON.stringify(ALL_THEMES)};
       const stored = window.localStorage.getItem(key);
-      const theme = stored === 'dark' || stored === 'light' ? stored : ${JSON.stringify(DEFAULT_THEME)};
+      const theme = all.includes(stored) ? stored : ${JSON.stringify(DEFAULT_THEME)};
       document.documentElement.dataset.theme = theme;
-      document.documentElement.style.colorScheme = theme;
+      document.documentElement.style.colorScheme = (theme === 'dark') ? 'dark' : 'light';
     } catch (error) {
       document.documentElement.dataset.theme = ${JSON.stringify(DEFAULT_THEME)};
-      document.documentElement.style.colorScheme = ${JSON.stringify(DEFAULT_THEME)};
+      document.documentElement.style.colorScheme = 'light';
     }
   })();`
 }

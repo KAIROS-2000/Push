@@ -14,7 +14,6 @@ import { FormEvent, useMemo, useRef, useState } from 'react'
 
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
 const PASSWORD_WHITESPACE_RE = /\s/
-const USERNAME_MIN_LENGTH = 5
 const USERNAME_MAX_LENGTH = 10
 
 function strengthLabel(password: string) {
@@ -82,15 +81,6 @@ export function AuthForm({
 		}
 		if (mode === 'register' && !isValidEmail(normalizedCredential)) {
 			showErrorToast('Укажите корректный email.')
-			return
-		}
-		if (
-			mode === 'register'
-			&& normalizedUsername.length < USERNAME_MIN_LENGTH
-		) {
-			showErrorToast(
-				`Логин должен содержать не менее ${USERNAME_MIN_LENGTH} символов.`,
-			)
 			return
 		}
 		if (
@@ -368,7 +358,6 @@ export function AuthForm({
 									<input
 										className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
 										autoComplete='username'
-										minLength={USERNAME_MIN_LENGTH}
 										maxLength={USERNAME_MAX_LENGTH}
 										value={form.username}
 										onChange={e =>

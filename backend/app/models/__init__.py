@@ -1,6 +1,6 @@
-from .user import AdminAuditLog, RefreshToken, SecurityThrottle, SiteActivityLog, User, UserRole
+from .user import AdminAuditLog, RefreshToken, SecurityThrottle, User, UserRole
+from .cosmetics import UserOwnedCosmetic
 from .messaging import Conversation, ConversationReadState, Message
-from .staff_messaging import StaffDirectMessage, StaffDirectReadState, StaffDirectThread
 from .learning import (
     Achievement,
     Assignment,
@@ -29,7 +29,6 @@ from .parent_cabinet import (
 
 __all__ = [
     'AdminAuditLog',
-    'SiteActivityLog',
     'RefreshToken',
     'SecurityThrottle',
     'User',
@@ -37,9 +36,6 @@ __all__ = [
     'Conversation',
     'ConversationReadState',
     'Message',
-    'StaffDirectMessage',
-    'StaffDirectReadState',
-    'StaffDirectThread',
     'Achievement',
     'Assignment',
     'AssignmentSubmission',
@@ -61,4 +57,5 @@ __all__ = [
     'ParentTeacherMessage',
     'ParentTeacherReadState',
     'ParentTeacherThread',
+    'UserOwnedCosmetic',
 ]

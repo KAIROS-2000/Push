@@ -5,6 +5,8 @@ export type SubmissionStatus = 'submitted' | 'pending_review' | 'checked' | 'nee
 export type TaskEvaluationMode = 'manual' | 'keywords' | 'stdin_stdout'
 export type CodeTaskLanguage = 'python' | 'javascript'
 
+export type AppTheme = 'light' | 'dark' | 'sky' | 'forest' | 'sunset' | 'lavender' | 'sakura' | 'mint'
+
 export interface UserItem {
   id: number
   full_name: string
@@ -18,7 +20,9 @@ export interface UserItem {
   rank_title: string
   xp_to_next: number
   streak: number
-  theme: 'light' | 'dark'
+  theme: AppTheme
+  avatar_id: string | null
+  frame_id: string | null
   is_active: boolean
   teacher_approval_status?: TeacherApprovalStatus
   teacher_rejection_expires_at?: string | null
@@ -199,42 +203,7 @@ export interface AdminAuditLogResponse {
     action: string
     actor_role: string
     target: string
-    actor_login: string
-    sort: string
-    order: 'asc' | 'desc' | string
   }
-}
-
-export interface SiteActivityLogItem {
-  id: number
-  user_id: number | null
-  user_role: string
-  method: string
-  path: string
-  status_code: number
-  client_ip: string
-  created_at: string | null
-  user: { id: number | null; username: string | null; role: string }
-}
-
-export interface SiteActivityLogResponse {
-  site_activity_logs: SiteActivityLogItem[]
-  pagination: PaginationMeta
-  filters: {
-    username: string
-    method: string
-    path: string
-    status: string
-    role: string
-    ip: string
-    sort: string
-    order: 'asc' | 'desc' | string
-  }
-}
-
-export interface AdminAuditLogArchivesResponse {
-  dates: string[]
-  export_hour_utc: number
 }
 
 export interface LessonSummary {
@@ -488,23 +457,6 @@ export interface TeacherJoinRequestsResponse {
   requests: ClassJoinRequestItem[]
 }
 
-export interface TeacherPracticeHeatmapRow {
-  assignment_id: number
-  title: string
-  failed: number
-  reviewed: number
-  failure_rate: number | null
-}
-
-export interface TeacherPracticeHeatmap {
-  summary: {
-    failed: number
-    reviewed: number
-    failure_rate: number | null
-  }
-  assignments: TeacherPracticeHeatmapRow[]
-}
-
 export interface TeacherClassDetail {
   classroom: ClassroomItem
   students: Array<{
@@ -517,14 +469,9 @@ export interface TeacherClassDetail {
     average_score: number
   }>
   assignments: AssignmentItem[]
-  /** Present when API returns aggregated practice stats for the class */
-  practice_heatmap?: TeacherPracticeHeatmap
 }
 
-export type MessagingRole = 'student' | 'teacher' | 'parent'
-
-/** class_student: Per-class DM with a student. parent_thread: Parent–teacher thread tied to a child. */
-export type MessagingChatKind = 'class_student' | 'parent_thread'
+export type MessagingRole = 'student' | 'teacher'
 
 export interface MessagingConversationSummary {
   id?: number | null
@@ -574,52 +521,19 @@ export interface MessagingSummaryClass {
   students?: MessagingSummaryStudent[]
 }
 
-export interface StaffDirectUserRef {
-  id: number
-  username: string
-  full_name: string
-  role: UserRole
-}
-
-export interface StaffDirectThreadRow {
-  thread_id: number
-  other: StaffDirectUserRef
-  unread_count: number
-  latest_message_at: string | null
-  latest_message_preview: string | null
-}
-
-export interface StaffDirectPeerSummary {
-  total_unread: number
-  threads: StaffDirectThreadRow[]
-}
-
-export interface StaffMessagingDirectory {
-  teachers: StaffDirectUserRef[]
-  staff: StaffDirectUserRef[]
-}
-
-export interface StaffMessagingSummaryResponse {
-  total_unread: number
-  threads: StaffDirectThreadRow[]
-  directory: StaffMessagingDirectory
-}
-
 export interface MessagingSummaryResponse {
   role: MessagingRole
   total_unread: number
   conversations: MessagingConversationSummary[]
   classes?: MessagingSummaryClass[]
-  staff_direct?: StaffDirectPeerSummary
 }
 
 export interface MessagingMessage {
   id: number
-  conversation_id?: number | null
-  thread_id?: number | null
+  conversation_id: number
   sender_id: number
   sender_name?: string | null
-  sender_role?: MessagingRole | string | null
+  sender_role?: MessagingRole | null
   body: string
   created_at: string
 }
@@ -631,23 +545,7 @@ export interface MessagingConversationDetailResponse {
   messages: MessagingMessage[]
 }
 
-export interface TeacherParentThreadRow {
-  id: number
-  is_parent_conversation?: boolean
-  parent: { id: number; full_name: string | null }
-  student: { id: number; full_name: string | null }
-  classroom: { id: number; name: string | null }
-  unread_count: number
-  latest_preview?: string | null
-  updated_at?: string | null
-}
-
-export interface TeacherParentThreadsResponse {
-  parent_threads: TeacherParentThreadRow[]
-}
-
 export interface MessagingChatTarget {
-  kind?: MessagingChatKind
   classroomId: number
   classroomName: string
   conversationId?: number | null
@@ -655,8 +553,6 @@ export interface MessagingChatTarget {
   teacherName?: string | null
   studentId?: number | null
   studentName?: string | null
-  parentThreadId?: number | null
-  parentName?: string | null
 }
 
 export interface ParentChildProfile {

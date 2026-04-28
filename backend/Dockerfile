@@ -22,11 +22,6 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 COPY backend /app/backend
 COPY shared /app/shared
 
-# Audit log archives default to /app/backend/logs/audit (see Config.AUDIT_LOG_ARCHIVE_DIR).
-# The app runs as non-root; without this, mkdir in get_archive_dir() raises PermissionError.
-RUN mkdir -p /app/backend/logs/audit \
-    && chown -R appuser:appuser /app/backend/logs
-
 WORKDIR /app/backend
 
 USER appuser

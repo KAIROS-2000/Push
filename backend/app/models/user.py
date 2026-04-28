@@ -18,7 +18,6 @@ class UserRole(enum.Enum):
     SUPERADMIN = 'superadmin'
 
 
-USERNAME_MIN_LENGTH = 5
 USERNAME_MAX_LENGTH = 10
 JSONType = JSONB().with_variant(db.JSON(), 'sqlite')
 TEACHER_APPROVAL_PENDING = 'pending'
@@ -43,6 +42,9 @@ class User(db.Model):
     role = db.Column(db.Enum(UserRole), nullable=False, default=UserRole.STUDENT)
     age_group = db.Column(db.String(20), nullable=True)
     xp = db.Column(db.Integer, nullable=False, default=0)
+    xp_progress = db.Column(db.Integer, nullable=False, default=0)
+    avatar_id = db.Column(db.String(80), nullable=True)
+    frame_id = db.Column(db.String(80), nullable=True)
     streak = db.Column(db.Integer, nullable=False, default=1)
     theme = db.Column(db.String(20), nullable=False, default='light')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
@@ -71,11 +73,20 @@ class User(db.Model):
         return self.session_version
 
     def add_xp(self, value: int) -> None:
-        self.xp += max(value, 0)
+        gained = max(value, 0)
+        self.xp += gained
+        self.xp_progress += gained
+
+    def spend_xp(self, amount: int) -> bool:
+        """Deduct from spendable balance. Returns False if insufficient funds."""
+        if self.xp < amount:
+            return False
+        self.xp -= amount
+        return True
 
     @property
     def level(self) -> int:
-        return level_from_xp(self.xp)
+        return level_from_xp(self.xp_progress)
 
     @property
     def rank_title(self) -> str:
@@ -83,7 +94,7 @@ class User(db.Model):
 
     @property
     def xp_to_next(self) -> int:
-        return xp_to_next_level(self.xp)
+        return xp_to_next_level(self.xp_progress)
 
     def to_dict(self) -> dict:
         return {
@@ -100,6 +111,8 @@ class User(db.Model):
             'xp_to_next': self.xp_to_next,
             'streak': self.streak,
             'theme': self.theme,
+            'avatar_id': self.avatar_id,
+            'frame_id': self.frame_id,
             'is_active': self.is_active,
             'teacher_approval_status': self.teacher_approval_status or TEACHER_APPROVAL_APPROVED,
             'teacher_rejection_expires_at': self.teacher_rejection_expires_at.isoformat()
@@ -152,42 +165,6 @@ class AdminAuditLog(db.Model):
                 'username': details.get('target_username'),
                 'full_name': details.get('target_name'),
                 'role': details.get('target_role'),
-            },
-        }
-
-
-class SiteActivityLog(db.Model):
-    """Per-request API activity (authenticated and anonymous) for the site-wide access trail."""
-
-    __tablename__ = 'site_activity_logs'
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
-    user_role = db.Column(db.String(32), nullable=False, default='anonymous', index=True)
-    method = db.Column(db.String(8), nullable=False, index=True)
-    path = db.Column(db.String(1024), nullable=False, index=True)
-    status_code = db.Column(db.Integer, nullable=False, index=True)
-    client_ip = db.Column(db.String(64), nullable=False, default='', index=True)
-    created_at = db.Column(
-        db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
-    )
-
-    user = db.relationship('User', backref=db.backref('site_activity_logs', lazy='dynamic'))
-
-    def to_dict(self, *, username: str | None = None) -> dict:
-        return {
-            'id': self.id,
-            'user_id': self.user_id,
-            'user_role': self.user_role,
-            'method': self.method,
-            'path': self.path,
-            'status_code': self.status_code,
-            'client_ip': self.client_ip,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'user': {
-                'id': self.user_id,
-                'username': username,
-                'role': self.user_role,
             },
         }
 

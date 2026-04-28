@@ -268,23 +268,6 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn('телефон', response.get_json().get('message', '').lower())
 
-    def test_register_rejects_short_username(self):
-        app = self.create_app()
-        with app.test_client() as client:
-            response = client.post(
-                '/api/auth/register',
-                json={
-                    'email': 'regshort@example.com',
-                    'username': 'abcd',
-                    'password': 'StrongPass123!',
-                    'phone': '+7 (912) 345-67-89',
-                    'role': 'student',
-                    'age_group': 'middle',
-                },
-            )
-            self.assertEqual(response.status_code, 400)
-            self.assertIn('не менее 5', response.get_json().get('message', '').lower())
-
     def test_register_succeeds_with_russian_phone(self):
         app = self.create_app()
         with app.test_client() as client:

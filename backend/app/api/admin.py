@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from flask import Blueprint, current_app, request, send_file
+from flask import Blueprint, request
 from sqlalchemy import case, func, or_
 
 from ..core.db import db
@@ -41,7 +41,6 @@ from ..models.user import (
     TEACHER_APPROVAL_STATUSES,
     AdminAuditLog,
     RefreshToken,
-    SiteActivityLog,
     User,
     UserRole,
     USERNAME_MAX_LENGTH,
@@ -1243,50 +1242,12 @@ def delete_admin(current_user: User, user_id: int):
     return {'message': 'Админ удалён'}
 
 
-@admin_bp.get('/audit-log-archives')
-@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
-def list_audit_log_archives(current_user: User):
-    from ..services.audit_log_archive import get_archive_dir, list_archive_dates
-
-    archive_dir = get_archive_dir()
-    return {
-        'dates': list_archive_dates(archive_dir),
-        'export_hour_utc': current_app.config.get('AUDIT_LOG_DAILY_EXPORT_HOUR_UTC', 3),
-    }
-
-
-@admin_bp.get('/audit-log-archives/<string:date_key>')
-@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
-def download_audit_log_archive(current_user: User, date_key: str):
-    from ..services.audit_log_archive import get_archive_dir, resolve_archive_file
-
-    path = resolve_archive_file(get_archive_dir(), date_key)
-    if not path or not path.is_file():
-        return {'message': 'Архив за эту дату не найден.'}, 404
-    return send_file(
-        str(path),
-        mimetype='application/json',
-        as_attachment=True,
-        download_name=path.name,
-    )
-
-
-def _normalize_sort_order(raw: str | None, *, default: str) -> str:
-    v = (raw or default).strip().lower()
-    return v if v in {'asc', 'desc'} else default
-
-
 @admin_bp.get('/audit-logs')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def audit_logs(current_user: User):
     action_filter = (request.args.get('action') or '').strip().lower()
     actor_role_filter = (request.args.get('actor_role') or '').strip().lower()
     target_filter = (request.args.get('target') or '').strip().lower()
-    actor_login_filter = (request.args.get('actor_login') or '').strip().lower()
-    sort_key = (request.args.get('sort') or 'created_at').strip().lower()
-    if sort_key not in {'created_at', 'action', 'username'}:
-        sort_key = 'created_at'
-    order = _normalize_sort_order(request.args.get('order'), default='desc' if sort_key == 'created_at' else 'asc')
     page = _safe_int(request.args.get('page'), 1, minimum=1)
     page_size = _safe_int(
         request.args.get('page_size'),
@@ -1295,26 +1256,15 @@ def audit_logs(current_user: User):
         maximum=MAX_DIRECTORY_PAGE_SIZE,
     )
 
-    query = AdminAuditLog.query.outerjoin(User, User.id == AdminAuditLog.actor_user_id)
+    query = AdminAuditLog.query
     if action_filter and action_filter != 'all':
         query = query.filter(AdminAuditLog.action == action_filter)
     if actor_role_filter in {UserRole.ADMIN.value, UserRole.SUPERADMIN.value}:
         query = query.filter(AdminAuditLog.actor_role == actor_role_filter)
     if target_filter:
         query = query.filter(AdminAuditLog.entity_label.ilike(f'%{target_filter}%'))
-    if actor_login_filter:
-        query = query.filter(func.coalesce(User.username, '').ilike(f'%{actor_login_filter}%'))
 
-    if sort_key == 'username':
-        sort_col = func.coalesce(User.username, '')
-        primary = sort_col.asc() if order == 'asc' else sort_col.desc()
-    elif sort_key == 'action':
-        primary = AdminAuditLog.action.asc() if order == 'asc' else AdminAuditLog.action.desc()
-    else:
-        primary = AdminAuditLog.created_at.asc() if order == 'asc' else AdminAuditLog.created_at.desc()
-
-    id_order = AdminAuditLog.id.asc() if order == 'asc' else AdminAuditLog.id.desc()
-    query = query.order_by(primary, id_order)
+    query = query.order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc())
     total = query.count()
     items = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
@@ -1324,80 +1274,5 @@ def audit_logs(current_user: User):
             'action': action_filter or 'all',
             'actor_role': actor_role_filter or 'all',
             'target': target_filter,
-            'actor_login': actor_login_filter,
-            'sort': sort_key,
-            'order': order,
-        },
-    }
-
-
-@admin_bp.get('/site-activity-logs')
-@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
-def site_activity_logs(current_user: User):
-    username_filter = (request.args.get('username') or '').strip().lower()
-    method_filter = (request.args.get('method') or '').strip().upper()
-    path_filter = (request.args.get('path') or '').strip().lower()
-    status_filter_raw = (request.args.get('status') or '').strip()
-    role_filter = (request.args.get('role') or '').strip().lower()
-    ip_filter = (request.args.get('ip') or '').strip().lower()
-    sort_key = (request.args.get('sort') or 'created_at').strip().lower()
-    if sort_key not in {'created_at', 'method', 'path', 'status_code', 'username', 'role', 'client_ip'}:
-        sort_key = 'created_at'
-    order = _normalize_sort_order(request.args.get('order'), default='desc' if sort_key == 'created_at' else 'asc')
-    page = _safe_int(request.args.get('page'), 1, minimum=1)
-    page_size = _safe_int(
-        request.args.get('page_size'),
-        DEFAULT_DIRECTORY_PAGE_SIZE,
-        minimum=1,
-        maximum=MAX_DIRECTORY_PAGE_SIZE,
-    )
-
-    query = SiteActivityLog.query.outerjoin(User, User.id == SiteActivityLog.user_id)
-    if username_filter:
-        query = query.filter(func.coalesce(User.username, '').ilike(f'%{username_filter}%'))
-    if method_filter and method_filter != 'ALL':
-        query = query.filter(SiteActivityLog.method == method_filter)
-    if path_filter:
-        query = query.filter(SiteActivityLog.path.ilike(f'%{path_filter}%'))
-    if status_filter_raw.isdigit():
-        query = query.filter(SiteActivityLog.status_code == int(status_filter_raw))
-    if role_filter and role_filter not in ('all', ''):
-        query = query.filter(SiteActivityLog.user_role == role_filter)
-    if ip_filter:
-        query = query.filter(SiteActivityLog.client_ip.ilike(f'%{ip_filter}%'))
-
-    if sort_key == 'username':
-        sort_col = func.coalesce(User.username, '')
-        primary = sort_col.asc() if order == 'asc' else sort_col.desc()
-    elif sort_key == 'method':
-        primary = SiteActivityLog.method.asc() if order == 'asc' else SiteActivityLog.method.desc()
-    elif sort_key == 'path':
-        primary = SiteActivityLog.path.asc() if order == 'asc' else SiteActivityLog.path.desc()
-    elif sort_key == 'status_code':
-        primary = SiteActivityLog.status_code.asc() if order == 'asc' else SiteActivityLog.status_code.desc()
-    elif sort_key == 'role':
-        primary = SiteActivityLog.user_role.asc() if order == 'asc' else SiteActivityLog.user_role.desc()
-    elif sort_key == 'client_ip':
-        primary = SiteActivityLog.client_ip.asc() if order == 'asc' else SiteActivityLog.client_ip.desc()
-    else:
-        primary = SiteActivityLog.created_at.asc() if order == 'asc' else SiteActivityLog.created_at.desc()
-
-    id_order = SiteActivityLog.id.asc() if order == 'asc' else SiteActivityLog.id.desc()
-    query = query.order_by(primary, id_order)
-    total = query.count()
-    rows = query.with_entities(SiteActivityLog, User.username).offset((page - 1) * page_size).limit(page_size).all()
-    out = [log.to_dict(username=uname) for log, uname in rows]
-    return {
-        'site_activity_logs': out,
-        'pagination': _pagination_payload(total, page, page_size),
-        'filters': {
-            'username': username_filter,
-            'method': method_filter or 'ALL',
-            'path': path_filter,
-            'status': status_filter_raw,
-            'role': role_filter or 'all',
-            'ip': ip_filter,
-            'sort': sort_key,
-            'order': order,
         },
     }

@@ -211,18 +211,6 @@ const SUBMISSION_STATUS_LABELS: Record<SubmissionItem['status'], string> = {
 	needs_revision: 'Неверно',
 }
 
-function practiceHeatSegmentColor(
-	failureRate: number | null,
-	reviewed: number,
-): string {
-	if (reviewed === 0) return 'rgb(226 232 240)'
-	const x = Math.min(100, Math.max(0, failureRate ?? 0)) / 100
-	const r = Math.round(16 + (244 - 16) * x)
-	const g = Math.round(185 + (63 - 185) * x)
-	const b = Math.round(129 + (94 - 129) * x)
-	return `rgb(${r} ${g} ${b})`
-}
-
 const EMPTY_ASSIGNMENT_FORM: AssignmentFormState = {
 	title: '',
 	description: '',
@@ -1305,12 +1293,7 @@ export function TeacherWorkspace({
 					: 'Урок отправлен на доработку.',
 			)
 			if (selectedAssignmentId) {
-				await Promise.all([
-					loadSubmissions(selectedAssignmentId),
-					...(selectedClassId
-						? [loadClassDetails(selectedClassId)]
-						: []),
-				])
+				await loadSubmissions(selectedAssignmentId)
 			}
 		} catch (error) {
 			showErrorToast(error instanceof Error ? error.message : 'Не удалось обновить статус сдачи.')
@@ -1631,66 +1614,6 @@ export function TeacherWorkspace({
 								</p>
 							</div>
 						</div>
-						{classDetail?.practice_heatmap?.assignments.length ? (
-							<div className='mt-4 border-t border-slate-100 pt-3'>
-								<div className='flex flex-wrap items-center justify-between gap-2 gap-y-1 text-xs text-slate-500'>
-									<span className='font-medium text-slate-600'>
-										Практика: ошибки
-									</span>
-									<span className='text-right'>
-										{classDetail.practice_heatmap.summary.reviewed > 0 ? (
-											<>
-												{classDetail.practice_heatmap.summary.failed} из{' '}
-												{classDetail.practice_heatmap.summary.reviewed}{' '}
-												проверено
-												{classDetail.practice_heatmap.summary.failure_rate !=
-													null && (
-													<>
-														{' '}
-														(
-														{
-															classDetail.practice_heatmap.summary
-																.failure_rate
-														}
-														% неверно)
-													</>
-												)}
-											</>
-										) : (
-											<>проверенных сдач пока нет</>
-										)}
-									</span>
-								</div>
-								<div
-									className='mt-2 flex max-w-full gap-px overflow-x-auto pb-0.5'
-									role='list'
-									aria-label='Доля ошибок по заданиям практики'
-								>
-									{classDetail.practice_heatmap.assignments.map(row => (
-										<button
-											key={row.assignment_id}
-											type='button'
-											role='listitem'
-											title={`${row.title}\nНеверно: ${row.failed}, проверено: ${row.reviewed}${
-												row.failure_rate != null
-													? ` (${row.failure_rate}%)`
-													: ''
-											}\nНажмите, чтобы открыть сдачи`}
-											onClick={() =>
-												setSelectedAssignmentId(row.assignment_id)
-											}
-											className='min-h-6 min-w-[8px] flex-1 rounded-sm transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 sm:max-w-[100px]'
-											style={{
-												backgroundColor: practiceHeatSegmentColor(
-													row.failure_rate,
-													row.reviewed,
-												),
-											}}
-										/>
-									))}
-								</div>
-							</div>
-						) : null}
 					</section>
 
 					<section className='teacher-workspace__panel codequest-card p-6'>

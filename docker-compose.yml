@@ -158,12 +158,15 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: "no"
+    volumes:
+      - ./media:/media:ro
     env_file:
       - .env
     secrets:
       - redis_password
     environment:
       APP_ENV: ${APP_ENV:-development}
+      MEDIA_DIR: /media
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       FLASK_DEBUG: ${FLASK_DEBUG:-0}
       CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
@@ -187,12 +190,15 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    volumes:
+      - ./media:/media:ro
     env_file:
       - .env
     secrets:
       - redis_password
     environment:
       APP_ENV: ${APP_ENV:-development}
+      MEDIA_DIR: /media
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       FLASK_DEBUG: ${FLASK_DEBUG:-0}
       CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute

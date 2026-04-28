@@ -183,8 +183,6 @@ export function SiteHeader() {
 		if (role === 'admin') {
 			return [
 				{ href: '/admin/users', label: 'Админ' },
-				{ href: '/admin/messages', label: 'Сообщения' },
-				{ href: '/admin/logs', label: 'Логи' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
@@ -192,8 +190,6 @@ export function SiteHeader() {
 		} else if (role === 'superadmin') {
 			return [
 				{ href: '/superadmin/users', label: 'Суперадмин' },
-				{ href: '/superadmin/messages', label: 'Сообщения' },
-				{ href: '/superadmin/logs', label: 'Логи' },
 				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
@@ -213,7 +209,6 @@ export function SiteHeader() {
 		if (role === 'parent') {
 			return [
 				{ href: '/parent/dashboard', label: 'Семейный кабинет' },
-				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]

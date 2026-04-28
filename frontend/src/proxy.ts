@@ -42,17 +42,17 @@ function withCsp(response: NextResponse, csp: string) {
 	return response
 }
 
-type UserRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
+type UserRole = 'student' | 'teacher' | 'admin' | 'superadmin'
 
 const ACCESS_COOKIE = 'codequest_access_token'
 const REFRESH_COOKIE = 'codequest_refresh_token'
 const ACCESS_EXPIRES_AT_COOKIE = 'codequest_access_expires_at'
 const CSRF_COOKIE = 'csrf_token'
 const CSRF_HEADER = 'X-CSRF-Token'
-const KNOWN_ROLES: UserRole[] = ['student', 'teacher', 'parent', 'admin', 'superadmin']
+const KNOWN_ROLES: UserRole[] = ['student', 'teacher', 'admin', 'superadmin']
 const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/dashboard', roles: KNOWN_ROLES },
-	{ path: '/messages', roles: ['student', 'teacher', 'parent'] },
+	{ path: '/messages', roles: ['student', 'teacher'] },
 	{ path: '/roadmap', roles: KNOWN_ROLES },
 	{ path: '/lessons', roles: KNOWN_ROLES },
 	{ path: '/leaderboard', roles: KNOWN_ROLES },
