@@ -186,6 +186,20 @@ class CsrfProtectionTests(unittest.TestCase):
             self.assertTrue(any('csrf_token=;' in cookie for cookie in response.headers.getlist('Set-Cookie')))
             self.assertIsNone(client.get_cookie('csrf_token'))
 
+    def test_logout_without_csrf_header_still_clears_cookies(self):
+        app = self.create_app()
+        self.create_user(app)
+
+        with app.test_client() as client:
+            login_response = self.login(client)
+            self.assertEqual(login_response.status_code, 200)
+            self.assertTrue(self.csrf_token(client))
+
+            response = client.post('/api/auth/logout')
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(any('csrf_token=;' in cookie for cookie in response.headers.getlist('Set-Cookie')))
+            self.assertIsNone(client.get_cookie('csrf_token'))
+
 
 if __name__ == '__main__':
     unittest.main()

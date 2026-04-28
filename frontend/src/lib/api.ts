@@ -38,7 +38,8 @@ function buildHeaders(init?: RequestInit) {
   return headers
 }
 
-const SESSION_TERMINATION_CODES = new Set(['invalid_token', 'session_revoked'])
+const SESSION_TERMINATION_CODES = new Set(['invalid_token', 'session_revoked', 'csrf_invalid'])
+const CSRF_INVALID_CODE = 'csrf_invalid'
 
 function getAuthErrorCode(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null
@@ -156,8 +157,18 @@ async function refreshSession() {
   return refreshRequest
 }
 
+type ClearSessionOptions = {
+  redirectToLogin?: boolean
+}
+
+function redirectToLogin() {
+  if (typeof window === 'undefined') return
+  if (window.location.pathname.startsWith('/auth/login')) return
+  window.location.replace('/auth/login')
+}
+
 /** Clears local session snapshot and asks the backend to drop HttpOnly auth cookies. */
-export async function clearSessionSilently() {
+export async function clearSessionSilently(options: ClearSessionOptions = {}) {
   setAnonymousSession()
 
   try {
@@ -168,6 +179,10 @@ export async function clearSessionSilently() {
     })
   } catch {
     // Ignore logout cleanup failures when the session is already invalid.
+  }
+
+  if (options.redirectToLogin) {
+    redirectToLogin()
   }
 }
 
@@ -194,8 +209,9 @@ export async function api<T>(path: string, init: RequestInit = {}, auth: ApiAuth
   }
 
   if (!response.ok) {
+    const errorCode = getAuthErrorCode(payload)
     if (shouldClearSessionAfterAuthFailure(authMode, response.status, payload)) {
-      await clearSessionSilently()
+      await clearSessionSilently({ redirectToLogin: errorCode === CSRF_INVALID_CODE })
     }
     throw new ApiError(
       extractErrorMessage(payload) ||

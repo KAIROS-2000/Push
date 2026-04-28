@@ -10,6 +10,7 @@ import {
   DEFAULT_THEME,
   getDocumentTheme,
   getStoredTheme,
+  isAppTheme,
   isThemeViewTransitionRunning,
   setTheme,
 } from '@/lib/theme'
@@ -28,7 +29,7 @@ export function ThemeHydrator() {
       return
     }
     const sessionTheme = getSessionSnapshot().user?.theme
-    if (sessionTheme === 'light' || sessionTheme === 'dark') {
+    if (isAppTheme(sessionTheme)) {
       applyTheme(sessionTheme)
     } else {
       applyTheme(DEFAULT_THEME)
@@ -157,7 +158,7 @@ export function ThemeHydrator() {
         return
       }
       const stored = getStoredTheme()
-      if (stored === 'light' || stored === 'dark') {
+      if (stored) {
         if (getDocumentTheme() !== stored) {
           applyTheme(stored)
         }
@@ -167,7 +168,7 @@ export function ThemeHydrator() {
         return
       }
       const t = snapshot.user.theme
-      if (t !== 'light' && t !== 'dark') {
+      if (!isAppTheme(t)) {
         return
       }
       if (getDocumentTheme() !== t) {

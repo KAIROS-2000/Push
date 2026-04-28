@@ -42,8 +42,7 @@ export async function fetchSessionUser({
     .then((result) => {
       const u = result.user
       const stored = getStoredTheme()
-      const theme =
-        stored === 'light' || stored === 'dark' ? stored : u.theme
+      const theme = stored ?? u.theme
       setAuthenticatedSession({ ...u, theme })
       return { ...u, theme }
     })

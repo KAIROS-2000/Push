@@ -239,7 +239,7 @@ export function ProfileView() {
                 ))}
               </select>
               <p className="text-sm leading-7 text-slate-500">
-                Фон приложения изменится после сохранения профиля.
+                Изменится после сохранения профиля.
               </p>
             </label>
           </div>

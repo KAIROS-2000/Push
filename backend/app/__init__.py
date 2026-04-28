@@ -55,6 +55,7 @@ COMMON_SECRET_KEY_PLACEHOLDERS = (
 )
 PUBLIC_UNSAFE_API_PATHS = {
     "/api/auth/login",
+    "/api/auth/logout",
     "/api/auth/register",
 }
 
