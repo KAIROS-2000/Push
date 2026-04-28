@@ -413,6 +413,10 @@ def approve_join_request(current_user: User, request_id: int):
     if join_request.status != 'pending':
         return {'message': 'Заявка уже обработана.'}, 400
 
+    applicant = db.session.get(User, join_request.student_id)
+    if not applicant or applicant.role != UserRole.STUDENT:
+        return {'message': 'В класс могут вступать только ученики.'}, 400
+
     existing_membership = ClassMembership.query.filter_by(
         classroom_id=join_request.classroom_id,
         student_id=join_request.student_id,

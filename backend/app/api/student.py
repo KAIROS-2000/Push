@@ -43,6 +43,7 @@ from ..models.learning import (
     UserProgress,
     lesson_requires_teacher_review as lesson_requires_teacher_review_helper,
 )
+from ..models.cosmetics import CATALOG_BY_KEY, UserOwnedCosmetic
 from ..models.parent_cabinet import ParentLinkCode
 from ..models.user import User, UserRole
 from ..services import parent_insights
@@ -69,6 +70,7 @@ PROGRESS_STATUS_LABELS = {
 
 MANUAL_REVIEW_PROGRESS_STATUSES = {"pending_review", "needs_revision"}
 VALID_AGE_GROUPS = {"junior", "middle", "senior"}
+DEFAULT_THEMES = {"light", "dark"}
 _AGE_GROUP_RANK = {"junior": 0, "middle": 1, "senior": 2}
 LEADERBOARD_LIMIT = 50
 GLOBAL_LEADERBOARD_REFRESH_INTERVAL = timedelta(minutes=5)
@@ -145,6 +147,15 @@ def _leaderboard_row(student: User, position: int) -> dict:
         "level": student.level,
         "age_group": student.age_group,
     }
+
+
+def _user_can_use_theme(user: User, theme: str) -> bool:
+    item = CATALOG_BY_KEY.get(theme)
+    if not item or item.get("type") != "theme":
+        return False
+    if theme in DEFAULT_THEMES or int(item.get("price") or 0) <= 0:
+        return True
+    return db.session.query(UserOwnedCosmetic.id).filter_by(user_id=user.id, item_key=theme).first() is not None
 
 
 def _student_memberships(user: User) -> list[ClassMembership]:
@@ -1104,8 +1115,10 @@ def update_profile(current_user: User):
     data = request.get_json() or {}
     if "full_name" in data and data["full_name"]:
         current_user.full_name = data["full_name"]
-    if "theme" in data and data["theme"] in {"light", "dark"}:
-        current_user.theme = data["theme"]
+    if "theme" in data:
+        theme = str(data.get("theme") or "").strip()
+        if _user_can_use_theme(current_user, theme):
+            current_user.theme = theme
     if "password" in data:
         password = data.get("password") or ""
         if password:

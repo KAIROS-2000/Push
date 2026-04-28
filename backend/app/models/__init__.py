@@ -1,4 +1,5 @@
 from .user import AdminAuditLog, RefreshToken, SecurityThrottle, SiteActivityLog, User, UserRole
+from .cosmetics import UserOwnedCosmetic
 from .messaging import Conversation, ConversationReadState, Message
 from .staff_messaging import StaffDirectMessage, StaffDirectReadState, StaffDirectThread
 from .learning import (
@@ -34,6 +35,7 @@ __all__ = [
     'SecurityThrottle',
     'User',
     'UserRole',
+    'UserOwnedCosmetic',
     'Conversation',
     'ConversationReadState',
     'Message',

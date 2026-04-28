@@ -135,6 +135,7 @@ def register():
 
     is_teacher_registration = role == UserRole.TEACHER.value
     is_parent_registration = role == UserRole.PARENT.value
+    requested_theme = data.get('theme') if data.get('theme') in {'light', 'dark'} else 'light'
     user = User(
         full_name=data.get('full_name') or username,
         username=username,
@@ -143,7 +144,7 @@ def register():
         password_hash=hash_password(password),
         role=UserRole(role),
         age_group=age_group if role == UserRole.STUDENT.value else None,
-        theme=data.get('theme') or 'light',
+        theme=requested_theme,
         is_active=not is_teacher_registration,
         teacher_approval_status=TEACHER_APPROVAL_PENDING
         if is_teacher_registration

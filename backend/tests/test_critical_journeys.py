@@ -285,6 +285,29 @@ class CriticalJourneyTests(unittest.TestCase):
         self.assertEqual(grade_response.get_json()['submission']['score'], 95)
         self.assertEqual(grade_response.get_json()['submission']['status'], 'checked')
 
+    def test_teacher_cannot_join_class_with_code(self):
+        app = self.create_app()
+        teacher_id = self.create_teacher(app)
+        from app.core.db import db
+        from app.models.learning import Classroom
+
+        with app.app_context():
+            db.session.add(
+                Classroom(
+                    name='T Class',
+                    description='',
+                    code='JOINME',
+                    teacher_id=teacher_id,
+                )
+            )
+            db.session.commit()
+
+        with app.test_client() as client:
+            self.login(client, login='teacher@example.com', password='TeacherPass123!')
+            response = client.post('/api/classes/join', json={'code': 'joinme'})
+
+        self.assertEqual(response.status_code, 403)
+
 
 if __name__ == '__main__':
     unittest.main()

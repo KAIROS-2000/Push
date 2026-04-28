@@ -43,6 +43,9 @@ class User(db.Model):
     role = db.Column(db.Enum(UserRole), nullable=False, default=UserRole.STUDENT)
     age_group = db.Column(db.String(20), nullable=True)
     xp = db.Column(db.Integer, nullable=False, default=0)
+    xp_progress = db.Column(db.Integer, nullable=False, default=0)
+    avatar_id = db.Column(db.String(80), nullable=True)
+    frame_id = db.Column(db.String(80), nullable=True)
     streak = db.Column(db.Integer, nullable=False, default=1)
     theme = db.Column(db.String(20), nullable=False, default='light')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
@@ -71,11 +74,24 @@ class User(db.Model):
         return self.session_version
 
     def add_xp(self, value: int) -> None:
-        self.xp += max(value, 0)
+        gained = max(value, 0)
+        self.xp = int(self.xp or 0) + gained
+        self.xp_progress = int(self.xp_progress or 0) + gained
+
+    def spend_xp(self, amount: int) -> bool:
+        cost = max(int(amount), 0)
+        if int(self.xp or 0) < cost:
+            return False
+        self.xp = int(self.xp or 0) - cost
+        return True
+
+    @property
+    def lifetime_xp(self) -> int:
+        return max(int(self.xp or 0), int(self.xp_progress or 0))
 
     @property
     def level(self) -> int:
-        return level_from_xp(self.xp)
+        return level_from_xp(self.lifetime_xp)
 
     @property
     def rank_title(self) -> str:
@@ -83,7 +99,7 @@ class User(db.Model):
 
     @property
     def xp_to_next(self) -> int:
-        return xp_to_next_level(self.xp)
+        return xp_to_next_level(self.lifetime_xp)
 
     def to_dict(self) -> dict:
         return {
@@ -100,6 +116,8 @@ class User(db.Model):
             'xp_to_next': self.xp_to_next,
             'streak': self.streak,
             'theme': self.theme,
+            'avatar_id': self.avatar_id,
+            'frame_id': self.frame_id,
             'is_active': self.is_active,
             'teacher_approval_status': self.teacher_approval_status or TEACHER_APPROVAL_APPROVED,
             'teacher_rejection_expires_at': self.teacher_rejection_expires_at.isoformat()

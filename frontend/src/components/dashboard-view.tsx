@@ -121,6 +121,7 @@ export function DashboardView({
 		return <div className='codequest-card p-6'>Загружаем данные dashboard…</div>
 	}
 
+	const isStudent = data.user.role === 'student'
 	const firstName = data.user.full_name.split(' ')[0]
 	const lessonMomentum = Math.min(100, data.summary.completed_lessons * 12)
 	const assignmentFocus = data.summary.assignments_open
@@ -362,20 +363,27 @@ export function DashboardView({
 						</div>
 					</div>
 
-					<div className='mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap'>
-						<input
-							className='w-full min-w-0 flex-1 rounded-2xl border border-slate-200 px-4 py-3 sm:min-w-[220px]'
-							value={classCode}
-							onChange={e => setClassCode(e.target.value.toUpperCase())}
-							placeholder='Введите код класса'
-						/>
-						<button
-							onClick={joinClass}
-							className='brand-button-primary w-full sm:w-auto'
-						>
-							Подключить класс
-						</button>
-					</div>
+					{isStudent ? (
+						<div className='mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap'>
+							<input
+								className='w-full min-w-0 flex-1 rounded-2xl border border-slate-200 px-4 py-3 sm:min-w-[220px]'
+								value={classCode}
+								onChange={e => setClassCode(e.target.value.toUpperCase())}
+								placeholder='Введите код класса'
+							/>
+							<button
+								onClick={joinClass}
+								className='brand-button-primary w-full sm:w-auto'
+							>
+								Подключить класс
+							</button>
+						</div>
+					) : (
+						<p className='mt-5 text-sm leading-7 text-slate-600'>
+							Вступить в класс по коду могут только ученики. Созданием групп и
+							учениками в классе управляет раздел «Учитель».
+						</p>
+					)}
 
 					<div className='mt-5 grid gap-3 md:grid-cols-2'>
 						{data.my_classes.length ? (
@@ -401,8 +409,9 @@ export function DashboardView({
 							))
 						) : (
 							<p className='text-sm text-slate-500'>
-								Пока нет подключённых классов. Введите код, полученный от вашего
-								учителя.
+								{isStudent
+									? 'Пока нет подключённых классов. Введите код, полученный от вашего учителя.'
+									: 'Здесь отображаются классы, в которых вы состоите как ученик. Управление своими классами — в разделе «Учитель».'}
 							</p>
 						)}
 					</div>

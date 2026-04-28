@@ -255,7 +255,7 @@ export function SiteHeader() {
 		useMemo(() => splitMobileNavLinks(links), [links])
 
 	const useMobileDrawer =
-		(isMobileNav || !isAuthenticated) &&
+		isMobileNav &&
 		mobileOverflowLinks.length > 0 &&
 		mobilePrimaryLinks.length > 0
 

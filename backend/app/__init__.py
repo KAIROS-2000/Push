@@ -1,6 +1,7 @@
 import sys
 import threading
 import time
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from .api.admin import admin_bp
 from .api.auth import auth_bp
+from .api.cosmetics import cosmetics_bp
 from .api.messaging import messaging_bp
 from .api.staff_messaging import staff_messaging_bp
 from .api.parent_cabinet import parent_bp
@@ -40,6 +42,8 @@ from .core.security import (
 )
 
 SPRITE_DIR = Path(__file__).resolve().parent.parent / "sprite"
+_MEDIA_ENV = os.environ.get("MEDIA_DIR")
+MEDIA_DIR = Path(_MEDIA_ENV) if _MEDIA_ENV and Path(_MEDIA_ENV).is_dir() else PROJECT_ROOT / "media"
 COMMON_SECRET_KEY_PLACEHOLDERS = (
     "change-me",
     "replace-me",
@@ -286,6 +290,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(student_bp, url_prefix="/api")
+    app.register_blueprint(cosmetics_bp, url_prefix="/api")
     app.register_blueprint(parent_bp, url_prefix="/api/parent")
     app.register_blueprint(teacher_bp, url_prefix="/api/teacher")
     app.register_blueprint(messaging_bp, url_prefix="/api/messaging")
@@ -348,6 +353,14 @@ def create_app() -> Flask:
     @app.get("/api/mascot/<path:filename>")
     def mascot_sprite(filename: str):
         return send_from_directory(SPRITE_DIR, filename)
+
+    @app.get("/api/media/avatars/<path:filename>")
+    def media_avatar(filename: str):
+        return send_from_directory(MEDIA_DIR / "avatars", filename)
+
+    @app.get("/api/media/frames/<path:filename>")
+    def media_frame(filename: str):
+        return send_from_directory(MEDIA_DIR / "frames", filename)
 
     @app.after_request
     def apply_security_headers(response):

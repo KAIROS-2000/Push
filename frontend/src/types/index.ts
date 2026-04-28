@@ -1,3 +1,6 @@
+export type { AppTheme } from '@/lib/theme'
+import type { AppTheme } from '@/lib/theme'
+
 export type UserRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
 export type TeacherApprovalStatus = 'pending' | 'approved' | 'rejected'
 export type ProgressStatus = 'not_started' | 'in_progress' | 'pending_review' | 'needs_revision' | 'completed'
@@ -18,7 +21,9 @@ export interface UserItem {
   rank_title: string
   xp_to_next: number
   streak: number
-  theme: 'light' | 'dark'
+  theme: AppTheme
+  avatar_id: string | null
+  frame_id: string | null
   is_active: boolean
   teacher_approval_status?: TeacherApprovalStatus
   teacher_rejection_expires_at?: string | null
