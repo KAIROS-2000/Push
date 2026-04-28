@@ -14,6 +14,7 @@ export function SiteFooter({
 
 	const links = [
 		{ href: '/', label: 'Главная' },
+		{ href: '/it-career', label: 'Перспективы IT' },
 		{ href: '/parent', label: 'Родителям' },
 		...(shouldShowRegisterLink
 			? [{ href: '/auth/register', label: 'Создать аккаунт' }]

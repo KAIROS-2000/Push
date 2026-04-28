@@ -2,19 +2,15 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import {
 	AlertTriangle,
-	Building2,
 	CalendarDays,
 	ExternalLink,
 	RefreshCw,
-	Star,
 	Trophy,
 } from 'lucide-react'
 
 import { SiteFooter } from '@/components/site-footer'
 import { UserLocalTime } from '@/components/user-local-time'
 import { getTournamentData, type TournamentOfficeRow } from '@/lib/tournament-data'
-
-export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
 	title: 'Турнир между офисами | Progyx',
@@ -50,7 +46,6 @@ export default async function TournamentPage() {
 	const data = await getTournamentData()
 	const rows = [...data.rows].sort((a, b) => a.rank - b.rank)
 	const leader = rows[0] ?? null
-	const totalPoints = rows.reduce((sum, row) => sum + row.total, 0)
 	const maxTotal = Math.max(1, ...rows.map(row => row.total))
 	const weeksCount = filledWeeksCount(rows)
 
@@ -112,30 +107,6 @@ export default async function TournamentPage() {
 						<span style={{ width: leader ? `${(leader.total / maxTotal) * 100}%` : '0%' }} />
 					</div>
 				</aside>
-			</section>
-
-			<section className='brand-page-shell tournament-stats' aria-label='Сводка'>
-				<article className='tournament-stat'>
-					<Building2 aria-hidden size={22} />
-					<div>
-						<p>Офисов</p>
-						<strong>{rows.length}</strong>
-					</div>
-				</article>
-				<article className='tournament-stat'>
-					<Star aria-hidden size={22} />
-					<div>
-						<p>Баллов всего</p>
-						<strong>{formatScore(totalPoints)}</strong>
-					</div>
-				</article>
-				<article className='tournament-stat'>
-					<Trophy aria-hidden size={22} />
-					<div>
-						<p>Источник</p>
-						<strong>{data.sourceMode === 'xlsx' ? 'XLSX live' : 'Preview'}</strong>
-					</div>
-				</article>
 			</section>
 
 			{data.sourceWarning && (
@@ -241,28 +212,6 @@ export default async function TournamentPage() {
 							<li key={rule}>{rule}</li>
 						))}
 					</ul>
-				</article>
-
-				<article className='tournament-preview-card'>
-					<div className='tournament-preview-card__header'>
-						<div>
-							<p className='brand-eyebrow'>Source sheet</p>
-							<h2>Оригинальная таблица</h2>
-						</div>
-						<span>{data.meta.downloadAvailable ? 'XLSX доступен' : 'Просмотр'}</span>
-					</div>
-					{data.meta.previewUrl ? (
-						<div className='tournament-preview-card__image'>
-							<img
-								src={data.meta.previewUrl}
-								alt='Оригинальная таблица турнира'
-							/>
-						</div>
-					) : (
-						<p className='tournament-preview-card__empty'>
-							Preview таблицы пока недоступен.
-						</p>
-					)}
 				</article>
 			</section>
 

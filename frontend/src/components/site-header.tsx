@@ -29,7 +29,8 @@ function resolveHeaderZone(pathname: string | null): HeaderZone {
 	if (pathname?.startsWith('/admin') || pathname?.startsWith('/superadmin'))
 		return 'admin'
 	if (pathname?.startsWith('/parent/') || pathname === '/parent') return 'parent'
-	if (pathname === '/' || pathname === '/tournament') return 'public'
+	if (pathname === '/' || pathname === '/tournament' || pathname === '/it-career')
+		return 'public'
 	return 'app'
 }
 
@@ -57,10 +58,24 @@ function splitMobileNavLinks(links: NavLink[]): {
 	primary: NavLink[]
 	overflow: NavLink[]
 } {
+	const home = links.find(link => link.href === '/')
+	const career = links.find(link => link.href === '/it-career')
+	if (home && career) {
+		const primary = [home, career]
+		const primaryHrefs = new Set(primary.map(link => link.href))
+		return {
+			primary,
+			overflow: links.filter(link => !primaryHrefs.has(link.href)),
+		}
+	}
+
 	const cabinet = links.find(isCabinetLink)
 	const lessons = links.find(isLessonsLink)
 
 	if (!cabinet && !lessons) {
+		if (links.length > 3) {
+			return { primary: links.slice(0, 3), overflow: links.slice(3) }
+		}
 		return { primary: links, overflow: [] }
 	}
 
@@ -146,6 +161,7 @@ export function SiteHeader() {
 			if (zone === 'public') {
 				return [
 					{ href: '/', label: 'Главная' },
+					{ href: '/it-career', label: 'Карьера IT' },
 					{ href: '/tournament', label: 'Турнир' },
 					{ href: '/parent', label: 'Родителям' },
 				]
@@ -153,11 +169,17 @@ export function SiteHeader() {
 			if (zone === 'parent') {
 				return [
 					{ href: '/', label: 'Главная' },
+					{ href: '/it-career', label: 'Карьера IT' },
 					{ href: '/parent', label: 'Родителям' },
 					{ href: '/auth/register', label: 'Регистрация' },
 				]
 			}
-			return [{ href: '/', label: 'Главная' }]
+			return [
+				{ href: '/', label: 'Главная' },
+				{ href: '/it-career', label: 'Карьера IT' },
+				{ href: '/tournament', label: 'Турнир' },
+				{ href: '/parent', label: 'Родителям' },
+			]
 		}
 
 		const secured = [
@@ -233,7 +255,9 @@ export function SiteHeader() {
 		useMemo(() => splitMobileNavLinks(links), [links])
 
 	const useMobileDrawer =
-		isMobileNav && mobileOverflowLinks.length > 0 && mobilePrimaryLinks.length > 0
+		(isMobileNav || !isAuthenticated) &&
+		mobileOverflowLinks.length > 0 &&
+		mobilePrimaryLinks.length > 0
 
 	const navLinks = useMobileDrawer ? mobilePrimaryLinks : links
 
@@ -418,23 +442,29 @@ export function SiteHeader() {
 						>
 							Выйти
 						</button>
-					) : (
-						<>
-							<Link
-								href='/auth/login'
-								className='progyx-header__button progyx-header__button--ghost'
-							>
-								Войти
-							</Link>
-							<Link
-								href='/auth/register'
-								className='progyx-header__button progyx-header__button--primary'
-							>
-								Создать аккаунт
-							</Link>
-						</>
-					)}
+					) : null}
 				</div>
+				{!isAuthenticated ? (
+					<div className='progyx-header__guest-auth'>
+						<Link
+							href='/auth/login'
+							className='progyx-header__button progyx-header__button--ghost'
+						>
+							Войти
+						</Link>
+						<Link
+							href='/auth/register'
+							className='progyx-header__button progyx-header__button--primary'
+						>
+							<span className='progyx-header__button-label progyx-header__button-label--full'>
+								Создать аккаунт
+							</span>
+							<span className='progyx-header__button-label progyx-header__button-label--short'>
+								Регистрация
+							</span>
+						</Link>
+					</div>
+				) : null}
 			</div>
 
 			{drawerPortalReady && useMobileDrawer
