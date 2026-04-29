@@ -65,7 +65,7 @@ export default async function TournamentPage() {
 					<div className='tournament-hero__meta'>
 						<span className='brand-chip brand-chip--warm'>
 							<RefreshCw aria-hidden size={16} />
-							Обновлено:{' '}
+							Обновлено: {' '}
 							{data.meta.modified ? (
 								<UserLocalTime
 									iso={data.meta.modified}

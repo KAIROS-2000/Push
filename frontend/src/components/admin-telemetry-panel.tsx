@@ -290,7 +290,7 @@ export function AdminTelemetryPanel({ telemetry }: { telemetry: AdminTelemetryDa
             </p>
           </div>
           <span className="brand-chip brand-chip--soft">
-            Обновлено{' '}
+            Обновлено {' '}
             {telemetry.generated_at ? (
               <UserLocalTime iso={telemetry.generated_at} variant="admin" emptyLabel="Нет данных" />
             ) : (
