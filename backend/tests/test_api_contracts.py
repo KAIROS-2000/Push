@@ -423,7 +423,7 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual([row['username'] for row in class_payload['leaderboard']], ['classmate', 'student'])
         self.assertEqual(global_payload['leaderboard'], cached_global_payload['leaderboard'])
 
-    def test_student_lesson_access_gate_for_locked_lesson_in_module(self):
+    def test_lesson_access_gate_for_locked_lesson_in_module(self):
         app = self.create_app()
         from app.core.db import db
         from app.core.security import hash_password
@@ -446,7 +446,14 @@ class ApiContractTests(unittest.TestCase):
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,
             )
-            db.session.add_all([student, teacher])
+            parent = User(
+                full_name='Gate Parent',
+                username='gparent',
+                email='gparent@example.com',
+                password_hash=hash_password('ParentPass123!'),
+                role=UserRole.PARENT,
+            )
+            db.session.add_all([student, teacher, parent])
             db.session.flush()
             module = Module(
                 slug='gate-mod',
@@ -492,6 +499,31 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(open_gate, {'allowed': True})
         self.assertFalse(locked_gate['allowed'])
         self.assertEqual(locked_gate['redirect_lesson_id'], first_id)
+
+        with app.test_client() as client:
+            self.login(client, 'gparent@example.com', 'ParentPass123!')
+            parent_locked_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
+            parent_locked_lesson = client.get(f'/api/lessons/{second_id}')
+
+        self.assertFalse(parent_locked_gate['allowed'])
+        self.assertEqual(parent_locked_gate['redirect_lesson_id'], first_id)
+        self.assertEqual(parent_locked_lesson.status_code, 403)
+
+        with app.test_client() as client:
+            self.login(client, 'gparent@example.com', 'ParentPass123!')
+            parent_start = client.post(f'/api/lessons/{first_id}/start')
+            parent_complete = client.patch(
+                f'/api/lessons/{first_id}/complete',
+                json={'completion_percent': 100},
+            )
+            parent_unlocked_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
+            parent_second_lesson = client.get(f'/api/lessons/{second_id}')
+
+        self.assertEqual(parent_start.status_code, 200)
+        self.assertEqual(parent_complete.status_code, 200)
+        self.assertEqual(parent_unlocked_gate, {'allowed': True})
+        self.assertEqual(parent_second_lesson.status_code, 200)
+        self.assertEqual(parent_second_lesson.get_json()['viewer_role'], 'parent')
 
         with app.test_client() as client:
             self.login(client, 'gteacher@example.com', 'TeacherPass123!')

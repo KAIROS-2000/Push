@@ -1,6 +1,6 @@
 import type { LessonDetail, ProgressItem, QuizItem, QuizQuestion } from '@/types'
 
-type ViewerRole = 'student' | 'teacher' | 'admin' | 'superadmin'
+type ViewerRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
 
 export interface LessonPlayerPayload {
 	lesson: LessonDetail

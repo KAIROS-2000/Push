@@ -5,10 +5,9 @@ import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { Bot, Send, Sparkles, X } from 'lucide-react'
 
-import { api } from '@/lib/api'
 import { usePrefersReducedMotion } from '@/hooks/use-user-page-motion'
-import { showErrorToast } from '@/lib/toast'
-import { LessonChatMessage, LessonGigaChatResponse } from '@/types'
+import { showInfoToast } from '@/lib/toast'
+import { LessonChatMessage } from '@/types'
 
 gsap.registerPlugin(useGSAP)
 
@@ -27,6 +26,8 @@ function makeMessageId() {
 function trimLabel(value: string, limit = 44) {
   return value.length > limit ? `${value.slice(0, Math.max(limit - 3, 0)).trimEnd()}...` : value
 }
+
+const GIGACHAT_UNAVAILABLE_MESSAGE = 'GigaChat недоступен в проекте.'
 
 export function LessonGigachatDrawer({
   lessonId,
@@ -263,7 +264,7 @@ export function LessonGigachatDrawer({
     return () => window.removeEventListener('keydown', handleEscape)
   }, [isOpen])
 
-  async function sendMessage(rawText?: string) {
+  function sendMessage(rawText?: string) {
     const content = (rawText ?? prompt).trim()
     if (!content || isSending) return
 
@@ -274,41 +275,17 @@ export function LessonGigachatDrawer({
     }
 
     const nextMessages = [...messages, userMessage]
-    const apiHistory: LessonChatMessage[] = nextMessages
-      .filter((item) => item.persist !== false)
-      .map(({ role, content: messageContent }) => ({ role, content: messageContent }))
-
-    setMessages(nextMessages)
+    setMessages([
+      ...nextMessages,
+      {
+        id: makeMessageId(),
+        role: 'assistant',
+        persist: false,
+        content: GIGACHAT_UNAVAILABLE_MESSAGE,
+      },
+    ])
     setPrompt('')
-    setIsSending(true)
-
-    try {
-      const data = await api<LessonGigaChatResponse>(
-        `/lessons/${lessonId}/gigachat`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            messages: apiHistory,
-            current_answer: draftAnswer,
-          }),
-        },
-        true
-      )
-
-      setModelLabel(data.model || 'GigaChat')
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeMessageId(),
-          role: 'assistant',
-          content: data.message.content,
-        },
-      ])
-    } catch (err) {
-      showErrorToast(err instanceof Error ? err.message : 'Не удалось получить ответ от GigaChat.')
-    } finally {
-      setIsSending(false)
-    }
+    showInfoToast(GIGACHAT_UNAVAILABLE_MESSAGE)
   }
 
   return (

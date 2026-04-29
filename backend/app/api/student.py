@@ -17,11 +17,6 @@ from ..core.code_judge import (
 from ..core.assignment_sync import sync_student_assignment_submissions_for_lesson
 from ..core.achievements import sync_achievements_for_user
 from ..core.db import db
-from ..core.gigachat import (
-    GigaChatConfigurationError,
-    GigaChatUnavailableError,
-    request_lesson_chat_completion,
-)
 from ..core.security import (
     auth_required,
     hash_password,
@@ -71,6 +66,7 @@ PROGRESS_STATUS_LABELS = {
 MANUAL_REVIEW_PROGRESS_STATUSES = {"pending_review", "needs_revision"}
 VALID_AGE_GROUPS = {"junior", "middle", "senior"}
 DEFAULT_THEMES = {"light", "dark"}
+FORCED_SEQUENCE_ROLES = {UserRole.STUDENT, UserRole.PARENT}
 _AGE_GROUP_RANK = {"junior": 0, "middle": 1, "senior": 2}
 LEADERBOARD_LIMIT = 50
 GLOBAL_LEADERBOARD_REFRESH_INTERVAL = timedelta(minutes=5)
@@ -343,6 +339,10 @@ def _student_has_assignment_for_lesson(student: User, lesson: Lesson) -> bool:
     )
 
 
+def _uses_forced_lesson_sequence(user: User) -> bool:
+    return user.role in FORCED_SEQUENCE_ROLES
+
+
 def _user_can_access_lesson(user: User, lesson: Lesson) -> bool:
     module = lesson.module
     if module.is_published:
@@ -365,34 +365,44 @@ def _user_can_access_lesson(user: User, lesson: Lesson) -> bool:
     return True
 
 
-def _effective_lesson_state_for_student(student: User, lesson: Lesson) -> str:
+def _effective_lesson_state_for_user(user: User, lesson: Lesson) -> str:
     module, lesson_index = _lesson_context(lesson)
-    state = _lesson_state_for_user(student, module, lesson, lesson_index)
-    if state == STATE_MAP["locked"] and _student_has_assignment_for_lesson(
-        student, lesson
+    state = _lesson_state_for_user(user, module, lesson, lesson_index)
+    if (
+        user.role == UserRole.STUDENT
+        and state == STATE_MAP["locked"]
+        and _student_has_assignment_for_lesson(user, lesson)
     ):
         return STATE_MAP["open"]
     return state
 
 
-def _continue_lesson_for_student(student: User) -> Lesson | None:
+def _effective_lesson_state_for_student(student: User, lesson: Lesson) -> str:
+    return _effective_lesson_state_for_user(student, lesson)
+
+
+def _continue_lesson_for_user(user: User) -> Lesson | None:
     modules = (
         Module.query.filter_by(
-            is_published=True, age_group=student.age_group or "middle"
+            is_published=True, age_group=user.age_group or "middle"
         )
         .order_by(Module.order_index.asc())
         .all()
     )
     for module in modules:
         for idx, lesson in enumerate(module.lessons):
-            if not _user_can_access_lesson(student, lesson):
+            if not _user_can_access_lesson(user, lesson):
                 continue
             if (
-                _effective_lesson_state_for_student(student, lesson)
+                _effective_lesson_state_for_user(user, lesson)
                 == STATE_MAP["current"]
             ):
                 return lesson
     return None
+
+
+def _continue_lesson_for_student(student: User) -> Lesson | None:
+    return _continue_lesson_for_user(student)
 
 
 def _continue_lesson_summary_for_student(student: User) -> dict | None:
@@ -641,22 +651,22 @@ def module_lessons(current_user: User, module_id: int):
 @student_bp.get("/student/lesson-access/<int:lesson_id>")
 @auth_required()
 def student_lesson_access(current_user: User, lesson_id: int):
-    if current_user.role != UserRole.STUDENT:
+    if not _uses_forced_lesson_sequence(current_user):
         return {"allowed": True}
     lesson = db.session.get(Lesson, lesson_id)
     if lesson is None:
         return {"allowed": True}
     if not _user_can_access_lesson(current_user, lesson):
-        target = _continue_lesson_for_student(current_user)
+        target = _continue_lesson_for_user(current_user)
         return {
             "allowed": False,
             "redirect_lesson_id": target.id if target else None,
         }
     if (
-        _effective_lesson_state_for_student(current_user, lesson)
+        _effective_lesson_state_for_user(current_user, lesson)
         == STATE_MAP["locked"]
     ):
-        target = _continue_lesson_for_student(current_user)
+        target = _continue_lesson_for_user(current_user)
         return {
             "allowed": False,
             "redirect_lesson_id": target.id if target else None,
@@ -674,8 +684,8 @@ def get_lesson(current_user: User, lesson_id: int):
         return {"message": "У вас нет доступа к этому уроку."}, 403
     module, idx = _lesson_context(lesson)
     state = _lesson_state_for_user(current_user, module, lesson, idx)
-    if current_user.role == UserRole.STUDENT:
-        state = _effective_lesson_state_for_student(current_user, lesson)
+    if _uses_forced_lesson_sequence(current_user):
+        state = _effective_lesson_state_for_user(current_user, lesson)
         if state == STATE_MAP["locked"]:
             return {"message": "Сначала завершите предыдущий урок."}, 403
     progress = UserProgress.query.filter_by(
@@ -699,39 +709,16 @@ def get_lesson(current_user: User, lesson_id: int):
 @student_bp.post("/lessons/<int:lesson_id>/gigachat")
 @auth_required()
 def lesson_gigachat(current_user: User, lesson_id: int):
-    lesson = Lesson.query.get_or_404(lesson_id)
-    if not _user_can_access_lesson(current_user, lesson):
-        return {"message": "У вас нет доступа к этому уроку."}, 403
-    if (
-        current_user.role == UserRole.STUDENT
-        and _effective_lesson_state_for_student(current_user, lesson)
-        == STATE_MAP["locked"]
-    ):
-        return {"message": "Сначала откройте доступ к этому уроку."}, 403
-
-    data = request.get_json() or {}
-    try:
-        payload = request_lesson_chat_completion(
-            lesson=lesson,
-            current_user=current_user,
-            raw_messages=data.get("messages"),
-            current_answer=(data.get("current_answer") or "").strip() or None,
-        )
-    except GigaChatConfigurationError as exc:
-        return {"message": str(exc)}, 400
-    except GigaChatUnavailableError as exc:
-        return {"message": str(exc)}, 503
-
-    return payload
+    return {"message": "GigaChat недоступен в проекте."}, 404
 
 
 @student_bp.patch("/lessons/<int:lesson_id>/complete")
-@auth_required([UserRole.STUDENT])
+@auth_required([UserRole.STUDENT, UserRole.PARENT])
 def complete_lesson(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_student(current_user, lesson) == STATE_MAP["locked"]:
+    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     data = request.get_json() or {}
@@ -792,7 +779,7 @@ def complete_lesson(current_user: User, lesson_id: int):
         "message": PROGRESS_STATUS_LABELS[progress.status],
         "completion_percent": completion_percent,
         "progress": progress.to_dict(),
-        "state": _effective_lesson_state_for_student(current_user, lesson),
+        "state": _effective_lesson_state_for_user(current_user, lesson),
         "redirect_url": "/profile",
         "first_completed_lesson": first_completed_lesson,
     }
@@ -805,8 +792,8 @@ def submit_task(current_user: User, task_id: int):
     if not _user_can_access_lesson(current_user, task.lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
     if (
-        current_user.role == UserRole.STUDENT
-        and _effective_lesson_state_for_student(current_user, task.lesson)
+        _uses_forced_lesson_sequence(current_user)
+        and _effective_lesson_state_for_user(current_user, task.lesson)
         == STATE_MAP["locked"]
     ):
         return {
@@ -895,12 +882,12 @@ def submit_task(current_user: User, task_id: int):
 
 
 @student_bp.post("/lessons/<int:lesson_id>/start")
-@auth_required([UserRole.STUDENT])
+@auth_required([UserRole.STUDENT, UserRole.PARENT])
 def start_lesson(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_student(current_user, lesson) == STATE_MAP["locked"]:
+    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     progress = _get_or_create_progress(current_user.id, lesson.id)
@@ -910,12 +897,12 @@ def start_lesson(current_user: User, lesson_id: int):
 
 
 @student_bp.post("/lessons/<int:lesson_id>/hints")
-@auth_required([UserRole.STUDENT])
+@auth_required([UserRole.STUDENT, UserRole.PARENT])
 def record_lesson_hints(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_student(current_user, lesson) == STATE_MAP["locked"]:
+    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     data = request.get_json() or {}
@@ -936,8 +923,8 @@ def submit_quiz(current_user: User, quiz_id: int):
     if not _user_can_access_lesson(current_user, quiz.lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
     if (
-        current_user.role == UserRole.STUDENT
-        and _effective_lesson_state_for_student(current_user, quiz.lesson)
+        _uses_forced_lesson_sequence(current_user)
+        and _effective_lesson_state_for_user(current_user, quiz.lesson)
         == STATE_MAP["locked"]
     ):
         return {

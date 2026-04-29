@@ -152,13 +152,13 @@ type LessonAccessPayload = {
 	redirect_lesson_id?: number | null
 }
 
-async function studentLessonGateResponse(
+async function forcedSequenceLessonGateResponse(
 	request: NextRequest,
 	role: UserRole | null,
 	csp: string,
 	refreshUpstream: Response | null,
 ): Promise<NextResponse | null> {
-	if (role !== 'student') {
+	if (role !== 'student' && role !== 'parent') {
 		return null
 	}
 	const match = request.nextUrl.pathname.match(/^\/lessons\/(\d+)\/?$/)
@@ -253,7 +253,7 @@ export async function proxy(request: NextRequest) {
 		if (roleRule && !roleRule.roles.includes(currentRole)) {
 			return redirectWithCsp(dashboardUrl(request))
 		}
-		const lessonGate = await studentLessonGateResponse(request, currentRole, csp, null)
+		const lessonGate = await forcedSequenceLessonGateResponse(request, currentRole, csp, null)
 		if (lessonGate) {
 			return lessonGate
 		}
@@ -275,7 +275,7 @@ export async function proxy(request: NextRequest) {
 				csp,
 			)
 		}
-		const refreshedLessonGate = await studentLessonGateResponse(
+		const refreshedLessonGate = await forcedSequenceLessonGateResponse(
 			request,
 			refreshedSession.role,
 			csp,

@@ -235,6 +235,7 @@ export function SiteHeader() {
 		if (role === 'parent') {
 			return [
 				{ href: '/parent/dashboard', label: 'Семейный кабинет' },
+				{ href: '/roadmap', label: 'Уроки' },
 				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },

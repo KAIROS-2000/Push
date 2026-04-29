@@ -29,7 +29,7 @@ import {
 } from '@/types'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 export type { LessonPlayerPayload } from '@/components/lesson-player-helpers'
 
@@ -64,15 +64,7 @@ const LazyLessonCodeEditor = dynamic(
 	},
 )
 
-const LazyLessonGigachatDrawer = dynamic(
-	() =>
-		import('@/components/lesson-gigachat-drawer').then(
-			mod => mod.LessonGigachatDrawer,
-		),
-	{ ssr: false, loading: () => null },
-)
-
-type ViewerRole = 'student' | 'teacher' | 'admin' | 'superadmin'
+type ViewerRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
 
 function OrderQuestion({
 	question,
@@ -511,8 +503,9 @@ export function LessonPlayer({
 	)
 	const isTeacherLesson = Boolean(lesson?.is_custom)
 	const bypassCompletionApi =
-		currentUserRole !== null && currentUserRole !== 'student'
-	const deferredAnswer = useDeferredValue(answer)
+		currentUserRole !== null &&
+		currentUserRole !== 'student' &&
+		currentUserRole !== 'parent'
 
 	useEffect(() => {
 		if (initialData) return
@@ -549,7 +542,11 @@ export function LessonPlayer({
 	}, [initialData, lessonId])
 
 	useEffect(() => {
-		if (!lesson || currentUserRole !== 'student') return
+		if (
+			!lesson ||
+			(currentUserRole !== 'student' && currentUserRole !== 'parent')
+		)
+			return
 		if (startedLessonRef.current === lesson.id) return
 		startedLessonRef.current = lesson.id
 
@@ -602,30 +599,6 @@ export function LessonPlayer({
 			isQuestionAnswered(question, quizAnswers[question.id]),
 		).length
 	}, [quiz, quizAnswers, quizLocked])
-	const theoryHighlights = useMemo(() => {
-		if (!lesson) return []
-
-		const items = lesson.theory_blocks.flatMap(block => {
-			const entries: string[] = []
-			if (block.title?.trim()) {
-				entries.push(block.title.trim())
-			}
-			if (block.items?.length) {
-				entries.push(...block.items.map(item => item.trim()).filter(Boolean))
-			}
-			return entries
-		})
-
-		return Array.from(new Set(items)).slice(0, 4)
-	}, [lesson])
-	const interactiveHighlights = useMemo(() => {
-		if (!lesson) return []
-
-		return lesson.interactive_steps
-			.map(step => step.title?.trim() || step.text?.trim() || '')
-			.filter(Boolean)
-			.slice(0, 3)
-	}, [lesson])
 	const moduleLessons = useMemo(() => {
 		if (!lesson) return []
 
@@ -1516,21 +1489,6 @@ export function LessonPlayer({
 					</section>
 				</section>
 			</div>
-
-			<LazyLessonGigachatDrawer
-				lessonId={lessonId}
-				lessonTitle={lesson.title}
-				lessonSummary={lesson.summary}
-				moduleTitle={lesson.module.title}
-				ageGroup={lesson.module.age_group}
-				durationMinutes={lesson.duration_minutes}
-				theoryHighlights={theoryHighlights}
-				interactiveHighlights={interactiveHighlights}
-				practiceTaskTitle={task?.title}
-				practiceTaskPrompt={task?.prompt}
-				quizTitle={quiz?.title}
-				draftAnswer={deferredAnswer}
-			/>
 		</>
 	)
 }
