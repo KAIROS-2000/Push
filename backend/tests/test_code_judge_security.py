@@ -50,6 +50,7 @@ class CodeJudgeSecurityTests(unittest.TestCase):
             'ENABLE_DEMO_DATA': 'false',
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
+            'SESSION_COOKIE_SAMESITE': 'Strict',
             'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': 'http://judge-runner:8090/execute',
             'CODE_JUDGE_RUNNER_TOKEN': 'unit-test-runner-token',
@@ -136,6 +137,31 @@ class CodeJudgeSecurityTests(unittest.TestCase):
             **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])
+
+    def test_stdio_judge_requires_isolated_runner_even_if_local_fallback_requested(self):
+        app = self.create_app(
+            CODE_JUDGE_RUNNER_URL='',
+            CODE_JUDGE_ALLOW_LOCAL_FALLBACK='true',
+        )
+
+        class TaskStub:
+            lesson = object()
+
+            def normalized_validation(self, include_private=False):  # noqa: ANN001, ARG002
+                return {
+                    'evaluation_mode': 'stdin_stdout',
+                    'language': 'python',
+                    'tests': [{'label': 'echo', 'input': 'x', 'expected': 'x'}],
+                    'keywords': [],
+                    'time_limit_ms': 500,
+                    'memory_limit_mb': 64,
+                }
+
+        with app.app_context():
+            from app.core.code_judge import CodeJudgeUnavailableError, judge_task_submission
+
+            with self.assertRaisesRegex(CodeJudgeUnavailableError, 'runner'):
+                judge_task_submission(TaskStub(), 'print(input())')
 
     def test_runner_rejects_missing_or_wrong_token(self):
         with patch.dict(

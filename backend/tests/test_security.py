@@ -5,8 +5,11 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
+
+import jwt
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
@@ -45,6 +48,7 @@ class SecurityRegressionTests(unittest.TestCase):
             'ENABLE_DEMO_DATA': 'false',
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
+            'SESSION_COOKIE_SAMESITE': 'Strict',
             'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
@@ -111,7 +115,7 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertIn('HttpOnly;', access_cookie)
             self.assertIn('HttpOnly;', refresh_cookie)
             self.assertNotIn('HttpOnly;', expires_cookie)
-            self.assertTrue(all('SameSite=Lax' in cookie for cookie in cookies))
+            self.assertTrue(all('SameSite=Strict' in cookie for cookie in cookies))
 
             me_response = client.get('/api/auth/me')
             self.assertEqual(me_response.status_code, 200)
@@ -302,6 +306,39 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 201, response.get_json())
             self.assertEqual(response.get_json()['user']['phone'], '79123456789')
 
+    def test_register_ip_rate_limit_blocks_mass_attempts(self):
+        app = self.create_app(
+            REGISTER_IP_RATE_LIMIT_MAX_ATTEMPTS='2',
+            REGISTER_IP_RATE_LIMIT_BLOCK_SECONDS='60',
+            REGISTER_IP_RATE_LIMIT_WINDOW_SECONDS='300',
+        )
+        with app.test_client() as client:
+            for index in range(2):
+                response = client.post(
+                    '/api/auth/register',
+                    json={
+                        'email': f'reg-limit-{index}@example.com',
+                        'username': f'reglim{index}',
+                        'password': 'StrongPass123!',
+                        'phone': '123',
+                        'role': 'student',
+                        'age_group': 'middle',
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+            blocked = client.post(
+                '/api/auth/register',
+                json={
+                    'email': 'reg-limit-3@example.com',
+                    'username': 'reglim3',
+                    'password': 'StrongPass123!',
+                    'phone': '123',
+                    'role': 'student',
+                    'age_group': 'middle',
+                },
+            )
+            self.assertEqual(blocked.status_code, 429)
+
     def test_register_rejects_missing_phone(self):
         app = self.create_app()
         with app.test_client() as client:
@@ -347,7 +384,83 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(response.headers.get('X-Content-Type-Options'), 'nosniff')
             self.assertEqual(response.headers.get('X-Frame-Options'), 'DENY')
             self.assertEqual(response.headers.get('Referrer-Policy'), 'strict-origin-when-cross-origin')
+            self.assertEqual(response.headers.get('Strict-Transport-Security'), 'max-age=31536000; includeSubDomains')
+            self.assertEqual(response.headers.get('X-Permitted-Cross-Domain-Policies'), 'none')
             self.assertIn("default-src 'none'", response.headers.get('Content-Security-Policy', ''))
+
+    def test_production_rejects_unsafe_request_without_origin(self):
+        app = self.create_app(
+            APP_ENV='production',
+            SESSION_COOKIE_SECURE='true',
+            SUPERADMIN_BOOTSTRAP='false',
+            GIGACHAT_VERIFY_SSL='true',
+            **_PROD_REDIS_ENV,
+        )
+        self.create_user(app)
+
+        with app.test_client() as client:
+            response = client.post(
+                '/api/auth/login',
+                json={'login': 'student@example.com', 'password': 'StrongPass123!'},
+            )
+            self.assertEqual(response.status_code, 403)
+
+    def test_jwt_keyring_adds_kid_and_accepts_previous_key(self):
+        current_key = 'CurrentJwtSigningKey1234567890!Current'
+        previous_key = 'PreviousJwtSigningKey1234567890!Previous'
+        app = self.create_app(
+            JWT_SIGNING_KEY_ID='current',
+            JWT_SIGNING_KEYS=f'current={current_key},previous={previous_key}',
+        )
+        user_id = self.create_user(app)
+
+        with app.app_context():
+            from app.core.db import db
+            from app.core.security import create_access_token, decode_token
+            from app.models.user import User
+
+            user = db.session.get(User, user_id)
+            token = create_access_token(user)
+            self.assertEqual(jwt.get_unverified_header(token)['kid'], 'current')
+            self.assertEqual(decode_token(token)['sub'], str(user_id))
+
+            now = datetime.now(UTC)
+            previous_token = jwt.encode(
+                {
+                    'sub': str(user_id),
+                    'role': 'student',
+                    'session_version': 0,
+                    'type': 'access',
+                    'iat': int(now.timestamp()),
+                    'exp': int((now + timedelta(minutes=5)).timestamp()),
+                },
+                previous_key,
+                algorithm='HS256',
+                headers={'kid': 'previous'},
+            )
+            self.assertEqual(decode_token(previous_token)['sub'], str(user_id))
+
+    def test_site_activity_log_treats_deleted_token_user_as_anonymous(self):
+        app = self.create_app()
+        user_id = self.create_user(app)
+
+        with app.app_context():
+            from app.core.db import db
+            from app.core.security import create_access_token
+            from app.models.user import User
+
+            user = db.session.get(User, user_id)
+            token = create_access_token(user)
+            db.session.delete(user)
+            db.session.commit()
+
+        with app.test_request_context(
+            '/api/auth/me',
+            headers={'Cookie': f'codequest_access_token={token}'},
+        ):
+            from app.services.site_activity_log import _access_user_from_request
+
+            self.assertEqual(_access_user_from_request(), (None, 'anonymous'))
 
 
 if __name__ == '__main__':

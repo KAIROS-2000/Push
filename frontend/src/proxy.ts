@@ -88,6 +88,10 @@ function authCookieHeader(request: NextRequest) {
 	return parts.join('; ')
 }
 
+function requestOrigin(request: NextRequest) {
+	return request.headers.get('origin')?.trim() || request.nextUrl.origin
+}
+
 function clearAuthCookies(response: NextResponse) {
 	response.cookies.delete(ACCESS_COOKIE)
 	response.cookies.delete(REFRESH_COOKIE)
@@ -211,6 +215,7 @@ async function refreshSession(request: NextRequest) {
 			headers: {
 				accept: 'application/json',
 				cookie: authCookieHeader(request),
+				origin: requestOrigin(request),
 				...(csrf ? { [CSRF_HEADER]: csrf } : {}),
 			},
 			cache: 'no-store',

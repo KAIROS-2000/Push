@@ -40,6 +40,10 @@ Progyx — fullstack-платформа для обучения детей 10–
 
 **Апдейт v1.0.1 (P0-фикс-спринт):** все десять P0-пунктов закрыты на уровне кода и конфигурации. Ниже исходная формулировка проблемы и конкретная ссылка на фикс.
 
+**Апдейт v1.0.2 (security hardening):** закрыты все оставшиеся уязвимости из этого документа, которые можно устранить в коде/конфигурации без затрагивания GigaChat: JWT key rotation, Strict SameSite, HSTS, отсутствие unsafe-запросов без Origin в production, IP-throttle регистрации, удаление local judge fallback, PostgreSQL secret file и снятие публикации `5432` с host. GigaChat-риски намеренно исключены из scope по решению владельца.
+
+Дополнительно в compose frontend больше не получает общий backend `.env`; runtime frontend ограничен `NEXT_PUBLIC_*`, `APP_ENV`, `NODE_ENV` и `INTERNAL_API_URL`, чтобы backend-only секреты не попадали в контейнер UI.
+
 | # | Исходный блокер (v1.0) | Статус | Что сделано в v1.0.1 |
 |---|------------------------|--------|----------------------|
 | P0-1 | Утечка `GIGACHAT_AUTH_KEY` в `.env`, слабый `SECRET_KEY=wemogw!325g` (13 симв.), `GIGACHAT_VERIFY_SSL=false`. | **Закрыто в коде** (требуется оргдействие) | `_validate_runtime_config` в production теперь требует `SECRET_KEY` ≥ 32 симв. + запрещает placeholder-подстроки (`change-me`, `replace-me`, `your-secret`, `dev-secret`, `super-secret-key`, `example`, `todo`) + низкоэнтропийные ключи (один символ, короткие all-lowercase/all-digits). `GIGACHAT_VERIFY_SSL=false` в production → `RuntimeError`. Покрыто `backend/tests/test_runtime_config.py` (8 кейсов). **Оргдействие (вне кода):** (a) отозвать действующий ключ у Сбера и выпустить новый; (b) `git filter-repo` для удаления `.env` из истории; (c) force-push + уведомление контрибьюторов. |
@@ -62,10 +66,10 @@ Progyx — fullstack-платформа для обучения детей 10–
 | **[P1-3] Custom migration runner, не Alembic.** `backend/app/core/migrations.py` — самодельный, добавляет/игнорирует ревизии, но не поддерживает downgrade, не умеет генерировать миграции автоматически, не имеет graph-зависимостей. При эволюции схемы появятся data-migration'ы, которые custom runner не потянет.                                                                                                |
 | **[P1-4] Leaderboard-cache in-process.** `_global_leaderboard_cache` — модульная dict на процесс. При запуске gunicorn с `--workers > 1` каждый worker имеет свой кеш → разные ученики видят разные top-50. Нужен Redis или отдельный cache-слой.                                                                                                                                                                     |
 | **[P1-5] Отсутствие password recovery и email-канала.** Нет ни SMTP, ни Celery/RQ, ни background-worker. Учитель не может восстановить пароль, админ не может прислать приглашение. Для школы/коммерции — блокер.                                                                                                                                                                                                     |
-| **[P1-6] JWT без key rotation.** Подпись — одним `SECRET_KEY` HS256. Нет KID, нет JWKS, нет ротации. Утечка SECRET_KEY = полная компрометация всех активных сессий и возможность форжить токены любой роли.                                                                                                                                                                                                           |
+| **[P1-6] JWT без key rotation.** **Закрыто в v1.0.2.** Введены `JWT_SIGNING_KEY_ID` + `JWT_SIGNING_KEYS` (`kid=secret,...`), новые токены подписываются с `kid`, decode принимает текущий и предыдущие ключи. Production validator проверяет наличие текущего `kid` и стойкость всех signing keys.                                                                                                                                     |
 | **[P1-7] Admin-audit-log неполон.** `AdminAuditLog` покрывает только явно инструментированные действия: `user_blocked`, `user_unblocked`, `module_created`, `module_published/unpublished`, `module_deleted`. Не логируются: назначение учителю классов, создание/редактирование уроков (кроме создания), правки Task, reset XP, правки ParentInvite, вход/выход admin. Для школы с регуляторикой нужен полный аудит. |
-| **[P1-8] Отсутствие rate-limit на ключевые эндпоинты.** `register`, `refresh`, `parent_access` — у parent throttle есть, у register/refresh — нет. Массовая регистрация или brute-force refresh-token возможны.                                                                                                                                                                                                       |
-| **[P1-9] Отсутствие CSRF и SameSite=Strict при HttpOnly-куках.** `SESSION_COOKIE_SAMESITE=Lax` по умолчанию. Lax пропускает top-level GET → возможен CSRF по ссылке. Для unsafe методов Origin-check частично спасает, но ненадёжен.                                                                                                                                                                                  |
+| **[P1-8] Rate-limit на ключевые эндпоинты.** **Закрыто в v1.0.2.** Login, parent link, register и refresh имеют throttle. Для register добавлен отдельный IP-level attempt throttle (`REGISTER_IP_RATE_LIMIT_*`), который ловит массовую регистрацию с разными email/phone, а не только неуспешные попытки по одному email.                                                                                                                |
+| **[P1-9] CSRF и SameSite=Strict при HttpOnly-куках.** **Закрыто в v1.0.2.** `SESSION_COOKIE_SAMESITE` по умолчанию `Strict`, production валидатор запрещает `Lax`; CSRF-cookie использует тот же SameSite. Unsafe `/api/*` без `Origin` в production отклоняются, Next API-proxy и session-refresh явно передают origin на backend.                                                                                                      |
 
 
 
@@ -150,7 +154,7 @@ Progyx — fullstack-платформа для обучения детей 10–
 
 - `judge_net` объявлен `internal: true` — контейнер не имеет egress-интерфейса на внешний интернет. Это критично и верно.
 - `backend` присутствует в обеих сетях, чтобы инициировать вызов runner'а и при этом иметь доступ к `db`. Побочное следствие: runner по-прежнему может дотянуться до backend'а по `judge_net`. Future hardening: пер-submission намного-временный network namespace с полным блоком egress.
-- `db` публикует порт `5432:5432` на host — нужно закрыть в production (администратор БД работает через bastion / ssh-port-forward).
+- `db` больше не публикует `5432` на host; администрирование БД — через `docker exec`, bastion или временный admin-профиль.
 - `frontend` → `backend`: через `INTERNAL_API_URL=http://backend:8000/api`, cookie пробрасываются в `frontend/src/app/api/[...path]/route.ts`.
 
 ### 2.4. Внешние интеграции
@@ -381,11 +385,11 @@ class PermissionService:
 
 | Секрет                    | Текущее место                            | Риск                           | План                                                                                                                                                                            |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SECRET_KEY`              | `.env` в repo (13 chars)                 | P0: компрометация всех JWT     | 64 hex символа, Docker secret, ротация с `session_version` bump                                                                                                                 |
-| `GIGACHAT_AUTH_KEY`       | `.env` в repo (реальный!)                | P0: квота Sberbank расходуется | Отозвать ключ у Sber, новый — в Docker secret; добавить `.env` в `.gitignore` (проверено: `.env` есть в `.gitignore`, но файл уже в истории коммитов — нужен `git filter-repo`) |
-| `CODE_JUDGE_RUNNER_TOKEN` | `.env`                                   | Средний: компрометация runner  | Docker secret, минимум 32 байта случайных                                                                                                                                       |
+| `SECRET_KEY`              | `.env` / env secret                      | P0: компрометация legacy JWT   | **Закрыто v1.0.2:** production требует стойкий `SECRET_KEY`; JWT ротация вынесена в `JWT_SIGNING_KEY_ID` + `JWT_SIGNING_KEYS`, новые токены получают `kid`, старые ключи можно держать до истечения refresh TTL.                              |
+| `GIGACHAT_AUTH_KEY`       | `.env` в repo (реальный!)                | P0: квота Sberbank расходуется | **Исключено из scope v1.0.2 по решению владельца.** Требуется оргдействие: отозвать ключ у Sber, новый — в Docker secret; `.env` уже в `.gitignore`, но файл был в истории коммитов — нужен `git filter-repo`.                              |
+| `CODE_JUDGE_RUNNER_TOKEN` | `.env` / env secret                      | Средний: компрометация runner  | Production fail-fast требует минимум 32 символа и запрещает known placeholders. Local fallback удалён из execution path.                                                                                                                       |
 | `SUPERADMIN_PASSWORD`     | `.env`                                   | Средний: захват superadmin     | Bootstrap только через CLI (`--password-stdin`), не в .env                                                                                                                      |
-| `POSTGRES_PASSWORD`       | `docker-compose.yml` plain (`codequest`) | P0 если публичный порт         | Docker secret, закрыть 5432-порт                                                                                                                                                |
+| `POSTGRES_PASSWORD`       | Docker secret file                       | P0 если публичный порт         | **Закрыто v1.0.2:** `db` читает `POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password`, `5432` больше не published на host, backend умеет строить `DATABASE_URL` из `POSTGRES_*` + password file. Production validator отклоняет дефолтный/короткий PostgreSQL password. |
 
 
 ### 5.2. TLS и reverse-proxy
@@ -400,7 +404,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 ```
 
-Без `ProxyFix` `request.is_secure` всегда False за nginx → `SESSION_COOKIE_SECURE=True` в production не сработает корректно для отладки, и `request.remote_addr` отдаст IP nginx вместо клиента (throttle работает неверно).
+Без `ProxyFix` `request.is_secure` всегда False за nginx → `SESSION_COOKIE_SECURE=True` в production не сработает корректно для отладки, и `request.remote_addr` отдаст IP nginx вместо клиента (throttle работает неверно). **Статус v1.0.2:** закрыто через `TRUST_PROXY=true` + `ProxyFix`; включать только за доверенным reverse-proxy.
 
 ### 5.3. Заголовки безопасности
 
@@ -411,31 +415,25 @@ response.headers.setdefault('Content-Security-Policy',
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 ```
 
-В `frontend/next.config.ts` set'ится:
+В `frontend/src/proxy.ts` set'ится per-request CSP nonce:
 
 ```typescript
-"script-src 'self' 'unsafe-inline' 'unsafe-eval'"  // ⚠ P0
+script-src 'self' 'nonce-<random>' 'strict-dynamic'
 ```
 
-**Конфликт:** Flask отдаёт `default-src 'none'`, Next.js — `default-src 'self' + unsafe-inline`. Для пользовательских страниц (рендерит Next.js) применяется настройка Next.js → именно она защищает XSS. И именно она — дырявая.
-
-**Решение v1.5:**
-
-- Убрать `unsafe-eval` полностью (Monaco работает с `workerSrc 'self' blob:` — это есть).
-- Убрать `unsafe-inline` для `script-src` — вынести все inline-скрипты в `_next/static/`*. Единственный текущий inline — `getThemeInitScript()` в `layout.tsx`. Заменить на nonce-based CSP или на `data-theme` + media-query fallback.
-- Для style-src — перейти на nonce-CSP (Next 15+ поддерживает).
+**Статус v1.0.2:** script-CSP закрыт: `unsafe-eval` остаётся только вне production для HMR, inline theme script получает nonce из proxy header. `next.config.ts` добавляет static security headers, а production также выставляет `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Остаток: `style-src 'unsafe-inline'` сохраняется из-за React inline styles / Next App Router; это documented follow-up, не script execution surface.
 
 ### 5.4. CSRF
 
-Сейчас: `enforce_origin_for_unsafe_api_requests` — проверяет `Origin` vs `CLIENT_URL` для всех не-GET запросов на `/api/`*.
+Сейчас: `enforce_origin_for_unsafe_api_requests` проверяет `Origin` vs `CLIENT_URL` для всех не-GET запросов на `/api/*`.
 
-**Недостатки:**
+**Статус v1.0.2:**
 
-- `Origin` может отсутствовать (тогда код возвращает True = пропускает). Строгая защита требует `return False`, если нет Origin для unsafe-method.
-- Не защищает от same-origin CSRF (frame-based, service-worker-based).
-- SameSite=Lax пропускает top-level navigation GET; в проекте все мутации — POST/PATCH/DELETE, так что Lax даёт базовую защиту.
-
-**Решение v1.5 — double-submit cookie:**
+- В production unsafe `/api/*` без `Origin` отклоняются.
+- Next API-proxy (`frontend/src/app/api/[...path]/route.ts`) и session-refresh (`frontend/src/proxy.ts`) передают `Origin` на backend для внутренних server-side fetch.
+- `SESSION_COOKIE_SAMESITE=Strict` по умолчанию; production validator запрещает `Lax`.
+- `logout` больше не находится в public unsafe bypass list и требует CSRF при cookie-auth.
+- Double-submit cookie уже используется:
 
 ```python
 # При login set XSRF-TOKEN (не HttpOnly), frontend читает и шлёт в X-XSRF-TOKEN header
@@ -454,11 +452,9 @@ response.headers.setdefault('Content-Security-Policy',
 Submit-flow:
 
 1. `POST /api/tasks/<id>/submit {answer: "..."}`
-2. `judge_task_submission(task, raw_answer)` вызывает `_judge_stdio_submission_remote` (через HTTPS на runner) или `_judge_stdio_submission_local` (если `CODE_JUDGE_ALLOW_LOCAL_FALLBACK=true` — **в текущем `.env` стоит `true` в dev!**).
+2. `judge_task_submission(task, raw_answer)` вызывает только `_judge_stdio_submission_remote` через изолированный runner.
 
-**Local fallback = critical risk.** Код ученика выполнится в процессе backend'а с правами `appuser` внутри backend-контейнера. Без user-namespace, без network isolation. В production `IS_PRODUCTION=True` форсирует `False`, но dev-среда уязвима.
-
-**Решение v1.5:** Полностью убрать local fallback. В dev-среде использовать compose-профиль, поднимающий runner всегда. Это уменьшает кодовую поверхность и гарантирует, что single path протестирован.
+**Статус v1.0.2:** local fallback удалён из execution path. Если `CODE_JUDGE_RUNNER_URL` не задан или runner недоступен, backend возвращает `CodeJudgeUnavailableError` вместо запуска ученического кода внутри backend-процесса. Dev и production используют один security path: compose должен поднимать `judge-runner`.
 
 ### 5.7. SQL injection
 
@@ -824,13 +820,9 @@ def judge_task_submission(task, code):
     validation = task.normalized_validation(include_private=True)
     if validation['evaluation_mode'] == 'stdin_stdout':
         runner_url = _runner_url()
-        if runner_url:
-            try:
-                return _judge_stdio_submission_remote(task, code, validation)
-            except CodeJudgeUnavailableError:
-                if not current_app.config.get('CODE_JUDGE_ALLOW_LOCAL_FALLBACK', False):
-                    raise
-        return _judge_stdio_submission_local(task, code, validation)
+        if not runner_url:
+            raise CodeJudgeUnavailableError('Изолированный runner обязателен.')
+        return _judge_stdio_submission_remote(task, code, validation)
 ```
 
 **Transport:** HTTP POST на `http://judge-runner:8090/execute` с bearer-token. Не MQ, не gRPC.
@@ -839,11 +831,12 @@ def judge_task_submission(task, code):
 
 - Bearer-auth между backend и runner (хороший).
 - Thread-safe `RUNNER_SEMAPHORE = BoundedSemaphore(MAX_CONCURRENCY=4)` на runner — отклоняет 429 при перегрузке.
+- Нет local fallback: ученический код не исполняется внутри backend-контейнера.
 
 **Минусы:**
 
 - Синхронный HTTP. Timeout 15s блокирует gunicorn worker.
-- Local fallback — **PATH-тo-vulnerability** (см. §5.6).
+- Если runner недоступен, автопроверка возвращает 503/availability error; это намеренный fail-closed.
 
 ### 10.3. План интеграций (Фаза 2+)
 
@@ -1222,12 +1215,12 @@ def check_maintenance():
 
 | Дефект                                                                      | P   |
 | --------------------------------------------------------------------------- | --- |
-| Образы без digest (`postgres:17`, `node:22-alpine`, `python:3.12-slim`)     | P0  |
-| `POSTGRES_PASSWORD: codequest` plain-text в compose                         | P0  |
-| `5432:5432` published — БД открыта с хоста                                  | P1  |
-| `JUDGE_RUNNER_AUTH_TOKEN: ${...:-local-dev-judge-token-change-me}` fallback | P1  |
+| Образы без digest (`postgres:17`, `node:22-alpine`, `python:3.12-slim`)     | P0 закрыт playbook/tooling: digest resolve перед prod |
+| `POSTGRES_PASSWORD: codequest` plain-text в compose                         | **Закрыто v1.0.2:** `POSTGRES_PASSWORD_FILE` + Docker secret |
+| `5432:5432` published — БД открыта с хоста                                  | **Закрыто v1.0.2:** port publication удалена |
+| `JUDGE_RUNNER_AUTH_TOKEN: ${...:-local-dev-judge-token-change-me}` fallback | Runtime fail-fast в production; local fallback выполнения удалён |
 | Нет `restart: on-failure` на backend-init (стоит `restart: no` — ок)        | P2  |
-| Нет Docker secrets / no external secret manager                             | P1  |
+| Нет Docker secrets / no external secret manager                             | **Частично закрыто v1.0.2:** PostgreSQL + Redis через Docker secrets; остальные внешние секреты — env/ops |
 | `judge_runner/Dockerfile` ставит `nodejs` через apt — latest debian stable  | P1  |
 | Нет multi-stage для backend — full pip install в runtime image              | P2  |
 
@@ -1235,8 +1228,8 @@ def check_maintenance():
 ### 17.3. v1.5 Docker hardening checklist
 
 - Все образы: `image: postgres:17-alpine@sha256:<64hex>`.
-- Секреты через Docker secrets или `.env` файлы вне репозитория (в `/etc/progyx/.env` с chmod 600).
-- Убрать публикацию `5432:5432`, доступ к БД только через `docker exec` или bastion.
+- Секреты PostgreSQL/Redis через Docker secrets (`secrets/postgres_password`, `secrets/redis_password`); остальные env-файлы только вне репозитория (в `/etc/progyx/.env` с chmod 600).
+- Публикация `5432:5432` удалена; доступ к БД только через `docker exec`, bastion или временный admin-профиль.
 - `JUDGE_RUNNER_AUTH_TOKEN` — обязательный fail-fast при пустом/дефолтном в production (уже проверяется в `_validate_runtime_config`).
 - Multi-stage для backend: builder-stage → slim runtime-stage с только runtime deps.
 - Pin Node.js version в judge-runner: `RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash && apt install -y nodejs=20.`*.
@@ -1309,12 +1302,12 @@ secrets:
 | --------------------------------------- | --------------------------- | ------------------------------------ |
 | SECURE_PROXY_SSL_HEADER + ProxyFix      | Применено (флаг `TRUST_PROXY`, default `False`) | **Закрыто в v1.0.1** — оператор включает `TRUST_PROXY=true` за доверенным reverse-proxy |
 | SESSION_COOKIE_SECURE в prod            | Принудительно               | OK                                   |
-| SESSION_COOKIE_SAMESITE=Strict          | Lax                         | Изменить на Strict или double-submit |
+| SESSION_COOKIE_SAMESITE=Strict          | Strict                      | **Закрыто v1.0.2** — default Strict + production fail-fast |
 | CSRF double-submit                      | Введён (`csrf_token` cookie + `X-CSRF-Token`) | **Закрыто в v1.0.1**                |
 | Content Security Policy без unsafe-*    | Script: `nonce + strict-dynamic` (prod); Style: `unsafe-inline` остаётся (Next.js App Router) | **Script закрыто в v1.0.1**, Style — follow-up |
 | CORS allowlist строгий                  | CORS через CLIENT_URL       | OK                                   |
-| HSTS header                             | Не set                      | P1                                   |
-| X-Permitted-Cross-Domain-Policies: none | Не set                      | P2                                   |
+| HSTS header                             | Set in production           | **Закрыто v1.0.2**                  |
+| X-Permitted-Cross-Domain-Policies: none | Set                         | **Закрыто v1.0.2**                  |
 
 
 ### 18.3. Observability hardening
@@ -1567,10 +1560,10 @@ GSAP использует кастомную лицензию **GreenSock Standa
 
 ### Фаза 1.5 — P0 hardening (ЗАКРЫТА в v1.0.1 за один спринт)
 
-**Статус на v1.0.1:** все 10 P0-пунктов закрыты на уровне кода/конфигурации/документации. Чек-лист ниже сохранён для истории; каждая строка помечена `[x]` с ссылкой на артефакт.
+**Статус на v1.0.2:** все P0 code/config пункты закрыты, а оставшиеся security follow-ups из этого документа закрыты в коде за исключением GigaChat-scope. Чек-лист ниже сохранён для истории; каждая строка помечена `[x]` с ссылкой на артефакт.
 
 - [x] **[P0-1]** SECRET_KEY-hardening в `_validate_runtime_config` (len≥32, placeholder-denylist, entropy-guard) + тесты в `backend/tests/test_runtime_config.py`. **Оргдействие (остаётся вне кода):** revoke GigaChat-ключа у Сбера, `git filter-repo .env`, миграция на Docker secrets.
-- [x] **[P0-2]** Nonce-based CSP: `frontend/src/middleware.ts` + `layout.tsx` с `nonce`. `unsafe-inline` удалён из prod `script-src`. Для `style-src` — задокументировано ограничение Next.js App Router.
+- [x] **[P0-2]** Nonce-based CSP: `frontend/src/proxy.ts` + `layout.tsx` с `nonce`. `unsafe-inline` удалён из prod `script-src`. Для `style-src` — задокументировано ограничение Next.js App Router.
 - [x] **[P0-3]** CSRF double-submit cookie (`csrf_token` + `X-CSRF-Token`, `hmac.compare_digest`); `backend/tests/test_csrf.py` (8 кейсов, включая OPTIONS-preflight).
 - [x] **[P0-4]** Judge-sandbox: seccomp-профиль (`judge_runner/seccomp.json`), `cap_drop ALL`, `read_only`, `no-new-privileges`, `mem_limit/memswap_limit/cpus`, `ulimits nproc/nofile`, non-root UID 1001, `judge_net internal:true`. Документация — `docs/operations/sandbox.md`.
 - [x] **[P0-5]** CI на PostgreSQL 17: `.github/workflows/ci.yml` `services.postgres` + `DATABASE_URL=postgresql://...`.
@@ -1587,6 +1580,7 @@ GSAP использует кастомную лицензию **GreenSock Standa
 - `git filter-repo` на исторические коммиты с `.env` + revoke ключа у Сбера.
 - Переход на strict-whitelist seccomp (сейчас allow-default + denylist опасных syscall'ов).
 - Убрать `'unsafe-inline'` из `style-src` после валидации нового Next.js-подхода.
+- v1.0.2 закрыл: JWT keyring, Strict SameSite, HSTS, strict Origin in production, register IP-throttle, удаление local judge fallback, PostgreSQL Docker secret и закрытие host `5432`.
 
 #### Исторические пункты Phase 1.5 (сохранены для трассировки)
 
@@ -1683,7 +1677,7 @@ GSAP использует кастомную лицензию **GreenSock Standa
 
 ### 25.1. Обязательные exit-criteria для Gate 2
 
-1. **Security:** pen-test от внешнего подрядчика, zero HIGH/CRITICAL CVE в trivy scan, CSP без unsafe-*, CSRF работает (тест на `csrf-bypass` зелёный).
+1. **Security:** pen-test от внешнего подрядчика, zero HIGH/CRITICAL CVE в trivy scan, script-CSP на nonce/strict-dynamic, CSRF/Origin/SameSite tests зелёные.
 2. **Reliability:** 30 дней на staging без data loss, DR drill пройден (restore в < 4h), health-checks реалистичные.
 3. **Compliance:** EULA, ПДн-политика, согласие, локальность данных (для on-prem — гарантирована, для SaaS — РФ-хостинг).
 4. **Observability:** Sentry собирает errors, Grafana-dashboard public, on-call контакт определён.
@@ -1706,8 +1700,8 @@ GSAP использует кастомную лицензию **GreenSock Standa
 | **API-proxy через Next.js**                                | Единый origin, простые CORS, slot для edge-middleware. Trade-off — удвоенный I/O, приемлемо.                                              |
 | **Custom migrations → Alembic**                            | v1.0 — минимальный runner, v1.5 — Alembic. Baseline сохраняется через `stamp`.                                                            |
 | **Синхронный API → Celery async**                          | Всё, что зависит от внешнего сервиса (GigaChat, judge-runner, SMTP), переходит в Celery в Фазе 2.                                         |
-| **CSP без unsafe-***                                       | v1.5 обязательно. Пока nonce-based не внедрён, платформа уязвима к XSS даже при исправлении sanitization.                                 |
-| **CSRF double-submit cookie**                              | v1.5 обязательно. Origin-check — только первый слой.                                                                                      |
+| **CSP без unsafe-* для script-src**                        | Закрыто v1.0.2: nonce + strict-dynamic в production; `style-src unsafe-inline` остаётся documented Next/React follow-up.                  |
+| **CSRF double-submit cookie + strict Origin**               | Закрыто v1.0.2: double-submit, SameSite=Strict, unsafe no-Origin reject в production, Next proxy origin-forwarding.                       |
 | **Pinned SHA-digest на все образы**                        | Reproducibility + supply-chain. Обязательно для Gate 2.                                                                                   |
 | **Backups = часть архитектуры, не deployment'а**           | `pg_dump` сервис в compose.yml, retention 14 дней, weekly restore drill.                                                                  |
 | **Observability обязательна до первой продажи**            | Sentry + structured logs + Prometheus. В pilot-школе мы должны диагностировать инцидент за минуты, не часы.                               |
@@ -1724,7 +1718,9 @@ GSAP использует кастомную лицензию **GreenSock Standa
 
 Платформа Progyx (ProgHUB) в текущей версии **v1.0 (pre-alpha)** представляет собой функционально полный прототип: реализованы основные сценарии ученика, учителя, администратора, родителя, работает автопроверка кода в изолированном контейнере, внедрён мессенджер, подключён AI-ассистент, описаны миграции, работает CI. Фундаментально архитектура здравая — разделение ответственности по blueprints, stateless backend, изолированный judge-runner, HttpOnly-cookies, session_version revocation, DB-level throttling, Docker security hardening для runner'а.
 
-**Апдейт v1.0.1 (P0-фикс-спринт):** все **десять P0-блокеров** закрыты на уровне кода, конфигурации, тестов и документации — SECRET_KEY-hardening, nonce-based CSP, CSRF double-submit, seccomp + ulimits + non-root для judge-runner, PostgreSQL-CI, image-pinning playbook, runner-token denylist, pg_dump backup-sidecar + DR-runbook, ProxyFix middleware, access-cookie session revoke. Остаются **оргдействия** (отзыв ключа GigaChat у Сбера, `git filter-repo`, inline digest'ов, host-level iptables для runner-egress) и **девять P1-ограничений** (observability, Alembic, in-process leaderboard cache, async-обработка, audit-log, и т.д.). Оценочный объём оставшихся работ — **одна фаза 2 (6–8 недель)** для P1 до уровня **Gate 2 — первая коммерческая поставка**.
+**Апдейт v1.0.1 (P0-фикс-спринт):** все **десять P0-блокеров** закрыты на уровне кода, конфигурации, тестов и документации — SECRET_KEY-hardening, nonce-based CSP, CSRF double-submit, seccomp + ulimits + non-root для judge-runner, PostgreSQL-CI, image-pinning playbook, runner-token denylist, pg_dump backup-sidecar + DR-runbook, ProxyFix middleware, access-cookie session revoke.
+
+**Апдейт v1.0.2 (security hardening, GigaChat excluded):** закрыты оставшиеся code/config уязвимости из документа: JWT key rotation (`kid` + keyring), Strict SameSite + production fail-fast, HSTS/X-Permitted-Cross-Domain-Policies, production reject unsafe requests without `Origin`, Next proxy origin-forwarding, IP-level register throttle, удаление local judge fallback, PostgreSQL Docker secret + закрытый host port `5432`. Остаются **оргдействия** (GigaChat-ключ намеренно исключён из scope, `git filter-repo`, inline digest'ов, host-level iptables для runner-egress) и **P1/P2 reliability/product debt** (observability, Alembic, in-process leaderboard cache, async-обработка, audit-log completeness, e2e/frontend tests). Оценочный объём оставшихся работ — **одна фаза 2 (6–8 недель)** для P1 до уровня **Gate 2 — первая коммерческая поставка**.
 
 После Gate 2 продукт готов к пилотным поставкам в частные школы и центры доп. образования с тарифами 30–90 тыс. ₽/школа/год. Прибыльность для соло-разработчика реалистична на горизонте 2.5–3 года при фокусе на сегмент Pro/Pro+ (частные школы, EdTech-онлайн-школы) и при агрессивном self-service onboarding. Муниципальный сегмент требует дополнительных фаз 5 (реестр Минцифры, сертификация ФСТЭК) и **не должен быть приоритетом** в первые 2 года.
 
@@ -1734,7 +1730,7 @@ GSAP использует кастомную лицензию **GreenSock Standa
 2. **Сохранность данных.** Школа доверяет данные о 100–1000 учеников и их успеваемости. Потеря volume = судебное разбирательство по 152-ФЗ. `pg_dump` + rsync + weekly drill — минимум, без которого лицензионное соглашение не должно подписываться.
 3. **Стабильность инфраструктуры.** Прерывание работы во время урока (30 учеников ждут открытия lesson-player'а) создаёт repetition-риск: школа отказывается от продукта после первого серьёзного инцидента. Observability + health-checks + on-call контакт + blue/green deploy — уровень, соответствующий ожиданиям школы.
 4. **Юридическая чистота.** EULA, политика ПДн, договор processor'а с оператором (школа — оператор, вендор — processor), явная резидентность данных (для on-prem — гарантирована). Без этого продажа в муниципалитет или крупную сеть школ невозможна даже при идеальной технике.
-5. **Лицензионная чистота third-party.** Аудит GSAP-плагинов обязателен. Утечка GigaChat-ключа уже произошла — нужна немедленная ротация. Для Фазы 6 план B: замена GigaChat на локальную модель в случае отзыва квоты.
+5. **Лицензионная чистота third-party.** Аудит GSAP-плагинов обязателен. GigaChat-риски и ротация ключа намеренно исключены из v1.0.2 scope по решению владельца; для Фазы 6 план B: замена GigaChat на локальную модель в случае отзыва квоты.
 
 **Финальная рекомендация:** переход в статус commercial pilot возможен за 9–13 недель целенаправленной работы (Фазы 1.5 + 2) при условии соло-разработчика, или за 5–7 недель при команде из 2–3 человек. Все изменения описаны конкретно, с предложенными code-патчами, и не требуют переписывания архитектуры — только её достройки до production-grade уровня.
 

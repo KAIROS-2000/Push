@@ -40,6 +40,7 @@ class CsrfProtectionTests(unittest.TestCase):
             'ENABLE_DEMO_DATA': 'false',
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
+            'SESSION_COOKIE_SAMESITE': 'Strict',
             'GIGACHAT_VERIFY_SSL': 'true',
             'METRICS_DEBUG': 'false',
         }
@@ -186,7 +187,7 @@ class CsrfProtectionTests(unittest.TestCase):
             self.assertTrue(any('csrf_token=;' in cookie for cookie in response.headers.getlist('Set-Cookie')))
             self.assertIsNone(client.get_cookie('csrf_token'))
 
-    def test_logout_without_csrf_header_still_clears_cookies(self):
+    def test_logout_without_csrf_header_is_rejected(self):
         app = self.create_app()
         self.create_user(app)
 
@@ -196,9 +197,9 @@ class CsrfProtectionTests(unittest.TestCase):
             self.assertTrue(self.csrf_token(client))
 
             response = client.post('/api/auth/logout')
-            self.assertEqual(response.status_code, 200)
-            self.assertTrue(any('csrf_token=;' in cookie for cookie in response.headers.getlist('Set-Cookie')))
-            self.assertIsNone(client.get_cookie('csrf_token'))
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.get_json().get('code'), 'csrf_invalid')
+            self.assertIsNotNone(client.get_cookie('csrf_token'))
 
 
 if __name__ == '__main__':

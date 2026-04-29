@@ -9,6 +9,7 @@ const FORWARDED_COOKIE_NAMES = [
   'csrf_token',
 ] as const
 const CSRF_HEADER = 'X-CSRF-Token'
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +34,10 @@ function responseCookieHeaders(response: Response) {
   }
   const fallback = response.headers.get('set-cookie')
   return fallback ? [fallback] : []
+}
+
+function requestOrigin(request: NextRequest) {
+  return request.headers.get('origin')?.trim() || request.nextUrl.origin
 }
 
 async function forwardRequest(
@@ -60,7 +65,8 @@ async function forwardRequest(
   }
 
   const method = request.method.toUpperCase()
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+  if (UNSAFE_METHODS.has(method)) {
+    upstreamHeaders.set('origin', requestOrigin(request))
     const csrfCookie = request.cookies.get('csrf_token')?.value?.trim()
     const csrfFromClient = request.headers.get(CSRF_HEADER)?.trim()
     const csrf = csrfCookie || csrfFromClient

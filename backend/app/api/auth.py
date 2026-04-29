@@ -25,8 +25,10 @@ from ..core.security import (
     password_strength,
     refresh_attempt_allowed,
     refresh_token_from_request,
+    register_ip_attempt_allowed,
     register_login_failure,
     register_refresh_failure,
+    register_register_ip_attempt,
     register_register_failure,
     register_attempt_allowed,
     set_auth_cookies,
@@ -75,7 +77,11 @@ def register():
     ip = request.remote_addr or 'unknown'
     data = request.get_json() or {}
     email = (data.get('email') or '').strip().lower()
+    if not register_ip_attempt_allowed(ip):
+        return {'message': 'Слишком много попыток регистрации. Повторите позже.'}, 429
+    register_register_ip_attempt(ip)
     if not register_attempt_allowed(email or 'unknown', ip):
+        db.session.commit()
         return {'message': 'Слишком много попыток регистрации. Повторите позже.'}, 429
     username = (data.get('username') or '').strip().lower()
     phone = normalize_russian_phone(data.get('phone'))
