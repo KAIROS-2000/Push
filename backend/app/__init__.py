@@ -28,7 +28,7 @@ from .api.parent_cabinet import parent_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
 from .cli import register_commands
-from .core.config import Config, resolve_jwt_signing_keys, resolve_redis_password
+from .core.config import Config, resolve_redis_password
 from .core.db import db
 from .core.security import (
     CSRF_COOKIE_NAME,
@@ -55,6 +55,7 @@ COMMON_SECRET_KEY_PLACEHOLDERS = (
 )
 PUBLIC_UNSAFE_API_PATHS = {
     "/api/auth/login",
+    "/api/auth/logout",
     "/api/auth/register",
 }
 
@@ -84,44 +85,6 @@ def _is_trivially_low_entropy_secret(value: str) -> bool:
     if len(value) < 40 and (value.isdigit() or (value.isalpha() and value.islower())):
         return True
     return False
-
-
-def _validate_secret_material(name: str, value: str, min_length: int = 32) -> None:
-    if len(value) < min_length:
-        raise RuntimeError(f"Set a strong {name} before running in production mode.")
-    if _contains_placeholder_secret_fragment(value):
-        raise RuntimeError(f"Set a strong {name} before running in production mode.")
-    if _is_trivially_low_entropy_secret(value):
-        raise RuntimeError(f"Set a strong {name} before running in production mode.")
-
-
-def _validate_jwt_keyring(app: Flask, secret_key: str) -> None:
-    key_id = str(app.config.get("JWT_SIGNING_KEY_ID") or "").strip()
-    if not key_id or any(char.isspace() for char in key_id) or len(key_id) > 64:
-        raise RuntimeError("JWT_SIGNING_KEY_ID must be a non-empty, no-whitespace string up to 64 chars.")
-    try:
-        keyring = resolve_jwt_signing_keys(
-            secret_key,
-            key_id,
-            app.config.get("JWT_SIGNING_KEYS"),
-        )
-    except ValueError as exc:
-        raise RuntimeError(str(exc)) from exc
-    if key_id not in keyring:
-        raise RuntimeError("JWT_SIGNING_KEY_ID must reference an entry in JWT_SIGNING_KEYS.")
-    if app.config["IS_PRODUCTION"]:
-        for jwt_key_id, jwt_key in keyring.items():
-            _validate_secret_material(f"JWT signing key '{jwt_key_id}'", jwt_key)
-
-
-def _validate_postgres_password(app: Flask) -> None:
-    database_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "")
-    parsed = urlparse(database_uri)
-    if not parsed.scheme.startswith("postgresql"):
-        return
-    password = parsed.password or ""
-    if password in {"", "codequest", "postgres", "password"} or len(password) < 16:
-        raise RuntimeError("Set a strong PostgreSQL password before running in production mode.")
 
 
 class _CSRFAwareFlaskClient(FlaskClient):
@@ -178,12 +141,14 @@ def _redis_production_config_ok(url: str, password: str | None) -> tuple[bool, s
 def _validate_runtime_config(app: Flask) -> None:
     secret_key = (app.config.get("SECRET_KEY") or "").strip()
     if app.config["IS_PRODUCTION"]:
-        _validate_secret_material("SECRET_KEY", secret_key)
-    _validate_jwt_keyring(app, secret_key)
+        if len(secret_key) < 32:
+            raise RuntimeError("Set a strong SECRET_KEY before running in production mode.")
+        if _contains_placeholder_secret_fragment(secret_key):
+            raise RuntimeError("Set a strong SECRET_KEY before running in production mode.")
+        if _is_trivially_low_entropy_secret(secret_key):
+            raise RuntimeError("Set a strong SECRET_KEY before running in production mode.")
     if app.config["IS_PRODUCTION"] and not app.config.get("SESSION_COOKIE_SECURE", True):
         raise RuntimeError("SESSION_COOKIE_SECURE must stay enabled in production mode.")
-    if app.config["IS_PRODUCTION"] and str(app.config.get("SESSION_COOKIE_SAMESITE") or "").lower() != "strict":
-        raise RuntimeError("SESSION_COOKIE_SAMESITE must be Strict in production mode.")
     if app.config["IS_PRODUCTION"] and not app.config.get("GIGACHAT_VERIFY_SSL", True):
         raise RuntimeError("GIGACHAT_VERIFY_SSL cannot be disabled in production mode.")
     if app.config["IS_PRODUCTION"] and not (app.config.get("CLIENT_URL") or "").strip():
@@ -212,7 +177,6 @@ def _validate_runtime_config(app: Flask) -> None:
         if password_error:
             raise RuntimeError(f"SUPERADMIN_PASSWORD is not secure enough: {password_error}")
     if app.config["IS_PRODUCTION"]:
-        _validate_postgres_password(app)
         redis_url = (app.config.get("REDIS_URL") or "").strip()
         if not redis_url:
             raise RuntimeError("Set REDIS_URL before running in production mode.")
@@ -404,9 +368,6 @@ def create_app() -> Flask:
         response.headers.setdefault('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
         response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
-        if app.config.get("IS_PRODUCTION"):
-            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-        response.headers.setdefault('X-Permitted-Cross-Domain-Policies', 'none')
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
         response.headers.setdefault('X-Frame-Options', 'DENY')
         return response

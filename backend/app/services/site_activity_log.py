@@ -4,11 +4,10 @@ import logging
 
 import jwt
 from flask import Flask, current_app, request, Response
-from sqlalchemy.exc import IntegrityError
 
 from ..core.db import db
 from ..core.security import access_token_from_request, decode_token
-from ..models.user import SiteActivityLog, User
+from ..models.user import SiteActivityLog
 
 _log = logging.getLogger(__name__)
 
@@ -50,11 +49,8 @@ def _access_user_from_request() -> tuple[int | None, str]:
         uid = int(payload.get('sub'))
     except (TypeError, ValueError):
         return None, 'anonymous'
-    user = db.session.get(User, uid)
-    if user is None:
-        return None, 'anonymous'
-    role = str(getattr(user.role, 'value', None) or payload.get('role') or 'anonymous').strip().lower()[:32]
-    return uid, role or 'anonymous'
+    role = str(payload.get('role') or 'anonymous').strip().lower()[:32] or 'anonymous'
+    return uid, role
 
 
 def _should_log_request() -> bool:
@@ -73,22 +69,9 @@ def _should_log_request() -> bool:
     return True
 
 
-def _add_log_row(*, user_id: int | None, user_role: str, method: str, path: str, status_code: int, client_ip: str) -> None:
-    db.session.add(
-        SiteActivityLog(
-            user_id=user_id,
-            user_role=user_role,
-            method=method[:8].upper(),
-            path=path,
-            status_code=int(status_code),
-            client_ip=client_ip,
-        )
-    )
-
-
 def _persist_log(*, user_id: int | None, user_role: str, method: str, path: str, status_code: int, client_ip: str) -> None:
     try:
-        _add_log_row(
+        entry = SiteActivityLog(
             user_id=user_id,
             user_role=user_role,
             method=method[:8].upper(),
@@ -96,25 +79,8 @@ def _persist_log(*, user_id: int | None, user_role: str, method: str, path: str,
             status_code=int(status_code),
             client_ip=client_ip,
         )
+        db.session.add(entry)
         db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        if user_id is None:
-            _log.exception("site_activity_log persist failed path=%s", path)
-            return
-        try:
-            _add_log_row(
-                user_id=None,
-                user_role=user_role or 'anonymous',
-                method=method,
-                path=path,
-                status_code=status_code,
-                client_ip=client_ip,
-            )
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            _log.exception("site_activity_log anonymous retry failed path=%s", path)
     except Exception:
         db.session.rollback()
         _log.exception("site_activity_log persist failed path=%s", path)

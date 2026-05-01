@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -26,87 +25,28 @@ def _env(name: str) -> str | None:
     return value or None
 
 
-def _read_secret_file(env_name: str) -> str | None:
-    file_path = _env(env_name)
-    if not file_path:
-        return None
-    p = Path(file_path)
-    if not p.is_file():
-        return None
-    raw = p.read_text(encoding='utf-8').replace("\r", "").strip()
-    return raw or None
-
-
 def resolve_redis_password() -> str | None:
-    secret = _read_secret_file('REDIS_PASSWORD_FILE')
-    if secret:
-        return secret
+    file_path = _env('REDIS_PASSWORD_FILE')
+    if file_path:
+        p = Path(file_path)
+        if p.is_file():
+            raw = p.read_text(encoding='utf-8').replace("\r", "").strip()
+            return raw or None
     pw = _env("REDIS_PASSWORD")
     return pw.replace("\r", "") if pw else None
-
-
-def resolve_postgres_password() -> str | None:
-    secret = _read_secret_file('POSTGRES_PASSWORD_FILE')
-    if secret:
-        return secret
-    pw = _env("POSTGRES_PASSWORD")
-    return pw.replace("\r", "") if pw else None
-
-
-def _default_database_uri() -> str:
-    user = _env('POSTGRES_USER') or 'codequest'
-    password = resolve_postgres_password() or 'codequest'
-    host = _env('POSTGRES_HOST') or 'db'
-    port = _env('POSTGRES_PORT') or '5432'
-    database = _env('POSTGRES_DB') or 'codequest'
-    return (
-        f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}"
-        f"@{host}:{port}/{quote_plus(database)}"
-    )
-
-
-def parse_jwt_signing_keys(raw_value: str | None) -> dict[str, str]:
-    raw = (raw_value or '').strip()
-    if not raw:
-        return {}
-    keys: dict[str, str] = {}
-    for item in raw.split(','):
-        entry = item.strip()
-        if not entry:
-            continue
-        key_id, separator, secret = entry.partition('=')
-        key_id = key_id.strip()
-        secret = secret.strip()
-        if not separator or not key_id or not secret:
-            raise ValueError('JWT_SIGNING_KEYS must use comma-separated kid=secret entries.')
-        if any(char.isspace() for char in key_id) or len(key_id) > 64:
-            raise ValueError('JWT key ids must be non-empty, no-whitespace strings up to 64 chars.')
-        if key_id in keys:
-            raise ValueError(f'Duplicate JWT key id: {key_id}')
-        keys[key_id] = secret
-    return keys
-
-
-def resolve_jwt_signing_keys(secret_key: str, current_key_id: str, raw_keyring: str | None) -> dict[str, str]:
-    parsed = parse_jwt_signing_keys(raw_keyring)
-    if parsed:
-        return parsed
-    return {current_key_id: secret_key}
 
 
 class Config:
     APP_ENV = (_env('APP_ENV') or 'production').lower()
     IS_PRODUCTION = APP_ENV == 'production'
     SECRET_KEY = _env('SECRET_KEY') or 'dev-secret-key'
-    JWT_SIGNING_KEY_ID = _env('JWT_SIGNING_KEY_ID') or 'default'
-    JWT_SIGNING_KEYS = _env('JWT_SIGNING_KEYS') or ''
-    SQLALCHEMY_DATABASE_URI = _env('DATABASE_URL') or _default_database_uri()
+    SQLALCHEMY_DATABASE_URI = _env('DATABASE_URL') or 'postgresql+psycopg://codequest:codequest@db:5432/codequest'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     ACCESS_TOKEN_MINUTES = int(_env('ACCESS_TOKEN_MINUTES') or '30')
     REFRESH_TOKEN_DAYS = int(_env('REFRESH_TOKEN_DAYS') or '14')
     CLIENT_URL = _env('CLIENT_URL') or (None if IS_PRODUCTION else 'http://localhost:3000')
     SESSION_COOKIE_SECURE = _as_bool(os.getenv('SESSION_COOKIE_SECURE'), default=IS_PRODUCTION)
-    SESSION_COOKIE_SAMESITE = _env('SESSION_COOKIE_SAMESITE') or 'Strict'
+    SESSION_COOKIE_SAMESITE = _env('SESSION_COOKIE_SAMESITE') or 'Lax'
     TRUST_PROXY = _as_bool(os.getenv('TRUST_PROXY'), default=False)
     SUPERADMIN_BOOTSTRAP = _as_bool(os.getenv('SUPERADMIN_BOOTSTRAP'), default=not IS_PRODUCTION)
     SUPERADMIN_EMAIL = (_env('SUPERADMIN_EMAIL') or ('' if IS_PRODUCTION else 'superadmin@codequest.local')).lower()
@@ -132,7 +72,11 @@ class Config:
     CODE_JUDGE_RUNNER_URL = _env('CODE_JUDGE_RUNNER_URL')
     CODE_JUDGE_RUNNER_TOKEN = _env('CODE_JUDGE_RUNNER_TOKEN')
     CODE_JUDGE_RUNNER_TIMEOUT_MS = int(_env('CODE_JUDGE_RUNNER_TIMEOUT_MS') or '15000')
-    CODE_JUDGE_ALLOW_LOCAL_FALLBACK = False
+    CODE_JUDGE_ALLOW_LOCAL_FALLBACK = (
+        False
+        if IS_PRODUCTION
+        else _as_bool(os.getenv('CODE_JUDGE_ALLOW_LOCAL_FALLBACK'), default=False)
+    )
     METRICS_DEBUG = _as_bool(os.getenv('METRICS_DEBUG'), default=not IS_PRODUCTION)
 
     GIGACHAT_AUTH_KEY = _env('GIGACHAT_AUTH_KEY')
@@ -158,9 +102,6 @@ class Config:
     REGISTER_RATE_LIMIT_WINDOW_SECONDS = int(_env('REGISTER_RATE_LIMIT_WINDOW_SECONDS') or '3600')
     REGISTER_RATE_LIMIT_MAX_FAILURES = int(_env('REGISTER_RATE_LIMIT_MAX_FAILURES') or '25')
     REGISTER_RATE_LIMIT_BLOCK_SECONDS = int(_env('REGISTER_RATE_LIMIT_BLOCK_SECONDS') or '3600')
-    REGISTER_IP_RATE_LIMIT_WINDOW_SECONDS = int(_env('REGISTER_IP_RATE_LIMIT_WINDOW_SECONDS') or '3600')
-    REGISTER_IP_RATE_LIMIT_MAX_ATTEMPTS = int(_env('REGISTER_IP_RATE_LIMIT_MAX_ATTEMPTS') or '30')
-    REGISTER_IP_RATE_LIMIT_BLOCK_SECONDS = int(_env('REGISTER_IP_RATE_LIMIT_BLOCK_SECONDS') or '3600')
     REFRESH_RATE_LIMIT_WINDOW_SECONDS = int(_env('REFRESH_RATE_LIMIT_WINDOW_SECONDS') or '60')
     REFRESH_RATE_LIMIT_MAX_FAILURES = int(_env('REFRESH_RATE_LIMIT_MAX_FAILURES') or '45')
     REFRESH_RATE_LIMIT_BLOCK_SECONDS = int(_env('REFRESH_RATE_LIMIT_BLOCK_SECONDS') or '300')

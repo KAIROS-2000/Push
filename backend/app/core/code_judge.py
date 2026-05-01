@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import shutil
+from typing import Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from flask import current_app
 
-from shared.judge import coerce_test_cases
+from shared.judge import JudgeExecutionRequest, coerce_test_cases, execute_stdio_submission
 
 from ..models.learning import Task
 
@@ -21,6 +25,109 @@ class CodeJudgeConfigurationError(CodeJudgeError):
 
 class CodeJudgeUnavailableError(CodeJudgeError):
     """Raised when the isolated runner is temporarily unavailable."""
+
+
+def _python_command(script_path: str) -> list[str]:
+    binary = current_app.config.get('CODE_JUDGE_PYTHON_BIN', 'python')
+    return [binary, '-I', script_path]
+
+
+def _javascript_command(script_path: str, memory_limit_mb: int) -> list[str]:
+    binary = current_app.config.get('CODE_JUDGE_NODE_BIN', 'node')
+    heap_limit_mb = max(96, min(memory_limit_mb, 2048))
+    return [binary, f'--max-old-space-size={heap_limit_mb}', script_path]
+
+
+def _resolve_command(command: list[str], *executable_fallbacks: str) -> list[str]:
+    executable = command[0]
+    if os.path.isabs(executable) and os.path.isfile(executable):
+        return command
+    if shutil.which(executable):
+        return command
+    for alt in executable_fallbacks:
+        if not alt or alt == executable:
+            continue
+        resolved = shutil.which(alt)
+        if resolved:
+            return [resolved, *command[1:]]
+    raise CodeJudgeConfigurationError(f'На сервере не найден рантайм "{executable}" для автопроверки.')
+
+
+def _build_env() -> dict[str, str]:
+    allowed_keys = {
+        'PATH',
+        'SystemRoot',
+        'ComSpec',
+        'PATHEXT',
+        'TEMP',
+        'TMP',
+        'HOME',
+        'USERPROFILE',
+        'WINDIR',
+    }
+    env = {key: value for key, value in os.environ.items() if key in allowed_keys}
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    env['PYTHONNOUSERSITE'] = '1'
+    env['NODE_NO_WARNINGS'] = '1'
+    return env
+
+
+def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language: str) -> Callable[[], None] | None:
+    if os.name != 'posix':
+        return None
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    memory_limit_bytes = memory_limit_mb * 1024 * 1024
+    cpu_seconds = max(1, math.ceil(time_limit_ms / 1000))
+
+    def apply_limits() -> None:
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+        # RLIMIT_AS works predictably for Python, but can deadlock Node/V8 at startup.
+        if language == 'python' and hasattr(resource, 'RLIMIT_AS'):
+            resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
+        if hasattr(resource, 'RLIMIT_CORE'):
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    return apply_limits
+
+
+class FlaskJudgeRuntime:
+    def command_for(self, language: str, script_path: str, memory_limit_mb: int) -> list[str]:
+        if language == 'python':
+            return _resolve_command(_python_command(script_path), 'python3', 'python')
+        return _resolve_command(
+            _javascript_command(script_path, memory_limit_mb),
+            'node',
+            'nodejs',
+        )
+
+    def build_env(self) -> dict[str, str]:
+        return _build_env()
+
+    def preexec_fn(self, memory_limit_mb: int, time_limit_ms: int, language: str) -> Callable[[], None] | None:
+        return _preexec_resource_limits(memory_limit_mb, time_limit_ms, language)
+
+
+def _judge_stdio_submission_local(task: Task, code: str, validation: dict) -> dict:
+    tests = coerce_test_cases(validation['tests'])
+    if not tests:
+        raise CodeJudgeConfigurationError('Для этой задачи не настроены тесты. Добавьте хотя бы один кейс в конструкторе урока.')
+
+    language = validation['language'] or 'python'
+    request = JudgeExecutionRequest(
+        language=language,
+        code=code,
+        tests=tests,
+        time_limit_ms=validation['time_limit_ms'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_TIME_LIMIT_MS', 2000)),
+        memory_limit_mb=validation['memory_limit_mb'] or int(current_app.config.get('CODE_JUDGE_DEFAULT_MEMORY_LIMIT_MB', 128)),
+        max_output_chars=int(current_app.config.get('CODE_JUDGE_MAX_OUTPUT_CHARS', 4000)),
+        tempdir_prefix='codejudge-',
+    )
+    return execute_stdio_submission(request, FlaskJudgeRuntime())
 
 
 def _runner_url() -> str | None:
@@ -135,9 +242,13 @@ def judge_task_submission(task: Task, code: str) -> dict:
     evaluation_mode = validation['evaluation_mode']
     if evaluation_mode == 'stdin_stdout':
         runner_url = _runner_url()
-        if not runner_url:
-            raise CodeJudgeUnavailableError('Изолированный runner обязателен для автопроверки кода.')
-        return _judge_stdio_submission_remote(task, code, validation)
+        if runner_url:
+            try:
+                return _judge_stdio_submission_remote(task, code, validation)
+            except CodeJudgeUnavailableError:
+                if not current_app.config.get('CODE_JUDGE_ALLOW_LOCAL_FALLBACK', False):
+                    raise
+        return _judge_stdio_submission_local(task, code, validation)
     if evaluation_mode == 'keywords':
         return _judge_keywords_submission(task, code, validation)
     raise CodeJudgeConfigurationError('Для этой задачи включена ручная проверка, поэтому автотесты не запускаются.')

@@ -1,6 +1,5 @@
 # --- Secrets / local env ---
 secrets/redis_password
-secrets/postgres_password
 .env
 .env.*
 !.env.example

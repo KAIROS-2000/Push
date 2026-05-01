@@ -47,7 +47,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             'ENABLE_DEMO_DATA': 'false',
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
-            'SESSION_COOKIE_SAMESITE': 'Strict',
             'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
@@ -84,44 +83,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             SESSION_COOKIE_SECURE='true',
             CLIENT_URL='https://frontend.example',
             SECRET_KEY='a1' * 32,
-            GIGACHAT_VERIFY_SSL='true',
-            **_PROD_REDIS_ENV,
-        )
-        self.assertTrue(app.config['IS_PRODUCTION'])
-
-    def test_production_rejects_lax_session_cookie_samesite(self):
-        with self.assertRaisesRegex(RuntimeError, 'SESSION_COOKIE_SAMESITE'):
-            self.create_app(
-                APP_ENV='production',
-                SESSION_COOKIE_SECURE='true',
-                SESSION_COOKIE_SAMESITE='Lax',
-                CLIENT_URL='https://frontend.example',
-                SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
-                **_PROD_REDIS_ENV,
-            )
-
-    def test_production_rejects_jwt_keyring_without_current_key(self):
-        with self.assertRaisesRegex(RuntimeError, 'JWT_SIGNING_KEY_ID'):
-            self.create_app(
-                APP_ENV='production',
-                SESSION_COOKIE_SECURE='true',
-                CLIENT_URL='https://frontend.example',
-                SECRET_KEY='a1' * 32,
-                JWT_SIGNING_KEY_ID='current',
-                JWT_SIGNING_KEYS='previous=' + ('b2' * 32),
-                GIGACHAT_VERIFY_SSL='true',
-                **_PROD_REDIS_ENV,
-            )
-
-    def test_production_accepts_jwt_keyring_rotation(self):
-        app = self.create_app(
-            APP_ENV='production',
-            SESSION_COOKIE_SECURE='true',
-            CLIENT_URL='https://frontend.example',
-            SECRET_KEY='a1' * 32,
-            JWT_SIGNING_KEY_ID='current',
-            JWT_SIGNING_KEYS='current=' + ('c3' * 32) + ',previous=' + ('d4' * 32),
             GIGACHAT_VERIFY_SSL='true',
             **_PROD_REDIS_ENV,
         )

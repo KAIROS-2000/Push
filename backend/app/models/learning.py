@@ -71,6 +71,175 @@ CODE_INTENT_MARKER_SNIPPETS = (
     "addeventlistener",
     "=>",
 )
+LEGACY_INTERACTIVE_STEP_TITLES = {"Пошаговый пример", "Мини-эксперимент"}
+
+
+def _nonempty_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_content_blocks(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = _nonempty_text(item.get("title"))
+        text = _nonempty_text(item.get("text"))
+        items = [
+            _nonempty_text(entry)
+            for entry in (item.get("items") or [])
+            if _nonempty_text(entry)
+        ]
+        block_type = _nonempty_text(item.get("type")) or "text"
+        if not title and not text and not items:
+            continue
+        rows.append(
+            {
+                "type": block_type,
+                "title": title,
+                "text": text,
+                "items": items,
+            }
+        )
+    return rows
+
+
+def _normalize_interactive_steps(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = _nonempty_text(item.get("title"))
+        text = _nonempty_text(item.get("text"))
+        if not title and not text:
+            continue
+        rows.append({"title": title, "text": text})
+    return rows
+
+
+def _build_guided_theory_block(
+    *,
+    lesson_title: str,
+    task_title: str | None = None,
+    task_prompt: str | None = None,
+    theory_blocks: list[dict] | None = None,
+) -> dict:
+    key_points = []
+    for block in theory_blocks or []:
+        for item in block.get("items") or []:
+            text = _nonempty_text(item)
+            if text:
+                key_points.append(text)
+    main_idea = key_points[0] if key_points else lesson_title
+    practice_name = _nonempty_text(task_title) or "практике"
+    practice_focus = _nonempty_text(task_prompt).rstrip(".")
+    items = [
+        f"Сначала коротко объясни себе, о чём урок «{lesson_title}» и что значит «{main_idea}».",
+        "Потом посмотри пример по шагам и после каждого шага спроси себя: что изменилось и почему.",
+        f"После этого переходи к заданию «{practice_name}» и повторяй тот же порядок действий.",
+    ]
+    if practice_focus:
+        items.append(f"Когда отвечаешь, держись главной цели задания: {practice_focus}.")
+    return {
+        "type": "checklist",
+        "title": "Что делать по шагам",
+        "items": items,
+    }
+
+
+def _build_guided_interactive_steps(
+    *,
+    lesson_title: str,
+    task_title: str | None = None,
+    task_prompt: str | None = None,
+    theory_blocks: list[dict] | None = None,
+) -> list[dict]:
+    key_points = []
+    for block in theory_blocks or []:
+        for item in block.get("items") or []:
+            text = _nonempty_text(item)
+            if text:
+                key_points.append(text)
+    main_idea = key_points[0] if key_points else lesson_title
+    support_idea = key_points[1] if len(key_points) > 1 else "делай шаги по порядку"
+    practice_name = _nonempty_text(task_title) or lesson_title
+    practice_focus = _nonempty_text(task_prompt).rstrip(".")
+    return [
+        {
+            "title": f"Сначала поймём тему «{lesson_title}»",
+            "text": (
+                f"Главная мысль здесь такая: {main_idea}. "
+                "Не старайся запомнить всё сразу. Сначала пойми смысл простыми словами."
+            ),
+        },
+        {
+            "title": f"Потом разбираем пример для «{practice_name}»",
+            "text": (
+                "Шаг 1. Посмотри, с чего всё начинается.\n"
+                "Шаг 2. Заметь, какое действие выполняется дальше.\n"
+                f"Шаг 3. Проверь, как на результат влияет идея «{support_idea}»."
+            ),
+        },
+        {
+            "title": "Теперь пробуем сами",
+            "text": (
+                f"Повтори тот же ход мысли в своём ответе. {practice_focus}. "
+                "Если стало трудно, вернись к примеру и найди шаг, где потерялась логика."
+            ).strip(),
+        },
+    ]
+
+
+def _should_replace_interactive_steps(steps: list[dict]) -> bool:
+    if not steps:
+        return True
+    titles = {_nonempty_text(step.get("title")) for step in steps}
+    return titles.issubset(LEGACY_INTERACTIVE_STEP_TITLES)
+
+
+def enrich_lesson_content(
+    *,
+    lesson_title: str,
+    summary: str,
+    theory_blocks,
+    interactive_steps,
+    task_title: str | None = None,
+    task_prompt: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    normalized_blocks = _normalize_content_blocks(theory_blocks)
+    if not normalized_blocks and (lesson_title or summary):
+        normalized_blocks = [{"type": "hero", "title": lesson_title, "text": summary, "items": []}]
+
+    has_guided_block = any(
+        _nonempty_text(block.get("title")).lower() == "что делать по шагам"
+        for block in normalized_blocks
+    )
+    if not has_guided_block:
+        insert_at = 1 if normalized_blocks else 0
+        normalized_blocks.insert(
+            insert_at,
+            _build_guided_theory_block(
+                lesson_title=lesson_title,
+                task_title=task_title,
+                task_prompt=task_prompt,
+                theory_blocks=normalized_blocks,
+            ),
+        )
+
+    normalized_steps = _normalize_interactive_steps(interactive_steps)
+    if _should_replace_interactive_steps(normalized_steps):
+        normalized_steps = _build_guided_interactive_steps(
+            lesson_title=lesson_title,
+            task_title=task_title,
+            task_prompt=task_prompt,
+            theory_blocks=normalized_blocks,
+        )
+
+    return normalized_blocks, normalized_steps
 
 
 def age_group_supports_code(age_group: str | None) -> bool:
@@ -477,13 +646,27 @@ class Lesson(db.Model):
             "custom_classroom_id": self.module.custom_classroom_id,
         }
 
-    def to_dict(self, include_private: bool = False) -> dict:
+    def to_dict(
+        self, include_private: bool = False, enrich_content: bool = False
+    ) -> dict:
+        theory_blocks = self.theory_blocks
+        interactive_steps = self.interactive_steps
+        if enrich_content:
+            first_task = self.tasks[0] if self.tasks else None
+            theory_blocks, interactive_steps = enrich_lesson_content(
+                lesson_title=self.title,
+                summary=self.summary,
+                theory_blocks=self.theory_blocks,
+                interactive_steps=self.interactive_steps,
+                task_title=first_task.title if first_task else None,
+                task_prompt=first_task.prompt if first_task else None,
+            )
         return {
             **self.to_summary_dict(),
             "module": self.module.to_dict(include_lessons=True),
             "content_format": self.content_format,
-            "theory_blocks": self.theory_blocks,
-            "interactive_steps": self.interactive_steps,
+            "theory_blocks": theory_blocks,
+            "interactive_steps": interactive_steps,
             "tasks": [task.to_dict() for task in self.tasks],
             "quizzes": [
                 quiz.to_dict(include_private=include_private) for quiz in self.quizzes
@@ -884,5 +1067,3 @@ class UserAchievement(db.Model):
 
     user = db.relationship("User", back_populates="achievements")
     achievement = db.relationship("Achievement", back_populates="users")
-
-

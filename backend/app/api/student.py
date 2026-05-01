@@ -698,7 +698,10 @@ def get_lesson(current_user: User, lesson_id: int):
     include_quiz_review = progress.status in {"completed", "pending_review"}
     finished = state == STATE_MAP["completed"] or progress.status == "completed"
     return {
-        "lesson": lesson.to_dict(include_private=include_quiz_review),
+        "lesson": lesson.to_dict(
+            include_private=include_quiz_review,
+            enrich_content=True,
+        ),
         "state": state,
         "progress": progress.to_dict(),
         "is_finished": finished,

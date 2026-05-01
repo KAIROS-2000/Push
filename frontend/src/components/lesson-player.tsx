@@ -1,10 +1,11 @@
-'use client'
+﻿'use client'
 
 import { useAppTheme } from '@/hooks/use-app-theme'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { LessonNotFoundPanel } from '@/components/lesson-not-found-panel'
 import { ApiError, api, getApiErrorMessage } from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
+import type { AppTheme } from '@/lib/theme'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import {
 	ageGroupSupportsCodePractice,
@@ -26,6 +27,7 @@ import {
 	ProgressItem,
 	QuizItem,
 	QuizQuestion,
+	TaskItem,
 } from '@/types'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
@@ -65,6 +67,60 @@ const LazyLessonCodeEditor = dynamic(
 )
 
 type ViewerRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
+
+function resolveSavedHintsCount(
+	progress: ProgressItem | null | undefined,
+	task: TaskItem | null | undefined,
+) {
+	if (!task) return 0
+	const saved = Number(progress?.hints_used || 0)
+	if (!Number.isFinite(saved) || saved <= 0) return 0
+	return Math.min(Math.max(Math.trunc(saved), 0), task.hints.length)
+}
+
+function splitBlockText(text?: string | null) {
+	return String(text || '')
+		.split(/\n{2,}/)
+		.map(part => part.trim())
+		.filter(Boolean)
+}
+
+function theoryBlockShellClass(
+	type: string | undefined,
+	theme: AppTheme,
+) {
+	if (type === 'tip') {
+		return theme === 'dark'
+			? 'border-amber-400/30 bg-amber-500/10'
+			: 'border-amber-200 bg-amber-50/90'
+	}
+	if (type === 'example' || type === 'code') {
+		return theme === 'dark'
+			? 'border-sky-400/30 bg-sky-500/10'
+			: 'border-sky-200 bg-sky-50/80'
+	}
+	return theme === 'dark'
+		? 'border-slate-700/80 bg-slate-900/70'
+		: 'border-slate-200 bg-slate-50'
+}
+
+function theoryBlockTextClass(theme: AppTheme) {
+	return theme === 'dark' ? 'text-slate-200' : 'text-slate-700'
+}
+
+function theoryBlockTitleClass(theme: AppTheme) {
+	return theme === 'dark' ? 'text-slate-50' : 'text-slate-900'
+}
+
+function theoryBlockListItemClass(theme: AppTheme) {
+	return theme === 'dark'
+		? 'flex items-start gap-3 rounded-[18px] bg-slate-950/70 px-3 py-3 text-slate-200'
+		: 'flex items-start gap-3 rounded-[18px] bg-white/80 px-3 py-3'
+}
+
+function theoryBlockBulletClass(theme: AppTheme) {
+	return theme === 'dark' ? 'bg-sky-300' : 'bg-sky-500'
+}
 
 function OrderQuestion({
 	question,
@@ -459,6 +515,7 @@ export function LessonPlayer({
 	lessonId: number
 	initialData?: LessonPlayerPayload | null
 }) {
+	const theme = useAppTheme()
 	const rootRef = useRef<HTMLDivElement | null>(null)
 	const startedLessonRef = useRef<number | null>(null)
 	const router = useRouter()
@@ -477,7 +534,12 @@ export function LessonPlayer({
 	const [quizAnswers, setQuizAnswers] = useState<Record<string, unknown>>({})
 	const [loadingTask, setLoadingTask] = useState(false)
 	const [loadingQuiz, setLoadingQuiz] = useState(false)
-	const [shownHints, setShownHints] = useState(0)
+	const [shownHints, setShownHints] = useState(
+		resolveSavedHintsCount(
+			normalizedInitialData?.progress ?? null,
+			normalizedInitialData?.lesson.tasks?.[0] ?? null,
+		),
+	)
 	const [theoryMarked, setTheoryMarked] = useState(
 		Boolean(normalizedInitialData?.isFinished),
 	)
@@ -506,6 +568,9 @@ export function LessonPlayer({
 		currentUserRole !== null &&
 		currentUserRole !== 'student' &&
 		currentUserRole !== 'parent'
+	const canPersistLessonActivity =
+		currentUserRole === 'student' || currentUserRole === 'parent'
+	const task = lesson?.tasks?.[0]
 
 	useEffect(() => {
 		if (initialData) return
@@ -519,7 +584,12 @@ export function LessonPlayer({
 				setProgress(normalized.progress)
 				setAnswer('')
 				setQuizAnswers({})
-				setShownHints(0)
+				setShownHints(
+					resolveSavedHintsCount(
+						normalized.progress,
+						normalized.lesson.tasks?.[0] || null,
+					),
+				)
 				setTheoryMarked(normalized.isFinished)
 				setInteractiveMarked(normalized.isFinished)
 				setTaskPassed(normalized.isFinished)
@@ -542,11 +612,7 @@ export function LessonPlayer({
 	}, [initialData, lessonId])
 
 	useEffect(() => {
-		if (
-			!lesson ||
-			(currentUserRole !== 'student' && currentUserRole !== 'parent')
-		)
-			return
+		if (!lesson || !canPersistLessonActivity) return
 		if (startedLessonRef.current === lesson.id) return
 		startedLessonRef.current = lesson.id
 
@@ -559,7 +625,11 @@ export function LessonPlayer({
 			.catch(() => {
 				startedLessonRef.current = null
 			})
-	}, [currentUserRole, lesson])
+	}, [canPersistLessonActivity, lesson])
+
+	useEffect(() => {
+		setShownHints(resolveSavedHintsCount(progress, task))
+	}, [progress, task])
 
 	const quiz = useMemo<QuizItem | null>(
 		() => lesson?.quizzes?.[0] || null,
@@ -568,7 +638,6 @@ export function LessonPlayer({
 	const quizHasReviewData = hasQuizReviewData(quiz)
 	const quizInReviewMode = quizReviewActive && quizHasReviewData
 	const quizLocked = quizPassed && quizHasReviewData
-	const task = lesson?.tasks?.[0]
 	const taskValidation = task?.validation
 	const taskEvaluationMode = taskValidation?.evaluation_mode || 'manual'
 	const taskNeedsTeacherReview = Boolean(
@@ -592,6 +661,9 @@ export function LessonPlayer({
 				? 'javascript'
 				: 'python'
 	const completedHints = task ? Math.min(shownHints, task.hints.length) : 0
+	const interactiveSectionTitle = lesson
+		? `Разбираем: ${lesson.title}`
+		: 'Разбор примера'
 	const answeredQuizCount = useMemo(() => {
 		if (!quiz) return 0
 		if (quizLocked) return quiz.questions.length
@@ -747,6 +819,7 @@ export function LessonPlayer({
 		if (!lesson || !task) return
 		const nextHintsUsed = Math.min(completedHints + 1, task.hints.length)
 		setShownHints(nextHintsUsed)
+		if (!canPersistLessonActivity) return
 
 		api<{ progress: ProgressItem }>(
 			`/lessons/${lesson.id}/hints`,
@@ -758,6 +831,7 @@ export function LessonPlayer({
 		)
 			.then(data => setProgress(data.progress))
 			.catch(error => {
+				if (error instanceof ApiError && error.status === 403) return
 				showErrorToast(getApiErrorMessage(error, 'Не удалось сохранить подсказку.'))
 			})
 	}
@@ -1077,19 +1151,43 @@ export function LessonPlayer({
 						</div>
 						<div className='mt-6 space-y-4'>
 							{lesson.theory_blocks.map((block, index) => (
-								<div key={index} className='rounded-[24px] bg-slate-50 p-5'>
-									<h3 className='text-lg font-bold text-slate-900'>
+								<div
+									key={index}
+									className={`rounded-[24px] border p-5 ${theoryBlockShellClass(block.type, theme)}`}
+								>
+									<h3 className={`text-lg font-bold ${theoryBlockTitleClass(theme)}`}>
 										{block.title}
 									</h3>
-									{block.text && (
-										<p className='mt-2 text-sm leading-7 text-slate-600'>
-											{block.text}
-										</p>
-									)}
+									{block.text &&
+										(block.type === 'code' ? (
+											<pre className='mt-3 overflow-x-auto whitespace-pre-wrap rounded-[20px] bg-slate-950 p-4 text-sm leading-7 text-emerald-200'>
+												{block.text}
+											</pre>
+										) : (
+											<div
+												className={`mt-3 space-y-3 text-sm leading-7 ${theoryBlockTextClass(theme)}`}
+											>
+												{splitBlockText(block.text).map(part => (
+													<p key={part} className='whitespace-pre-line'>
+														{part}
+													</p>
+												))}
+											</div>
+										))}
 									{block.items && (
-										<ul className='mt-3 space-y-2 text-sm text-slate-600'>
+										<ul
+											className={`mt-4 space-y-2 text-sm ${theoryBlockTextClass(theme)}`}
+										>
 											{block.items.map(item => (
-												<li key={item}>• {item}</li>
+												<li
+													key={item}
+													className={theoryBlockListItemClass(theme)}
+												>
+													<span
+														className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${theoryBlockBulletClass(theme)}`}
+													/>
+													<span>{item}</span>
+												</li>
 											))}
 										</ul>
 									)}
@@ -1105,6 +1203,9 @@ export function LessonPlayer({
 					>
 						<div className='flex flex-wrap items-center justify-between gap-3'>
 							<p className='brand-eyebrow'>Разбор примера</p>
+							<h2 className='text-2xl font-black text-slate-900 sm:text-3xl'>
+								{interactiveSectionTitle}
+							</h2>
 							<button
 								type='button'
 								onClick={() => setInteractiveMarked(value => !value)}
@@ -1127,7 +1228,7 @@ export function LessonPlayer({
 										<h3 className='mt-1 font-bold text-slate-900'>
 											{step.title}
 										</h3>
-										<p className='mt-2 text-sm leading-7 text-slate-600'>
+										<p className='mt-2 whitespace-pre-line text-sm leading-7 text-slate-600'>
 											{step.text}
 										</p>
 									</div>
@@ -1177,9 +1278,33 @@ export function LessonPlayer({
 												)}
 										</div>
 									</div>
-									<p className='mt-3 text-sm leading-7 text-slate-600'>
+									<p className='mt-3 whitespace-pre-line text-sm leading-7 text-slate-600'>
 										{task.prompt}
 									</p>
+									<div
+										className={`mt-4 rounded-[24px] border p-4 ${
+											theme === 'dark'
+												? 'border-sky-400/30 bg-sky-500/10'
+												: 'border-sky-200 bg-sky-50/80'
+										}`}
+									>
+										<p
+											className={`text-xs font-bold uppercase tracking-[0.18em] ${
+												theme === 'dark' ? 'text-sky-200' : 'text-sky-700'
+											}`}
+										>
+											Как подойти к задаче
+										</p>
+										<ol
+											className={`mt-3 space-y-2 text-sm leading-7 ${
+												theme === 'dark' ? 'text-slate-200' : 'text-slate-700'
+											}`}
+										>
+											<li>1. Сначала пойми, что должно получиться в конце.</li>
+											<li>2. Делай решение маленькими шагами, не пытайся сделать все сразу.</li>
+											<li>3. Сравни ответ с разбором и только потом отправляй.</li>
+										</ol>
+									</div>
 									{usesCodeEditor ? (
 										<div className='mt-5'>
 											<LazyLessonCodeEditor
@@ -1333,6 +1458,11 @@ export function LessonPlayer({
 									<p className='text-xs font-bold uppercase tracking-[0.18em] text-slate-500'>
 										Подсказки
 									</p>
+									{!canPersistLessonActivity && (
+										<p className='mt-2 text-xs leading-5 text-slate-500'>
+											Подсказки откроются без сохранения прогресса.
+										</p>
+									)}
 									<div className='mt-3 space-y-2'>
 										{task.hints.slice(0, completedHints).map((hint, index) => (
 											<div

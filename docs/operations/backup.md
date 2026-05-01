@@ -51,7 +51,7 @@ Environment variables (set on the `db-backup` service in
 | `PGHOST`                    | `db`       | Server hostname                         |
 | `PGDATABASE`                | `codequest`| Database name                           |
 | `PGUSER`                    | `codequest`| Role with read access                   |
-| `PGPASSWORD_FILE`           | `/run/secrets/postgres_password` | Secret file read by the sidecar entrypoint and exported as `PGPASSWORD` before `pg_dump`. |
+| `PGPASSWORD`                | `codequest`| Password. Rotate to a dedicated backup role in prod. |
 | `BACKUP_DIR`                | `/backups` | Mount point of the named volume         |
 | `BACKUP_RETENTION_DAYS`     | `14`       | Age threshold for deletion              |
 | `BACKUP_INTERVAL_SECONDS`   | `86400`    | Sleep between runs                      |

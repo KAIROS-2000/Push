@@ -13,7 +13,7 @@ import redis
 from flask import Response, current_app, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ..core.config import Config, resolve_jwt_signing_keys
+from ..core.config import Config
 from ..core.db import db
 from ..core import throttle_redis
 from ..core.redis_client import get_redis, redis_available
@@ -36,7 +36,6 @@ ADMIN_PASSWORD_MIN_LENGTH = 12
 LOGIN_THROTTLE_SCOPE = 'login'
 PARENT_LINK_REDEEM_THROTTLE_SCOPE = 'parent_link_redeem'
 REGISTER_THROTTLE_SCOPE = 'register'
-REGISTER_IP_THROTTLE_SCOPE = 'register_ip'
 REFRESH_THROTTLE_SCOPE = 'refresh'
 SESSION_VERSION_CACHE_TTL_SECONDS = 30
 COMMON_WEAK_PASSWORDS = {
@@ -125,12 +124,6 @@ def _throttle_settings(scope: str) -> tuple[int, int, int]:
             int(current_app.config.get('REGISTER_RATE_LIMIT_WINDOW_SECONDS', 3600)),
             int(current_app.config.get('REGISTER_RATE_LIMIT_MAX_FAILURES', 25)),
             int(current_app.config.get('REGISTER_RATE_LIMIT_BLOCK_SECONDS', 3600)),
-        )
-    if scope == REGISTER_IP_THROTTLE_SCOPE:
-        return (
-            int(current_app.config.get('REGISTER_IP_RATE_LIMIT_WINDOW_SECONDS', 3600)),
-            int(current_app.config.get('REGISTER_IP_RATE_LIMIT_MAX_ATTEMPTS', 30)),
-            int(current_app.config.get('REGISTER_IP_RATE_LIMIT_BLOCK_SECONDS', 3600)),
         )
     if scope == REFRESH_THROTTLE_SCOPE:
         return (
@@ -309,14 +302,6 @@ def clear_register_throttle(email: str, ip_address: str | None = None) -> None:
     clear_throttle_failures(REGISTER_THROTTLE_SCOPE, subject, ip_address)
 
 
-def register_ip_attempt_allowed(ip_address: str | None = None) -> bool:
-    return throttle_allowed(REGISTER_IP_THROTTLE_SCOPE, 'register_ip', ip_address)
-
-
-def register_register_ip_attempt(ip_address: str | None = None) -> bool:
-    return register_throttle_failure(REGISTER_IP_THROTTLE_SCOPE, 'register_ip', ip_address)
-
-
 def refresh_attempt_allowed(ip_address: str | None = None) -> bool:
     return throttle_allowed(REFRESH_THROTTLE_SCOPE, 'token_refresh', ip_address)
 
@@ -383,8 +368,7 @@ def create_access_token(user: User) -> str:
         'iat': int(now.timestamp()),
         'exp': int((now + timedelta(minutes=current_app.config['ACCESS_TOKEN_MINUTES'])).timestamp()),
     }
-    key_id, signing_key = _current_jwt_signing_key()
-    return jwt.encode(access_payload, signing_key, algorithm='HS256', headers={'kid': key_id})
+    return jwt.encode(access_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
 
 
 def create_token_pair(user: User) -> dict:
@@ -401,8 +385,7 @@ def create_token_pair(user: User) -> dict:
         'exp': int((now + timedelta(days=current_app.config['REFRESH_TOKEN_DAYS'])).timestamp()),
     }
     access_token = create_access_token(user)
-    key_id, signing_key = _current_jwt_signing_key()
-    refresh_token = jwt.encode(refresh_payload, signing_key, algorithm='HS256', headers={'kid': key_id})
+    refresh_token = jwt.encode(refresh_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
 
     db.session.add(
         RefreshToken(
@@ -416,38 +399,7 @@ def create_token_pair(user: User) -> dict:
 
 
 def decode_token(token: str) -> dict:
-    keyring = _jwt_signing_keyring()
-    current_key_id = _current_jwt_key_id()
-    try:
-        header = jwt.get_unverified_header(token)
-    except jwt.InvalidTokenError:
-        header = {}
-    key_id = str(header.get('kid') or current_key_id)
-    signing_key = keyring.get(key_id)
-    if not signing_key:
-        raise jwt.InvalidTokenError('Unknown JWT key id.')
-    return jwt.decode(token, signing_key, algorithms=['HS256'])
-
-
-def _current_jwt_key_id() -> str:
-    return str(current_app.config.get('JWT_SIGNING_KEY_ID') or 'default').strip() or 'default'
-
-
-def _jwt_signing_keyring() -> dict[str, str]:
-    return resolve_jwt_signing_keys(
-        str(current_app.config.get('SECRET_KEY') or ''),
-        _current_jwt_key_id(),
-        current_app.config.get('JWT_SIGNING_KEYS'),
-    )
-
-
-def _current_jwt_signing_key() -> tuple[str, str]:
-    key_id = _current_jwt_key_id()
-    keyring = _jwt_signing_keyring()
-    signing_key = keyring.get(key_id)
-    if not signing_key:
-        raise RuntimeError('JWT_SIGNING_KEY_ID must reference an entry in JWT_SIGNING_KEYS.')
-    return key_id, signing_key
+    return jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
 
 
 def _decode_token_without_verification(token: str) -> dict:
@@ -520,26 +472,26 @@ def teacher_approval_auth_error(user: User) -> tuple[dict, int] | None:
 
 def _cookie_security_settings() -> tuple[bool, str]:
     secure = bool(current_app.config.get('SESSION_COOKIE_SECURE', current_app.config.get('IS_PRODUCTION', False)))
-    same_site = current_app.config.get('SESSION_COOKIE_SAMESITE', 'Strict')
+    same_site = current_app.config.get('SESSION_COOKIE_SAMESITE', 'Lax')
     return secure, same_site
 
 
 def issue_csrf_cookie(response: Response) -> Response:
-    secure, same_site = _cookie_security_settings()
+    secure, _ = _cookie_security_settings()
     response.set_cookie(
         CSRF_COOKIE_NAME,
         secrets.token_urlsafe(32),
         httponly=False,
         secure=secure,
-        samesite=same_site,
+        samesite='Lax',
         path='/',
     )
     return response
 
 
 def clear_csrf_cookie(response: Response) -> Response:
-    secure, same_site = _cookie_security_settings()
-    response.delete_cookie(CSRF_COOKIE_NAME, path='/', secure=secure, samesite=same_site)
+    secure, _ = _cookie_security_settings()
+    response.delete_cookie(CSRF_COOKIE_NAME, path='/', secure=secure, samesite='Lax')
     return response
 
 
@@ -646,7 +598,7 @@ def revoke_refresh_tokens_for_user(user_id: int, *, exclude_token_id: str | None
 def request_origin_allowed() -> bool:
     origin = (request.headers.get('Origin') or '').strip()
     if not origin:
-        return not current_app.config.get('IS_PRODUCTION', False)
+        return True
 
     allowed_origins = {
         item.strip()
@@ -654,7 +606,7 @@ def request_origin_allowed() -> bool:
         if item.strip()
     }
     if not allowed_origins:
-        return not current_app.config.get('IS_PRODUCTION', False)
+        return True
 
     normalized_origin = urlparse(origin)
     origin_value = f'{normalized_origin.scheme}://{normalized_origin.netloc}'
