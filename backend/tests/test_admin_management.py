@@ -69,7 +69,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         app,
         *,
         full_name: str,
-        username: str,
         email: str,
         password: str,
         role: str,
@@ -82,7 +81,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         with app.app_context():
             user = User(
                 full_name=full_name,
-                username=username,
                 email=email,
                 password_hash=hash_password(password),
                 role=UserRole(role),
@@ -100,7 +98,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         admin_id = self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -109,7 +106,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_id = self.create_user(
             app,
             full_name='Alice Student',
-            username='alice',
             email='alice@example.com',
             password='StudentPass123!',
             role='student',
@@ -118,7 +114,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Boris Teacher',
-            username='mentor',
             email='mentor@example.com',
             password='TeacherPass123!',
             role='teacher',
@@ -127,7 +122,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         secondary_admin_id = self.create_user(
             app,
             full_name='Ops Admin',
-            username='opsadmin',
             email='opsadmin@example.com',
             password='OpsAdminPass123!',
             role='admin',
@@ -138,11 +132,11 @@ class AdminManagementRegressionTests(unittest.TestCase):
             login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
             self.assertEqual(login_response.status_code, 200)
 
-            filtered = admin_client.get('/api/admin/users?username=ali&status=active&page=1&page_size=10')
+            filtered = admin_client.get('/api/admin/users?email=alice@&status=active&page=1&page_size=10')
             self.assertEqual(filtered.status_code, 200)
             filtered_payload = filtered.get_json()
             self.assertEqual(filtered_payload['pagination']['total'], 1)
-            self.assertEqual(filtered_payload['users'][0]['username'], 'alice')
+            self.assertEqual(filtered_payload['users'][0]['email'], 'alice@example.com')
 
             invalid_target = admin_client.patch(f'/api/admin/users/{secondary_admin_id}/block')
             self.assertEqual(invalid_target.status_code, 400)
@@ -159,7 +153,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(audit_payload['audit_logs'][0]['details']['target_role'], 'student')
 
         with app.test_client() as blocked_user_client:
-            blocked_login = self.login(blocked_user_client, 'alice', 'StudentPass123!')
+            blocked_login = self.login(blocked_user_client, 'alice@example.com', 'StudentPass123!')
             self.assertEqual(blocked_login.status_code, 403)
 
     def test_teacher_registration_requires_admin_approval(self):
@@ -167,7 +161,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         admin_id = self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -179,7 +172,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 '/api/auth/register',
                 json={
                     'full_name': 'Pending Teacher',
-                    'username': 'mentor1',
                     'email': 'mentor1@example.com',
                     'phone': '+7 912 345-67-89',
                     'password': 'TeacherPass123!',
@@ -205,9 +197,9 @@ class AdminManagementRegressionTests(unittest.TestCase):
             requests_payload = requests_response.get_json()
             self.assertEqual(requests_payload['pagination']['total'], 1)
             request_user = requests_payload['teacher_requests'][0]
-            self.assertEqual(request_user['username'], 'mentor1')
+            self.assertEqual(request_user['email'], 'mentor1@example.com')
 
-            users_response = admin_client.get('/api/admin/users?username=mentor1&page_size=10')
+            users_response = admin_client.get('/api/admin/users?email=mentor1&page_size=10')
             self.assertEqual(users_response.status_code, 200)
             self.assertEqual(users_response.get_json()['pagination']['total'], 0)
 
@@ -217,15 +209,27 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(approved_user['teacher_approval_status'], 'approved')
             self.assertTrue(approved_user['is_active'])
 
-            audit_response = admin_client.get('/api/admin/audit-logs?action=teacher_request_approved&target=mentor1')
+            audit_response = admin_client.get('/api/admin/audit-logs?action=teacher_request_approved&target=mentor1@')
             self.assertEqual(audit_response.status_code, 200)
             audit_payload = audit_response.get_json()
             self.assertEqual(audit_payload['pagination']['total'], 1)
             self.assertEqual(audit_payload['audit_logs'][0]['actor_user_id'], admin_id)
             self.assertEqual(audit_payload['audit_logs'][0]['details']['next_status'], 'approved')
 
+        # Teachers must also confirm their email before they can log in
+        # (email verification is independent from admin approval). Mark the
+        # mailbox as verified directly so this regression test stays focused
+        # on the admin-approval contract.
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import User
+
+            approved_user_row = User.query.filter_by(email='mentor1@example.com').first()
+            approved_user_row.email_verified = True
+            db.session.commit()
+
         with app.test_client() as approved_teacher_client:
-            approved_login = self.login(approved_teacher_client, 'mentor1', 'TeacherPass123!')
+            approved_login = self.login(approved_teacher_client, 'mentor1@example.com', 'TeacherPass123!')
             self.assertEqual(approved_login.status_code, 200)
             self.assertEqual(approved_login.get_json()['user']['role'], 'teacher')
 
@@ -234,7 +238,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -246,7 +249,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 '/api/auth/register',
                 json={
                     'full_name': 'Rejected Teacher',
-                    'username': 'mentor2',
                     'email': 'mentor2@example.com',
                     'phone': '+7 912 345-67-90',
                     'password': 'TeacherPass123!',
@@ -299,7 +301,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 '/api/auth/register',
                 json={
                     'full_name': 'Rejected Teacher Retry',
-                    'username': 'mentor2',
                     'email': 'mentor2@example.com',
                     'phone': '+7 912 345-67-90',
                     'password': 'TeacherPass123!',
@@ -314,7 +315,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -323,7 +323,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_id = self.create_user(
             app,
             full_name='Refresh Student',
-            username='refresh1',
             email='refresh1@example.com',
             password='StudentPass123!',
             role='student',
@@ -333,7 +332,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_client = app.test_client()
         admin_client = app.test_client()
 
-        student_login = self.login(student_client, 'refresh1', 'StudentPass123!')
+        student_login = self.login(student_client, 'refresh1@example.com', 'StudentPass123!')
         self.assertEqual(student_login.status_code, 200)
 
         admin_login = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
@@ -350,7 +349,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -359,7 +357,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_id = self.create_user(
             app,
             full_name='Active Student',
-            username='active1',
             email='active1@example.com',
             password='StudentPass123!',
             role='student',
@@ -369,7 +366,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_client = app.test_client()
         admin_client = app.test_client()
 
-        student_login = self.login(student_client, 'active1', 'StudentPass123!')
+        student_login = self.login(student_client, 'active1@example.com', 'StudentPass123!')
         self.assertEqual(student_login.status_code, 200)
 
         admin_login = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
@@ -386,7 +383,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         admin_id = self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -395,7 +391,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Super Admin',
-            username='root',
             email='root@example.com',
             password='RootPass123!',
             role='superadmin',
@@ -404,7 +399,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         teacher_id = self.create_user(
             app,
             full_name='Teacher Example',
-            username='mentor',
             email='mentor@example.com',
             password='TeacherPass123!',
             role='teacher',
@@ -413,7 +407,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_id = self.create_user(
             app,
             full_name='Delete Student',
-            username='delete1',
             email='delete1@example.com',
             password='StudentPass123!',
             role='student',
@@ -529,7 +522,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
             delete_teacher_response = superadmin_client.delete(f'/api/admin/users/{teacher_id}')
             self.assertEqual(delete_teacher_response.status_code, 200)
 
-            audit_response = superadmin_client.get('/api/admin/audit-logs?action=user_deleted&target=delete1')
+            audit_response = superadmin_client.get('/api/admin/audit-logs?action=user_deleted&target=delete1@')
             self.assertEqual(audit_response.status_code, 200)
             audit_payload = audit_response.get_json()
             self.assertEqual(audit_payload['pagination']['total'], 1)
@@ -561,7 +554,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(ConversationReadState.query.count(), 0)
 
         with app.test_client() as deleted_student_client:
-            deleted_login = self.login(deleted_student_client, 'delete1', 'StudentPass123!')
+            deleted_login = self.login(deleted_student_client, 'delete1@example.com', 'StudentPass123!')
             self.assertEqual(deleted_login.status_code, 401)
 
     def test_admin_telemetry_reports_learning_and_site_metrics(self):
@@ -569,7 +562,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -578,7 +570,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         teacher_id = self.create_user(
             app,
             full_name='Teacher Example',
-            username='teacher',
             email='teacher@example.com',
             password='TeacherPass123!',
             role='teacher',
@@ -587,7 +578,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_a_id = self.create_user(
             app,
             full_name='Student One',
-            username='student1',
             email='student1@example.com',
             password='StudentPass123!',
             role='student',
@@ -596,7 +586,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_b_id = self.create_user(
             app,
             full_name='Student Two',
-            username='student2',
             email='student2@example.com',
             password='StudentPass123!',
             role='student',
@@ -605,7 +594,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         student_c_id = self.create_user(
             app,
             full_name='Student Three',
-            username='student3',
             email='student3@example.com',
             password='StudentPass123!',
             role='student',
@@ -803,7 +791,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Super Admin',
-            username='root',
             email='root@example.com',
             password='RootPass123!',
             role='superadmin',
@@ -819,30 +806,29 @@ class AdminManagementRegressionTests(unittest.TestCase):
                 json={
                     'full_name': 'Operations Admin',
                     'email': 'ops@example.com',
-                    'username': 'opsadmin',
                     'password': 'OpsAdminPass123!',
                 },
             )
             self.assertEqual(create_response.status_code, 201)
             admin_id = create_response.get_json()['user']['id']
 
-            admins_response = superadmin_client.get('/api/admin/admins?username=ops&status=active')
+            admins_response = superadmin_client.get('/api/admin/admins?email=ops@&status=active')
             self.assertEqual(admins_response.status_code, 200)
             admins_payload = admins_response.get_json()
             self.assertEqual(admins_payload['pagination']['total'], 1)
-            self.assertEqual(admins_payload['admins'][0]['username'], 'opsadmin')
+            self.assertEqual(admins_payload['admins'][0]['email'], 'ops@example.com')
 
             block_response = superadmin_client.patch(f'/api/admin/admins/{admin_id}/block')
             self.assertEqual(block_response.status_code, 200)
             self.assertFalse(block_response.get_json()['user']['is_active'])
 
             audit_response = superadmin_client.get(
-                '/api/admin/audit-logs?action=admin_blocked&actor_role=superadmin&target=opsadmin'
+                '/api/admin/audit-logs?action=admin_blocked&actor_role=superadmin&target=ops@'
             )
             self.assertEqual(audit_response.status_code, 200)
             audit_payload = audit_response.get_json()
             self.assertEqual(audit_payload['pagination']['total'], 1)
-            self.assertEqual(audit_payload['audit_logs'][0]['details']['target_username'], 'opsadmin')
+            self.assertEqual(audit_payload['audit_logs'][0]['details']['target_email'], 'ops@example.com')
 
             delete_response = superadmin_client.delete(f'/api/admin/admins/{admin_id}')
             self.assertEqual(delete_response.status_code, 200)
@@ -857,7 +843,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         self.create_user(
             app,
             full_name='Admin Example',
-            username='admin',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -868,7 +853,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
             from app.core.db import db
             from app.models.user import AdminAuditLog, User, UserRole
 
-            user = User.query.filter_by(username='admin').first()
+            user = User.query.filter_by(email='admin@example.com').first()
             assert user is not None
             db.session.add(
                 AdminAuditLog(
@@ -924,7 +909,6 @@ class AdminManagementRegressionTests(unittest.TestCase):
         admin_id = self.create_user(
             app,
             full_name='Admin User',
-            username='zeta',
             email='zeta@example.com',
             password='AdminPass123!',
             role='admin',
@@ -942,7 +926,7 @@ class AdminManagementRegressionTests(unittest.TestCase):
                     entity_type='user',
                     entity_id=2,
                     entity_label='target',
-                    details_json={'actor_username': 'zeta', 'actor_name': 'Admin User'},
+                    details_json={'actor_email': 'zeta@example.com', 'actor_name': 'Admin User'},
                 )
             )
             db.session.add(
@@ -965,18 +949,18 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(r_sort.status_code, 200)
             self.assertEqual(r_sort.get_json()['filters']['sort'], 'action')
 
-            r_actor = client.get('/api/admin/audit-logs?actor_login=zeta&sort=username&order=desc')
+            r_actor = client.get('/api/admin/audit-logs?actor_login=zeta&sort=email&order=desc')
             self.assertEqual(r_actor.status_code, 200)
             self.assertEqual(r_actor.get_json()['pagination']['total'], 1)
 
             r_act = client.get(
-                '/api/admin/site-activity-logs?username=zeta&sort=path&order=asc&page=1&page_size=20'
+                '/api/admin/site-activity-logs?email=zeta&sort=path&order=asc&page=1&page_size=20'
             )
             self.assertEqual(r_act.status_code, 200)
             body = r_act.get_json()
             self.assertEqual(body['pagination']['total'], 1)
             self.assertEqual(body['site_activity_logs'][0]['path'], '/api/teacher/modules')
-            self.assertEqual(body['site_activity_logs'][0]['user']['username'], 'zeta')
+            self.assertEqual(body['site_activity_logs'][0]['user_id'], admin_id)
             self.assertEqual(body['filters']['sort'], 'path')
 
 

@@ -222,7 +222,7 @@ class TeacherQueryService:
         student_rows = (
             self.session.query(
                 ClassMembership.student_id,
-                User.username,
+                User.email,
                 User.full_name,
                 User.xp,
                 func.count(
@@ -235,22 +235,22 @@ class TeacherQueryService:
             .join(User, User.id == ClassMembership.student_id)
             .outerjoin(UserProgress, UserProgress.user_id == ClassMembership.student_id)
             .filter(ClassMembership.classroom_id == classroom.id)
-            .group_by(ClassMembership.student_id, User.username, User.full_name, User.xp)
-            .order_by(User.full_name.asc(), User.username.asc())
+            .group_by(ClassMembership.student_id, User.email, User.full_name, User.xp)
+            .order_by(User.full_name.asc(), User.email.asc())
             .all()
         )
 
         students = [
             {
                 'id': student_id,
-                'username': username,
+                'email': email,
                 'full_name': full_name,
                 'xp': xp,
                 'level': level_from_xp(xp),
                 'completed_lessons': int(completed_lessons or 0),
                 'average_score': round(float(average_score or 0), 1),
             }
-            for student_id, username, full_name, xp, completed_lessons, average_score in student_rows
+            for student_id, email, full_name, xp, completed_lessons, average_score in student_rows
         ]
 
         member_counts = self._class_member_counts([classroom.id])

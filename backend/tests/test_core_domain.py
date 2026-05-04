@@ -102,7 +102,6 @@ class BillingTests(unittest.TestCase):
 
         user = User(
             full_name="P",
-            username="p",
             email="p@e.com",
             password_hash="x",
             role=UserRole.PARENT,
@@ -216,7 +215,6 @@ class CoreDomainWithDbTests(unittest.TestCase):
             )
             st = User(
                 full_name="S",
-                username="scompact",
                 email="scompact@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -259,14 +257,12 @@ class CoreDomainWithDbTests(unittest.TestCase):
         with app.app_context():
             parent = User(
                 full_name="P",
-                username="phide",
                 email="phide@example.com",
                 password_hash=hash_password("ParentPass123!"),
                 role=UserRole.PARENT,
             )
             child = User(
                 full_name="C",
-                username="chide",
                 email="chide@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -301,14 +297,12 @@ class CoreDomainWithDbTests(unittest.TestCase):
         with app.app_context():
             parent = User(
                 full_name="P",
-                username="pmsg",
                 email="pmsg@example.com",
                 password_hash=hash_password("ParentPass123!"),
                 role=UserRole.PARENT,
             )
             child = User(
                 full_name="C",
-                username="cmsg",
                 email="cmsg@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -346,14 +340,12 @@ class CoreDomainWithDbTests(unittest.TestCase):
         with app.app_context():
             parent = User(
                 full_name="P",
-                username="pnot",
                 email="pnot@example.com",
                 password_hash=hash_password("ParentPass123!"),
                 role=UserRole.PARENT,
             )
             st = User(
                 full_name="Child Name",
-                username="cnot",
                 email="cnot@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -405,7 +397,6 @@ class CoreDomainWithDbTests(unittest.TestCase):
         with app.app_context():
             t = User(
                 full_name="T",
-                username="tach",
                 email="tach@example.com",
                 password_hash=hash_password("TeacherPass123!"),
                 role=UserRole.TEACHER,
@@ -436,7 +427,6 @@ class CoreDomainWithDbTests(unittest.TestCase):
         with app.app_context():
             st = User(
                 full_name="S",
-                username="smar",
                 email="smar@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -491,7 +481,6 @@ class CoreDomainWithDbTests(unittest.TestCase):
             )
             st = User(
                 full_name="St",
-                username="sfc",
                 email="sfc@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
@@ -533,7 +522,6 @@ class CoreDomainWithDbTests(unittest.TestCase):
             t0 = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
             st = User(
                 full_name="Sp",
-                username="spfive",
                 email="spfive@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,

@@ -76,7 +76,6 @@ class ApiContractTests(unittest.TestCase):
         with app.app_context():
             student = User(
                 full_name='Student Example',
-                username='student',
                 email='student@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -84,14 +83,12 @@ class ApiContractTests(unittest.TestCase):
             )
             teacher = User(
                 full_name='Teacher Example',
-                username='teacher',
                 email='teacher@example.com',
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,
             )
             admin = User(
                 full_name='Admin Example',
-                username='admin',
                 email='admin@example.com',
                 password_hash=hash_password('AdminPass123!'),
                 role=UserRole.ADMIN,
@@ -167,7 +164,7 @@ class ApiContractTests(unittest.TestCase):
         assert_has_keys(
             self,
             me_payload['user'],
-            {'id', 'full_name', 'username', 'email', 'role', 'age_group', 'xp', 'level', 'rank_title', 'xp_to_next', 'streak', 'theme', 'is_active'},
+            {'id', 'full_name', 'email', 'role', 'age_group', 'xp', 'level', 'rank_title', 'xp_to_next', 'streak', 'theme', 'is_active'},
             '/api/auth/me.user',
         )
         assert_has_keys(
@@ -229,7 +226,7 @@ class ApiContractTests(unittest.TestCase):
             from app.models.learning import Achievement, UserAchievement
             from app.models.user import User
 
-            student = User.query.filter_by(username='student').one()
+            student = User.query.filter_by(email='student@example.com').one()
             no_hints = Achievement.query.filter_by(code='no_hints').one()
             earned_no_hints = UserAchievement.query.filter_by(
                 user_id=student.id,
@@ -249,7 +246,7 @@ class ApiContractTests(unittest.TestCase):
 
             seed_achievements()
 
-            student = User.query.filter_by(username='student').one()
+            student = User.query.filter_by(email='student@example.com').one()
             self.assertEqual(student.age_group, 'middle')
             module = Module(
                 slug='junior-review',
@@ -315,7 +312,7 @@ class ApiContractTests(unittest.TestCase):
         with app.app_context():
             from app.models.user import User
 
-            student_xp = User.query.filter_by(username='student').one().xp
+            student_xp = User.query.filter_by(email='student@example.com').one().xp
 
         self.assertTrue(task_payload['passed'])
         self.assertEqual(task_payload['xp_awarded'], 0)
@@ -364,13 +361,12 @@ class ApiContractTests(unittest.TestCase):
             from app.models.learning import ClassMembership
             from app.models.user import User, UserRole
 
-            student = User.query.filter_by(username='student').first()
+            student = User.query.filter_by(email='student@example.com').first()
             self.assertIsNotNone(student)
             student.xp = 100
 
             classmate = User(
                 full_name='Classmate Example',
-                username='classmate',
                 email='classmate@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -379,7 +375,6 @@ class ApiContractTests(unittest.TestCase):
             )
             outsider = User(
                 full_name='Outsider Example',
-                username='outsider',
                 email='outsider@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -407,7 +402,7 @@ class ApiContractTests(unittest.TestCase):
                 from app.core.db import db
                 from app.models.user import User
 
-                User.query.filter_by(username='student').first().xp = 2000
+                User.query.filter_by(email='student@example.com').first().xp = 2000
                 db.session.commit()
 
             cached_global_payload = client.get('/api/leaderboard').get_json()
@@ -420,7 +415,15 @@ class ApiContractTests(unittest.TestCase):
         )
         self.assertEqual(class_payload['scope'], 'class')
         self.assertEqual(class_payload['classroom']['id'], ids['classroom_id'])
-        self.assertEqual([row['username'] for row in class_payload['leaderboard']], ['classmate', 'student'])
+        self.assertEqual(
+            [row['full_name'] for row in class_payload['leaderboard']],
+            ['Classmate Example', 'Student Example'],
+        )
+        for lb in (class_payload['leaderboard'], global_payload['leaderboard']):
+            self.assertTrue(lb)
+            for row in lb:
+                self.assertIn('avatar_id', row)
+                self.assertIn('frame_id', row)
         self.assertEqual(global_payload['leaderboard'], cached_global_payload['leaderboard'])
 
     def test_lesson_access_gate_for_locked_lesson_in_module(self):
@@ -433,7 +436,6 @@ class ApiContractTests(unittest.TestCase):
         with app.app_context():
             student = User(
                 full_name='Gate Student',
-                username='gstudent',
                 email='gstudent@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -441,14 +443,12 @@ class ApiContractTests(unittest.TestCase):
             )
             teacher = User(
                 full_name='Gate Teacher',
-                username='gteacher',
                 email='gteacher@example.com',
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,
             )
             parent = User(
                 full_name='Gate Parent',
-                username='gparent',
                 email='gparent@example.com',
                 password_hash=hash_password('ParentPass123!'),
                 role=UserRole.PARENT,
@@ -500,30 +500,27 @@ class ApiContractTests(unittest.TestCase):
         self.assertFalse(locked_gate['allowed'])
         self.assertEqual(locked_gate['redirect_lesson_id'], first_id)
 
+        # Parents may browse published lessons without forced sequence and can begin / complete
+        # catalog lessons under their own UserProgress when exploring the roadmap.
         with app.test_client() as client:
             self.login(client, 'gparent@example.com', 'ParentPass123!')
-            parent_locked_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
-            parent_locked_lesson = client.get(f'/api/lessons/{second_id}')
-
-        self.assertFalse(parent_locked_gate['allowed'])
-        self.assertEqual(parent_locked_gate['redirect_lesson_id'], first_id)
-        self.assertEqual(parent_locked_lesson.status_code, 403)
-
-        with app.test_client() as client:
-            self.login(client, 'gparent@example.com', 'ParentPass123!')
+            parent_first_gate = client.get(f'/api/student/lesson-access/{first_id}').get_json()
+            parent_second_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
+            parent_first_lesson = client.get(f'/api/lessons/{first_id}')
+            parent_second_lesson = client.get(f'/api/lessons/{second_id}')
             parent_start = client.post(f'/api/lessons/{first_id}/start')
             parent_complete = client.patch(
                 f'/api/lessons/{first_id}/complete',
-                json={'completion_percent': 100},
+                json={},
             )
-            parent_unlocked_gate = client.get(f'/api/student/lesson-access/{second_id}').get_json()
-            parent_second_lesson = client.get(f'/api/lessons/{second_id}')
 
-        self.assertEqual(parent_start.status_code, 200)
-        self.assertEqual(parent_complete.status_code, 200)
-        self.assertEqual(parent_unlocked_gate, {'allowed': True})
+        self.assertEqual(parent_first_gate, {'allowed': True})
+        self.assertEqual(parent_second_gate, {'allowed': True})
+        self.assertEqual(parent_first_lesson.status_code, 200)
         self.assertEqual(parent_second_lesson.status_code, 200)
         self.assertEqual(parent_second_lesson.get_json()['viewer_role'], 'parent')
+        self.assertEqual(parent_start.status_code, 200)
+        self.assertEqual(parent_complete.status_code, 200)
 
         with app.test_client() as client:
             self.login(client, 'gteacher@example.com', 'TeacherPass123!')

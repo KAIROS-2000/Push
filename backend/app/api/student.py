@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import redis
 from datetime import UTC, datetime, timedelta
@@ -17,11 +18,21 @@ from ..core.code_judge import (
 from ..core.assignment_sync import sync_student_assignment_submissions_for_lesson
 from ..core.achievements import sync_achievements_for_user
 from ..core.db import db
+from ..core.phone import (
+    is_valid_russian_phone,
+    normalize_russian_phone,
+    phone_validation_message,
+)
 from ..core.security import (
     auth_required,
+    clear_class_join_failures,
+    class_join_attempt_allowed,
     hash_password,
+    invalidate_session_version_cache,
+    register_class_join_failure,
     revoke_refresh_tokens_for_user,
     validate_password,
+    verify_password,
 )
 from ..models.learning import (
     Achievement,
@@ -66,11 +77,22 @@ PROGRESS_STATUS_LABELS = {
 MANUAL_REVIEW_PROGRESS_STATUSES = {"pending_review", "needs_revision"}
 VALID_AGE_GROUPS = {"junior", "middle", "senior"}
 DEFAULT_THEMES = {"light", "dark"}
-FORCED_SEQUENCE_ROLES = {UserRole.STUDENT, UserRole.PARENT}
+# Parent accounts can browse and complete catalog lessons themselves; forced lesson order
+# applies to students only (see FORCED_SEQUENCE_ROLES).
+FORCED_SEQUENCE_ROLES = {UserRole.STUDENT}
+LESSON_PARTICIPANT_ROLES: list[UserRole] = [
+    UserRole.STUDENT,
+    UserRole.PARENT,
+    UserRole.TEACHER,
+    UserRole.ADMIN,
+    UserRole.SUPERADMIN,
+]
 _AGE_GROUP_RANK = {"junior": 0, "middle": 1, "senior": 2}
 LEADERBOARD_LIMIT = 50
 GLOBAL_LEADERBOARD_REFRESH_INTERVAL = timedelta(minutes=5)
 GLOBAL_LEADERBOARD_CACHE_KEY_ALL = "__all__"
+# Bump when leaderboard row JSON shape changes (invalidates Redis + in-process cache).
+LEADERBOARD_REDIS_SCHEMA = "v2"
 _global_leaderboard_cache: dict[
     tuple[str, str], tuple[datetime, list[dict]]
 ] = {}
@@ -88,14 +110,25 @@ def _student_outranks_lesson(user: User, lesson: Lesson | None) -> bool:
     return _user_outranks_lesson(user.age_group, lesson.module.age_group)
 
 
+def _student_earns_lesson_xp(user: User, lesson: Lesson | None) -> bool:
+    """XP from lesson flows applies only to learners (not staff/parent catalog practice)."""
+    return user.role == UserRole.STUDENT and not _student_outranks_lesson(user, lesson)
+
+
 def _leaderboard_cache_age_key(age_group: str | None) -> str:
     if not age_group:
         return GLOBAL_LEADERBOARD_CACHE_KEY_ALL
     return age_group.strip().lower()
 
 
+def _leaderboard_redis_key(age_key: str) -> str:
+    from ..core.redis_client import redis_key
+
+    return redis_key("leaderboard", "global", age_key, LEADERBOARD_REDIS_SCHEMA)
+
+
 def _read_leaderboard_from_cache(age_key: str) -> list[dict] | None:
-    from ..core.redis_client import get_redis, redis_available, redis_key
+    from ..core.redis_client import get_redis, redis_available
 
     if not redis_available():
         return None
@@ -103,7 +136,7 @@ def _read_leaderboard_from_cache(age_key: str) -> list[dict] | None:
     if not client:
         return None
     try:
-        raw = client.get(redis_key('leaderboard', 'global', age_key))
+        raw = client.get(_leaderboard_redis_key(age_key))
         if not raw:
             return None
         data = json.loads(raw)
@@ -115,7 +148,7 @@ def _read_leaderboard_from_cache(age_key: str) -> list[dict] | None:
 
 
 def _write_leaderboard_to_cache(age_key: str, rows: list[dict]) -> None:
-    from ..core.redis_client import get_redis, redis_available, redis_key
+    from ..core.redis_client import get_redis, redis_available
 
     if not redis_available():
         return
@@ -125,7 +158,7 @@ def _write_leaderboard_to_cache(age_key: str, rows: list[dict]) -> None:
     try:
         ttl = int(GLOBAL_LEADERBOARD_REFRESH_INTERVAL.total_seconds())
         client.setex(
-            redis_key('leaderboard', 'global', age_key),
+            _leaderboard_redis_key(age_key),
             ttl,
             json.dumps(rows, ensure_ascii=False),
         )
@@ -137,8 +170,9 @@ def _leaderboard_row(student: User, position: int) -> dict:
     return {
         "id": student.id,
         "position": position,
-        "username": student.username,
         "full_name": student.full_name,
+        "avatar_id": student.avatar_id,
+        "frame_id": student.frame_id,
         "xp": student.xp,
         "level": student.level,
         "age_group": student.age_group,
@@ -190,7 +224,7 @@ def _global_leaderboard_rows(age_group: str | None) -> list[dict]:
             {**r, "position": idx} for idx, r in enumerate(visible[:LEADERBOARD_LIMIT], start=1)
         ]
 
-    cache_key = (str(db.engine.url), age_key)
+    cache_key = (str(db.engine.url), age_key, LEADERBOARD_REDIS_SCHEMA)
     cached = _global_leaderboard_cache.get(cache_key)
     if cached and cached[0] > now:
         return [row.copy() for row in cached[1]]
@@ -563,6 +597,7 @@ def dashboard(current_user: User):
             "completed_lessons": len(completed_lessons),
             "assignments_open": len(assignments),
             "achievements": len(achievements),
+            "achievements_total": Achievement.query.count(),
         },
         "continue_lesson": continue_lesson,
         "daily_quests": [
@@ -709,27 +744,41 @@ def get_lesson(current_user: User, lesson_id: int):
 @student_bp.post("/lessons/<int:lesson_id>/gigachat")
 @auth_required()
 def lesson_gigachat(current_user: User, lesson_id: int):
+    # AUDIT C-08 (open): integration code lives in core/gigachat.py but is intentionally
+    # disabled here. Decide product-side: either delete core/gigachat.py + GIGACHAT_* config,
+    # or re-enable this endpoint AFTER (a) revoking the leaked GIGACHAT_AUTH_KEY at Sber
+    # (audit S-19) and (b) `git filter-repo` removing the historical .env from history.
     return {"message": "GigaChat недоступен в проекте."}, 404
 
 
 @student_bp.patch("/lessons/<int:lesson_id>/complete")
-@auth_required([UserRole.STUDENT, UserRole.PARENT])
+@auth_required(LESSON_PARTICIPANT_ROLES)
 def complete_lesson(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
+    if (
+        _uses_forced_lesson_sequence(current_user)
+        and _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]
+    ):
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     data = request.get_json() or {}
-    completion_percent = _clamp_completion_percent(data.get("completion_percent"))
     submitted_answer = (data.get("answer") or "").strip()
     progress = _get_or_create_progress(current_user.id, lesson.id)
     manual_review_required = _lesson_requires_teacher_review(lesson)
     has_practice_task = bool(lesson.tasks)
+    has_quiz = bool(lesson.quizzes)
 
-    # Preserve the best saved lesson percentage so repeated openings do not roll progress back.
-    effective_percent = max(completion_percent, progress.score)
+    # Anti-cheat: never trust client-provided completion_percent.
+    # progress.score is mutated only by submit_task/submit_quiz on the server.
+    # Theory-only lessons complete on reaching this endpoint (no client signal can fake practice).
+    if not has_practice_task and not has_quiz:
+        server_computed_percent = 100
+    else:
+        server_computed_percent = int(progress.score or 0)
+
+    effective_percent = max(server_computed_percent, int(progress.score or 0))
     progress.score = effective_percent
     if manual_review_required and effective_percent >= lesson.passing_score:
         if (
@@ -763,7 +812,7 @@ def complete_lesson(current_user: User, lesson_id: int):
 
     sync_achievements_for_user(
         current_user,
-        award_xp=not _student_outranks_lesson(current_user, lesson),
+        award_xp=_student_earns_lesson_xp(current_user, lesson),
     )
     completed_lessons_count = UserProgress.query.filter(
         UserProgress.user_id == current_user.id,
@@ -777,7 +826,7 @@ def complete_lesson(current_user: User, lesson_id: int):
     db.session.commit()
     return {
         "message": PROGRESS_STATUS_LABELS[progress.status],
-        "completion_percent": completion_percent,
+        "completion_percent": effective_percent,
         "progress": progress.to_dict(),
         "state": _effective_lesson_state_for_user(current_user, lesson),
         "redirect_url": "/profile",
@@ -785,8 +834,50 @@ def complete_lesson(current_user: User, lesson_id: int):
     }
 
 
+def _compute_task_evaluation(
+    task: Task, raw_answer: str
+) -> tuple[dict[str, Any] | None, tuple[dict[str, Any], int] | None]:
+    """Shared automated/manual scoring logic used by submit_task (no DB writes)."""
+    has_answer = bool(raw_answer.strip())
+    manual_review_required = task.requires_teacher_review()
+    judge_report = None
+    validation = task.normalized_validation(include_private=True)
+    if validation["evaluation_mode"] == "manual":
+        score = 100 if has_answer else 0
+        passed = has_answer
+        feedback = (
+            "Ответ сохранён. Теперь заверши урок, чтобы отправить его учителю на проверку."
+            if has_answer
+            else "Добавь решение, чтобы сохранить ответ для учителя."
+        )
+    else:
+        if not has_answer:
+            return None, ({"message": "Сначала добавь решение в редактор."}, 400)
+        try:
+            judge_report = judge_task_submission(task, raw_answer)
+        except CodeJudgeConfigurationError as exc:
+            return None, ({"message": str(exc)}, 400)
+        except CodeJudgeUnavailableError as exc:
+            return None, ({"message": str(exc)}, 503)
+        score = judge_report["score"]
+        passed = judge_report["passed"]
+        feedback = judge_report["feedback"]
+
+    return (
+        {
+            "score": score,
+            "passed": passed,
+            "feedback": feedback,
+            "judge_report": judge_report,
+            "manual_review_required": manual_review_required,
+            "has_answer": has_answer,
+        },
+        None,
+    )
+
+
 @student_bp.post("/tasks/<int:task_id>/submit")
-@auth_required()
+@auth_required(LESSON_PARTICIPANT_ROLES)
 def submit_task(current_user: User, task_id: int):
     task = Task.query.get_or_404(task_id)
     if not _user_can_access_lesson(current_user, task.lesson):
@@ -801,31 +892,18 @@ def submit_task(current_user: User, task_id: int):
         }, 403
     data = request.get_json() or {}
     raw_answer = data.get("answer") or ""
-    has_answer = bool(raw_answer.strip())
     hints_used = _coerce_nonnegative_int(data.get("hints_used"))
-    manual_review_required = task.requires_teacher_review()
-    judge_report = None
-    validation = task.normalized_validation(include_private=True)
-    if validation["evaluation_mode"] == "manual":
-        score = 100 if has_answer else 0
-        passed = has_answer
-        feedback = (
-            "Ответ сохранён. Теперь заверши урок, чтобы отправить его учителю на проверку."
-            if has_answer
-            else "Добавь решение, чтобы сохранить ответ для учителя."
-        )
-    else:
-        if not has_answer:
-            return {"message": "Сначала добавь решение в редактор."}, 400
-        try:
-            judge_report = judge_task_submission(task, raw_answer)
-        except CodeJudgeConfigurationError as exc:
-            return {"message": str(exc)}, 400
-        except CodeJudgeUnavailableError as exc:
-            return {"message": str(exc)}, 503
-        score = judge_report["score"]
-        passed = judge_report["passed"]
-        feedback = judge_report["feedback"]
+    evaluated, err = _compute_task_evaluation(task, raw_answer)
+    if err:
+        body, status = err
+        return body, status
+    assert evaluated is not None
+    score = evaluated["score"]
+    passed = evaluated["passed"]
+    feedback = evaluated["feedback"]
+    judge_report = evaluated["judge_report"]
+    manual_review_required = evaluated["manual_review_required"]
+    has_answer = evaluated["has_answer"]
 
     progress = _get_or_create_progress(current_user.id, task.lesson_id)
     progress.attempts += 1
@@ -833,7 +911,7 @@ def submit_task(current_user: User, task_id: int):
     was_completed = progress.status == "completed"
     xp_awarded = 0
     xp_skipped = False
-    outranks_lesson = _student_outranks_lesson(current_user, task.lesson)
+    earn_xp = _student_earns_lesson_xp(current_user, task.lesson)
     if manual_review_required:
         if progress.status != "completed":
             progress.status = "in_progress" if has_answer else progress.status
@@ -846,11 +924,11 @@ def submit_task(current_user: User, task_id: int):
             progress.status = "completed"
             progress.completed_at = progress.completed_at or datetime.now(UTC)
             if not was_completed:
-                if outranks_lesson:
-                    xp_skipped = True
-                else:
+                if earn_xp:
                     current_user.add_xp(task.xp_reward)
                     xp_awarded = task.xp_reward
+                elif current_user.role == UserRole.STUDENT:
+                    xp_skipped = True
         elif has_answer and progress.status == "not_started":
             progress.status = "in_progress"
             _mark_progress_started(progress)
@@ -864,9 +942,9 @@ def submit_task(current_user: User, task_id: int):
         )
     if not manual_review_required:
         _award_achievement_if_needed(
-            current_user, code="first_code", award_xp=not outranks_lesson
+            current_user, code="first_code", award_xp=earn_xp
         )
-    sync_achievements_for_user(current_user, award_xp=not outranks_lesson)
+    sync_achievements_for_user(current_user, award_xp=earn_xp)
     db.session.commit()
     return {
         "passed": passed,
@@ -882,12 +960,15 @@ def submit_task(current_user: User, task_id: int):
 
 
 @student_bp.post("/lessons/<int:lesson_id>/start")
-@auth_required([UserRole.STUDENT, UserRole.PARENT])
+@auth_required(LESSON_PARTICIPANT_ROLES)
 def start_lesson(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
+    if (
+        _uses_forced_lesson_sequence(current_user)
+        and _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]
+    ):
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     progress = _get_or_create_progress(current_user.id, lesson.id)
@@ -897,12 +978,15 @@ def start_lesson(current_user: User, lesson_id: int):
 
 
 @student_bp.post("/lessons/<int:lesson_id>/hints")
-@auth_required([UserRole.STUDENT, UserRole.PARENT])
+@auth_required(LESSON_PARTICIPANT_ROLES)
 def record_lesson_hints(current_user: User, lesson_id: int):
     lesson = Lesson.query.get_or_404(lesson_id)
     if not _user_can_access_lesson(current_user, lesson):
         return {"message": "У вас нет доступа к этому уроку."}, 403
-    if _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]:
+    if (
+        _uses_forced_lesson_sequence(current_user)
+        and _effective_lesson_state_for_user(current_user, lesson) == STATE_MAP["locked"]
+    ):
         return {"message": "Сначала завершите предыдущий урок."}, 403
 
     data = request.get_json() or {}
@@ -917,7 +1001,7 @@ def record_lesson_hints(current_user: User, lesson_id: int):
 
 
 @student_bp.post("/quizzes/<int:quiz_id>/submit")
-@auth_required()
+@auth_required(LESSON_PARTICIPANT_ROLES)
 def submit_quiz(current_user: User, quiz_id: int):
     quiz = Quiz.query.get_or_404(quiz_id)
     if not _user_can_access_lesson(current_user, quiz.lesson):
@@ -956,7 +1040,7 @@ def submit_quiz(current_user: User, quiz_id: int):
     xp_awarded = 0
     xp_skipped = False
     manual_review_required = _lesson_requires_teacher_review(quiz.lesson)
-    outranks_lesson = _student_outranks_lesson(current_user, quiz.lesson)
+    earn_xp = _student_earns_lesson_xp(current_user, quiz.lesson)
     if passed:
         progress.status = (
             "pending_review"
@@ -965,11 +1049,11 @@ def submit_quiz(current_user: User, quiz_id: int):
         )
         progress.completed_at = progress.completed_at or datetime.now(UTC)
         if not was_completed and not manual_review_required:
-            if outranks_lesson:
-                xp_skipped = True
-            else:
+            if earn_xp:
                 current_user.add_xp(quiz.xp_reward)
                 xp_awarded = quiz.xp_reward
+            elif current_user.role == UserRole.STUDENT:
+                xp_skipped = True
     elif progress.status == "not_started":
         progress.status = "in_progress"
         _mark_progress_started(progress)
@@ -977,7 +1061,7 @@ def submit_quiz(current_user: User, quiz_id: int):
         sync_student_assignment_submissions_for_lesson(
             current_user, quiz.lesson, progress
         )
-    sync_achievements_for_user(current_user, award_xp=not outranks_lesson)
+    sync_achievements_for_user(current_user, award_xp=earn_xp)
     db.session.commit()
     return {
         "passed": passed,
@@ -1059,20 +1143,31 @@ def leaderboard(current_user: User):
 @student_bp.post("/classes/join")
 @auth_required([UserRole.STUDENT])
 def join_class(current_user: User):
+    # Anti-bruteforce: throttle by user_id+ip prevents enumerating valid Classroom.code values.
+    if not class_join_attempt_allowed(current_user.id):
+        return {
+            "message": "Слишком много попыток присоединиться к классу. Попробуйте позже."
+        }, 429
     data = request.get_json() or {}
     code = (data.get("code") or "").strip().upper()
     classroom = Classroom.query.filter_by(code=code).first()
     if not classroom:
+        register_class_join_failure(current_user.id)
+        db.session.commit()
         return {"message": "Класс с таким кодом не найден."}, 404
     if ClassMembership.query.filter_by(
         classroom_id=classroom.id, student_id=current_user.id
     ).first():
+        clear_class_join_failures(current_user.id)
+        db.session.commit()
         return {"message": "Вы уже в этом классе.", "classroom": classroom.to_dict()}
 
     pending_request = ClassJoinRequest.query.filter_by(
         classroom_id=classroom.id, student_id=current_user.id, status="pending"
     ).first()
     if pending_request:
+        clear_class_join_failures(current_user.id)
+        db.session.commit()
         return {
             "message": "Заявка уже отправлена и ожидает подтверждения учителя.",
             "classroom": classroom.to_dict(),
@@ -1085,6 +1180,7 @@ def join_class(current_user: User):
         status="pending",
     )
     db.session.add(join_request)
+    clear_class_join_failures(current_user.id)
     db.session.commit()
     return {
         "message": "Заявка отправлена учителю. После подтверждения класс появится в кабинете.",
@@ -1158,18 +1254,50 @@ def my_profile(current_user: User):
 def update_profile(current_user: User):
     data = request.get_json() or {}
     if "full_name" in data and data["full_name"]:
-        current_user.full_name = data["full_name"]
+        current_user.full_name = str(data["full_name"]).strip()[:120]
+    if "phone" in data:
+        # Phone is optional everywhere except parent profile-completion before
+        # linking a child. We accept it in the same PATCH so the parent UI
+        # doesn't need a separate endpoint, but still validate format and
+        # uniqueness server-side.
+        raw_phone = data.get("phone")
+        if raw_phone in (None, ""):
+            current_user.phone = None
+        else:
+            normalized = normalize_russian_phone(raw_phone)
+            if not is_valid_russian_phone(normalized):
+                return {"message": phone_validation_message()}, 400
+            existing = (
+                User.query.filter(User.phone == normalized, User.id != current_user.id).first()
+            )
+            if existing:
+                return {
+                    "message": "Этот номер телефона уже используется другим аккаунтом.",
+                }, 409
+            current_user.phone = normalized
     if "theme" in data:
         theme = str(data.get("theme") or "").strip()
         if _user_can_use_theme(current_user, theme):
             current_user.theme = theme
     if "password" in data:
         password = data.get("password") or ""
+        current_password = str(data.get("current_password") or "")
         if password:
+            # Re-auth requirement: prevent stolen access-cookie -> permanent takeover.
+            # Caller must prove they know the current password before we rotate the credential.
+            if not current_password:
+                return {"message": "Для смены пароля укажите текущий пароль."}, 400
+            if not verify_password(current_password, current_user.password_hash):
+                return {"message": "Текущий пароль указан неверно."}, 401
+            if verify_password(password, current_user.password_hash):
+                return {"message": "Новый пароль должен отличаться от текущего."}, 400
             password_error = validate_password(password)
             if password_error:
                 return {"message": password_error}, 400
             current_user.password_hash = hash_password(password)
+            # Bump invalidates any cached/active access-token immediately, not just refresh tokens.
+            current_user.bump_session_version()
+            invalidate_session_version_cache(current_user.id)
             revoke_refresh_tokens_for_user(current_user.id)
     db.session.commit()
     return {"user": current_user.to_dict()}

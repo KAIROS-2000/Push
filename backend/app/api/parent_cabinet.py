@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from flask import Blueprint, request
+from sqlalchemy.exc import IntegrityError
 
 from ..core.billing import parent_billing_placeholder
 from ..core.db import db
@@ -96,6 +97,7 @@ def parent_dashboard(user: User):
                 "id": child.id,
                 "display_name": child.full_name,
                 "relationship_label": link.relationship_label,
+                "age_group": child.age_group,
             }
         )
     sample = children[0]["id"] if children else None
@@ -125,10 +127,57 @@ def list_children(user: User):
                 "id": child.id,
                 "display_name": child.full_name,
                 "relationship_label": link.relationship_label,
+                "age_group": child.age_group,
                 "linked_at": link.created_at.isoformat() if link.created_at else None,
             }
         )
     return {"children": rows}
+
+
+PARENT_PROFILE_REQUIRED_FIELDS = ('full_name', 'phone', 'email_verified')
+
+
+def _missing_parent_profile_fields(user: User) -> list[str]:
+    """Return the parent profile fields that block child-linking, in display order.
+
+    Parents register by email only and enter the cabinet immediately, so we
+    cannot enforce these fields at signup. Instead they are required at the
+    one moment they actually need to identify themselves: when attaching a
+    child to the family account.
+    """
+
+    missing: list[str] = []
+    if not (user.full_name or '').strip():
+        missing.append('full_name')
+    if not (user.phone or '').strip():
+        missing.append('phone')
+    if not user.email_verified:
+        missing.append('email_verified')
+    return missing
+
+
+@parent_bp.get("/profile/status")
+@auth_required([UserRole.PARENT])
+def parent_profile_status(user: User):
+    """Lightweight status endpoint the cabinet uses to decide which prompts to show.
+
+    Returns the same `missing_fields` list that `link_child` would refuse on,
+    so the UI can render the "complete profile" card without first triggering
+    a 400 from the link endpoint.
+    """
+
+    missing = _missing_parent_profile_fields(user)
+    return {
+        "ready_to_link_child": not missing,
+        "missing_fields": missing,
+        "required_fields": list(PARENT_PROFILE_REQUIRED_FIELDS),
+        "user": {
+            "full_name": user.full_name or "",
+            "phone": user.phone or "",
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+        },
+    }
 
 
 @parent_bp.post("/children/link")
@@ -136,6 +185,20 @@ def list_children(user: User):
 def link_child(user: User):
     if not parent_link_redeem_allowed(user.id):
         return {"message": "Слишком много попыток. Повторите позже."}, 429
+
+    missing = _missing_parent_profile_fields(user)
+    if missing:
+        # Surface a structured response so the cabinet can drive the user to
+        # the right prompt (fill phone/name OR verify email) without a guess.
+        return {
+            "message": (
+                "Перед привязкой ребёнка завершите профиль: "
+                "укажите имя, номер телефона и подтвердите email."
+            ),
+            "code": "parent_profile_incomplete",
+            "missing_fields": missing,
+        }, 400
+
     raw = (request.get_json() or {}).get("code", "")
     code = str(raw or "").strip().upper().replace(" ", "")
     if len(code) != parent_insights.PARENT_LINK_CODE_LENGTH:
@@ -169,13 +232,25 @@ def link_child(user: User):
     existing = _link_active(user.id, child.id)
     created = False
     if not existing:
-        db.session.add(
-            ParentChildLink(
-                parent_user_id=user.id,
-                child_user_id=child.id,
-            )
+        link = ParentChildLink(
+            parent_user_id=user.id,
+            child_user_id=child.id,
         )
-        created = True
+        db.session.add(link)
+        try:
+            # Race-safe: UniqueConstraint(parent_user_id, child_user_id) prevents
+            # concurrent duplicates; we surface that as idempotent success.
+            db.session.flush()
+            created = True
+        except IntegrityError:
+            db.session.rollback()
+            existing = _link_active(user.id, child.id)
+            if existing is None:
+                # Constraint conflict but no active row visible — surface as transient error
+                # rather than hiding it as success.
+                register_parent_link_redeem_failure(user.id)
+                db.session.commit()
+                return {"message": "Не удалось установить связь. Повторите попытку."}, 409
     row.used_at = now
     _ensure_safety_and_consent(user.id, child.id)
     clear_parent_link_redeem_failures(user.id)

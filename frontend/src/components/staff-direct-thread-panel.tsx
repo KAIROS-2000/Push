@@ -61,7 +61,7 @@ export function StaffDirectThreadPanel({
 	const draftRef = useRef<HTMLTextAreaElement | null>(null)
 	const lastMessageId = useMemo(() => messages.at(-1)?.id ?? null, [messages])
 
-	const title = peer.full_name?.trim() || peer.username
+	const title = peer.full_name?.trim() || peer.email
 	const canSend = Boolean(draft.trim()) && !sending
 
 	const markRead = useCallback(async () => {
@@ -176,7 +176,7 @@ export function StaffDirectThreadPanel({
 						<RolePill role={peer.role} />
 					</div>
 					<p className='mt-1 text-sm text-slate-500'>
-						@{peer.username} · переписка с администрацией
+						{peer.email} · переписка с администрацией
 					</p>
 				</div>
 				<div className='flex items-center gap-2'>

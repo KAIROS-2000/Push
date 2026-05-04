@@ -71,7 +71,6 @@ class CriticalJourneyTests(unittest.TestCase):
         with app.app_context():
             student = User(
                 full_name='Student Example',
-                username=email.split('@')[0][:10],
                 email=email,
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -89,7 +88,6 @@ class CriticalJourneyTests(unittest.TestCase):
         with app.app_context():
             teacher = User(
                 full_name='Teacher Example',
-                username='teacher',
                 email='teacher@example.com',
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,

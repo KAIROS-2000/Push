@@ -57,6 +57,7 @@ const ROLE_RULES: Array<{ path: string; roles: UserRole[] }> = [
 	{ path: '/lessons', roles: KNOWN_ROLES },
 	{ path: '/leaderboard', roles: KNOWN_ROLES },
 	{ path: '/profile', roles: KNOWN_ROLES },
+	{ path: '/useful', roles: KNOWN_ROLES },
 	{ path: '/teacher', roles: ['teacher'] },
 	{ path: '/admin', roles: ['admin', 'superadmin'] },
 	{ path: '/superadmin', roles: ['superadmin'] },

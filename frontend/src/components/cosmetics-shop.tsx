@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { setThemeWithTransition } from '@/lib/theme'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
+import { UserAvatar } from '@/components/user-avatar'
 import { PUBLIC_API_URL } from '@/lib/public-env'
 import type { AppTheme, UserItem } from '@/types'
 
@@ -31,9 +32,6 @@ const TAB_LABELS: Record<Tab, string> = {
   theme: 'Темы',
 }
 
-function avatarUrl(file: string) {
-  return `${PUBLIC_API_URL}/media/avatars/${encodeURIComponent(file)}`
-}
 function frameUrl(file: string) {
   return `${PUBLIC_API_URL}/media/frames/${encodeURIComponent(file)}`
 }
@@ -44,7 +42,6 @@ export function CosmeticsShop({ user, onClose, onUserUpdate }: Props) {
   const [xp, setXp] = useState(user.xp)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     api<{ items: CosmeticItem[]; xp: number }>('/cosmetics', undefined, true)
@@ -54,6 +51,14 @@ export function CosmeticsShop({ user, onClose, onUserUpdate }: Props) {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prevOverflow
+    }
   }, [])
 
   // Close on backdrop click
@@ -132,12 +137,18 @@ export function CosmeticsShop({ user, onClose, onUserUpdate }: Props) {
     tab === 'frame' ? user.frame_id :
     user.theme
 
+  const equippedDisplayName = useMemo(() => {
+    if (!equippedKey) return ''
+    const found = items.find((i) => i.key === equippedKey && i.type === tab)
+    return found?.name ?? equippedKey
+  }, [equippedKey, items, tab])
+
   return (
     <div
       className="shop-backdrop"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div ref={panelRef} className="shop-panel" role="dialog" aria-modal="true">
+      <div className="shop-panel" role="dialog" aria-modal="true">
         {/* Header */}
         <div className="shop-header">
           <div>
@@ -166,7 +177,9 @@ export function CosmeticsShop({ user, onClose, onUserUpdate }: Props) {
         {/* Unequip row */}
         {equippedKey && (
           <div className="shop-unequip-row">
-            <span className="shop-unequip-label">Надет: <strong>{equippedKey}</strong></span>
+            <span className="shop-unequip-label">
+              Надет: <strong className="shop-unequip-name">{equippedDisplayName}</strong>
+            </span>
             <button
               className="shop-unequip-btn"
               disabled={!!busy}
@@ -193,12 +206,9 @@ export function CosmeticsShop({ user, onClose, onUserUpdate }: Props) {
                   {/* Preview */}
                   <div className="shop-card__preview">
                     {item.type === 'avatar' && item.file && (
-                      <img
-                        src={avatarUrl(item.file)}
-                        alt={item.name}
-                        className="shop-avatar-img"
-                        loading="lazy"
-                      />
+                      <div className="shop-avatar-preview" aria-hidden>
+                        <UserAvatar avatarId={item.key} size={108} />
+                      </div>
                     )}
                     {item.type === 'frame' && item.file && (
                       <div className="shop-frame-preview">

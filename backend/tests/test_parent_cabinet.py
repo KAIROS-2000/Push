@@ -70,33 +70,42 @@ class ParentCabinetTests(unittest.TestCase):
     def test_parent_registration_and_link_child(self):
         app = self.create_app()
         with app.test_client() as client:
+            # Parent self-signup is now email-only. Backend generates the
+            # password and sends it by mail; we don't post a password here.
             r = client.post(
                 "/api/auth/register",
-                json={
-                    "email": "parent1@example.com",
-                    "username": "paren1",
-                    "password": "ParentPass123!",
-                    "phone": "+79990003344",
-                    "role": "parent",
-                    "full_name": "Родитель",
-                    "theme": "light",
-                },
+                json={"email": "parent1@example.com", "role": "parent"},
             )
             self.assertEqual(r.status_code, 201, r.get_data(as_text=True))
+            payload = r.get_json() or {}
+            # Session is created immediately for parent (cookies set on response).
+            cookies = r.headers.getlist("Set-Cookie")
+            self.assertTrue(
+                any("codequest_access_token=" in cookie for cookie in cookies),
+                f"Expected access cookie on parent register, got: {cookies}",
+            )
+            self.assertEqual(
+                payload.get("parent_profile_required_fields"),
+                ["full_name", "phone", "email_verified"],
+            )
+
         with app.app_context():
             from app.core.db import db
             from app.core.security import hash_password
-            from app.models.parent_cabinet import ParentChildLink, ParentLinkCode
+            from app.models.parent_cabinet import ParentLinkCode
             from app.models.user import User, UserRole
-            from app.services.parent_insights import generate_parent_link_code_plain, hash_parent_link_code
+            from app.services.parent_insights import (
+                generate_parent_link_code_plain,
+                hash_parent_link_code,
+            )
 
             st = User(
                 full_name="Child",
-                username="c1",
                 email="c1@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,
                 age_group="middle",
+                email_verified=True,
             )
             db.session.add(st)
             db.session.commit()
@@ -110,10 +119,28 @@ class ParentCabinetTests(unittest.TestCase):
                     expires_at=datetime.now(UTC) + timedelta(days=1),
                 )
             )
+            # Pre-fill the parent profile + verification so we can exercise
+            # the success path; the "incomplete profile" path is covered by
+            # test_parent_link_blocked_until_profile_complete below.
+            parent = User.query.filter_by(email="parent1@example.com").first()
+            parent.full_name = "Родитель"
+            parent.phone = "+79990003344"
+            parent.email_verified = True
             db.session.commit()
 
         with app.test_client() as client:
-            # login parent via cookie
+            # Re-login is needed because the previous client context exited
+            # and discarded its cookie jar; the password was generated on the
+            # server, so we set a known one in DB for this leg.
+            with app.app_context():
+                from app.core.db import db
+                from app.core.security import hash_password
+                from app.models.user import User
+
+                parent = User.query.filter_by(email="parent1@example.com").first()
+                parent.password_hash = hash_password("ParentPass123!")
+                db.session.commit()
+
             client.post(
                 "/api/auth/login",
                 json={"login": "parent1@example.com", "password": "ParentPass123!"},
@@ -123,6 +150,7 @@ class ParentCabinetTests(unittest.TestCase):
                 json={"code": plain},
             )
             self.assertEqual(res.status_code, 201, res.get_data(as_text=True))
+
         with app.app_context():
             from app.models.parent_cabinet import ParentChildLink, ParentLinkCode
             from app.models.user import User
@@ -141,6 +169,38 @@ class ParentCabinetTests(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertIn("paragraph", res.get_json() or {})
 
+    def test_parent_link_blocked_until_profile_complete(self):
+        """Parent must fill name + phone AND verify email before linking a child."""
+
+        app = self.create_app()
+        with app.test_client() as client:
+            r = client.post(
+                "/api/auth/register",
+                json={"email": "parent2@example.com", "role": "parent"},
+            )
+            self.assertEqual(r.status_code, 201, r.get_data(as_text=True))
+
+            res = client.post(
+                "/api/parent/children/link",
+                json={"code": "AAAAAAAAAAAA"},
+            )
+            self.assertEqual(res.status_code, 400)
+            body = res.get_json() or {}
+            self.assertEqual(body.get("code"), "parent_profile_incomplete")
+            self.assertEqual(
+                set(body.get("missing_fields") or []),
+                {"full_name", "phone", "email_verified"},
+            )
+
+            status = client.get("/api/parent/profile/status")
+            self.assertEqual(status.status_code, 200)
+            status_body = status.get_json() or {}
+            self.assertFalse(status_body.get("ready_to_link_child"))
+            self.assertEqual(
+                set(status_body.get("missing_fields") or []),
+                {"full_name", "phone", "email_verified"},
+            )
+
     def test_parent_messaging_threads_lists_classroom_contacts_for_child_in_class(self):
         app = self.create_app()
         with app.app_context():
@@ -152,14 +212,12 @@ class ParentCabinetTests(unittest.TestCase):
 
             parent = User(
                 full_name="Par",
-                username="parcc",
                 email="parcc@example.com",
                 password_hash=hash_password("ParentPass123!"),
                 role=UserRole.PARENT,
             )
             teacher = User(
                 full_name="Teach",
-                username="teacc",
                 email="teacc@example.com",
                 password_hash=hash_password("TeacherPass123!"),
                 role=UserRole.TEACHER,
@@ -167,7 +225,6 @@ class ParentCabinetTests(unittest.TestCase):
             )
             student = User(
                 full_name="Stud",
-                username="stacc",
                 email="stacc@example.com",
                 password_hash=hash_password("StudentPass123!"),
                 role=UserRole.STUDENT,

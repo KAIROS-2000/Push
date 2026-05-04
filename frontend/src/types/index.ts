@@ -11,7 +11,6 @@ export type CodeTaskLanguage = 'python' | 'javascript'
 export interface UserItem {
   id: number
   full_name: string
-  username: string
   email: string
   phone: string | null
   role: UserRole
@@ -27,6 +26,37 @@ export interface UserItem {
   is_active: boolean
   teacher_approval_status?: TeacherApprovalStatus
   teacher_rejection_expires_at?: string | null
+  email_verified?: boolean
+}
+
+export type EmailVerificationErrorCode =
+  | 'invalid_token'
+  | 'used_token'
+  | 'expired_token'
+  | 'user_unavailable'
+  | 'rate_limited'
+  | 'weak_password'
+
+export interface VerifyEmailResponse {
+  message: string
+  user?: UserItem
+  already_verified?: boolean
+  authenticated?: boolean
+}
+
+export interface ResendVerificationResponse {
+  message: string
+  verification_email_sent?: boolean
+  already_verified?: boolean
+  user?: UserItem
+}
+
+export interface ForgotPasswordResponse {
+  message: string
+}
+
+export interface ResetPasswordResponse {
+  message: string
 }
 
 export interface PaginationMeta {
@@ -146,7 +176,7 @@ export interface AdminUserDirectoryResponse {
   users: AdminUserListItem[]
   pagination: PaginationMeta
   filters: {
-    username: string
+    email: string
     status: 'all' | 'active' | 'blocked'
   }
 }
@@ -155,7 +185,7 @@ export interface AdminAdminDirectoryResponse {
   admins: AdminUserListItem[]
   pagination: PaginationMeta
   filters: {
-    username: string
+    email: string
     status: 'all' | 'active' | 'blocked'
   }
 }
@@ -164,7 +194,7 @@ export interface AdminTeacherRequestsResponse {
   teacher_requests: AdminUserListItem[]
   pagination: PaginationMeta
   filters: {
-    username: string
+    email: string
     status: 'all' | TeacherApprovalStatus
   }
 }
@@ -172,13 +202,13 @@ export interface AdminTeacherRequestsResponse {
 export interface AdminAuditLogActor {
   id: number | null
   role: 'admin' | 'superadmin' | string
-  username: string | null
+  email: string | null
   full_name: string | null
 }
 
 export interface AdminAuditLogTarget {
   label: string
-  username: string | null
+  email: string | null
   full_name: string | null
   role: string | null
 }
@@ -205,6 +235,7 @@ export interface AdminAuditLogResponse {
     actor_role: string
     target: string
     actor_login: string
+    actor_email: string
     sort: string
     order: 'asc' | 'desc' | string
   }
@@ -219,14 +250,14 @@ export interface SiteActivityLogItem {
   status_code: number
   client_ip: string
   created_at: string | null
-  user: { id: number | null; username: string | null; role: string }
+  user: { id: number | null; email?: string | null; role: string }
 }
 
 export interface SiteActivityLogResponse {
   site_activity_logs: SiteActivityLogItem[]
   pagination: PaginationMeta
   filters: {
-    username: string
+    email: string
     method: string
     path: string
     status: string
@@ -397,6 +428,8 @@ export interface DashboardData {
     completed_lessons: number
     assignments_open: number
     achievements: number
+    /** Total achievements in catalog; when set, progress bar uses earned/total. */
+    achievements_total?: number
   }
   continue_lesson: LessonSummary & { module_title: string } | null
   daily_quests: Array<{ id: string; title: string; xp: number; completed: boolean }>
@@ -421,6 +454,37 @@ export interface ClassroomItem {
   assignments_count: number
 }
 
+export type UsefulAgeGroup = 'junior' | 'middle' | 'senior'
+export type UsefulDifficulty = 'easy' | 'medium' | 'hard'
+
+export interface UsefulTaskItem {
+  id: number
+  slug: string
+  title: string
+  summary: string
+  external_url: string | null
+  age_groups: UsefulAgeGroup[]
+  topic: string | null
+  difficulty: UsefulDifficulty
+  image_id: number | null
+  image_url: string | null
+  is_published: boolean
+  created_at: string | null
+  updated_at: string | null
+  body?: string
+}
+
+export interface UsefulTaskListResponse {
+  tasks: UsefulTaskItem[]
+  total: number
+  filters: {
+    age_group: string | null
+    topic: string | null
+    difficulty: string | null
+    q: string
+  }
+}
+
 export interface AssignmentItem {
   id: number
   classroom_id: number
@@ -441,6 +505,9 @@ export interface AssignmentItem {
   lesson_state?: 'completed' | 'current' | 'locked' | 'open' | null
   lesson_accessible?: boolean
   submission?: SubmissionItem | null
+  // P1: cover image (auto-generated SVG placeholder for legacy rows, real upload for new ones).
+  image_id?: number | null
+  image_url?: string | null
 }
 
 export interface LessonCatalogItem extends LessonSummary {
@@ -454,7 +521,8 @@ export interface SubmissionItem {
   id: number
   assignment_id: number
   student_id: number
-  student_username: string
+  student_full_name: string | null
+  student_email?: string | null
   answer: string | null
   score: number
   status: SubmissionStatus
@@ -482,7 +550,7 @@ export interface ClassJoinRequestItem {
   classroom_code: string | null
   student_id: number
   student_full_name: string | null
-  student_username: string | null
+  student_email?: string | null
   status: ClassJoinRequestStatus
   created_at: string
   decided_at: string | null
@@ -514,7 +582,7 @@ export interface TeacherClassDetail {
   classroom: ClassroomItem
   students: Array<{
     id: number
-    username: string
+    email: string
     full_name: string
     xp: number
     level: number
@@ -548,7 +616,6 @@ export interface MessagingConversationSummary {
 export interface MessagingSummaryStudent {
   id?: number
   student_id?: number
-  username?: string | null
   full_name?: string | null
   student_name?: string | null
   conversation_id?: number | null
@@ -559,7 +626,7 @@ export interface MessagingSummaryStudent {
 
 export interface MessagingSummaryUser {
   id: number
-  username?: string | null
+  email?: string | null
   full_name?: string | null
   role?: UserRole | string
 }
@@ -581,7 +648,7 @@ export interface MessagingSummaryClass {
 
 export interface StaffDirectUserRef {
   id: number
-  username: string
+  email: string
   full_name: string
   role: UserRole
 }
@@ -680,4 +747,3 @@ export interface ParentAssignmentSummary {
   feedback?: string | null
   submitted_at: string
 }
-

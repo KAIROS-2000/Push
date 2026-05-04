@@ -156,7 +156,7 @@ def _user_payload(user: User | None) -> dict | None:
         return None
     return {
         "id": user.id,
-        "username": user.username,
+        "email": user.email,
         "full_name": user.full_name,
         "role": user.role.value,
     }
@@ -245,7 +245,7 @@ def _teacher_summary_classes(
         memberships = (
             ClassMembership.query.filter_by(classroom_id=classroom.id)
             .join(User, User.id == ClassMembership.student_id)
-            .order_by(User.full_name.asc(), User.username.asc(), User.id.asc())
+            .order_by(User.full_name.asc(), User.email.asc(), User.id.asc())
             .all()
         )
         students = []
@@ -261,7 +261,7 @@ def _teacher_summary_classes(
                 {
                     "id": membership.student_id,
                     "student_id": membership.student_id,
-                    "username": student.username if student else None,
+                    "email": student.email if student else None,
                     "full_name": student.full_name if student else None,
                     "student_name": student.full_name if student else None,
                     "conversation_id": conversation.id if conversation else None,

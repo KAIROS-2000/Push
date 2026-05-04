@@ -25,7 +25,6 @@ import type {
   TeacherApprovalStatus,
 } from '@/types'
 
-const USERNAME_MAX_LENGTH = 10
 const DIRECTORY_PAGE_SIZE = 20
 type TeacherApprovalFilter = 'all' | TeacherApprovalStatus
 
@@ -74,7 +73,7 @@ const ORDER_OPTIONS = [
 const AUDIT_SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'created_at', label: 'По дате' },
   { value: 'action', label: 'По действию' },
-  { value: 'username', label: 'По логину исполнителя' },
+  { value: 'email', label: 'По email исполнителя' },
 ]
 
 const SITE_SORT_OPTIONS: { value: string; label: string }[] = [
@@ -82,7 +81,7 @@ const SITE_SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'method', label: 'По методу' },
   { value: 'path', label: 'По пути' },
   { value: 'status_code', label: 'По коду ответа' },
-  { value: 'username', label: 'По логину' },
+  { value: 'email', label: 'По email' },
   { value: 'role', label: 'По роли' },
   { value: 'client_ip', label: 'По IP' },
 ]
@@ -203,7 +202,6 @@ function AccountCard({
             </span>
           </div>
           <div className="space-y-1 text-sm text-slate-500">
-            <p className="font-semibold text-slate-700">@{user.username}</p>
             <p>{user.email}</p>
             {user.phone ? <p>{user.phone}</p> : null}
           </div>
@@ -233,20 +231,20 @@ function AccountCard({
 function DirectoryToolbar({
   title,
   description,
-  username,
+  email,
   status,
   total,
   loading,
-  onUsernameChange,
+  onEmailChange,
   onStatusChange,
 }: {
   title: string
   description: string
-  username: string
+  email: string
   status: 'all' | 'active' | 'blocked'
   total?: number
   loading: boolean
-  onUsernameChange: (value: string) => void
+  onEmailChange: (value: string) => void
   onStatusChange: (value: 'all' | 'active' | 'blocked') => void
 }) {
   return (
@@ -261,18 +259,18 @@ function DirectoryToolbar({
           <span className="brand-chip brand-chip--soft">
             {loading ? 'Загрузка…' : `${total ?? 0} записей`}
           </span>
-          <span className="brand-chip brand-chip--warm">поиск по логину</span>
+          <span className="brand-chip brand-chip--warm">поиск по email</span>
         </div>
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
         <label className="space-y-2">
-          <span className="text-sm font-semibold text-slate-700">Логин пользователя</span>
+          <span className="text-sm font-semibold text-slate-700">Email</span>
           <input
             className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-            placeholder="Например, alice или mentor"
-            value={username}
-            onChange={(event) => onUsernameChange(event.target.value)}
+            placeholder="Фрагмент email"
+            value={email}
+            onChange={(event) => onEmailChange(event.target.value)}
           />
         </label>
         <label className="space-y-2">
@@ -372,7 +370,7 @@ export function AdminUsersPanel({
   canDeleteUsers?: boolean
 }) {
   const [response, setResponse] = useState(initialData)
-  const [username, setUsername] = useState(initialData?.filters.username ?? '')
+  const [email, setEmail] = useState(initialData?.filters.email ?? '')
   const [status, setStatus] = useState<'all' | 'active' | 'blocked'>(
     initialData?.filters.status ?? 'all',
   )
@@ -382,18 +380,18 @@ export function AdminUsersPanel({
   const skipInitialLoad = useRef(Boolean(initialData))
 
   async function load(next?: {
-    username?: string
+    email?: string
     status?: 'all' | 'active' | 'blocked'
     page?: number
   }) {
-    const nextUsername = next?.username ?? username
+    const nextEmail = next?.email ?? email
     const nextStatus = next?.status ?? status
     const nextPage = next?.page ?? page
     setLoading(true)
     try {
       const data = await api<AdminUserDirectoryResponse>(
         `/admin/users${buildQuery({
-          username: nextUsername,
+          email: nextEmail,
           status: nextStatus,
           page: nextPage,
           page_size: DIRECTORY_PAGE_SIZE,
@@ -412,7 +410,7 @@ export function AdminUsersPanel({
   useEffect(() => {
     if (
       skipInitialLoad.current &&
-      username === (initialData?.filters.username ?? '') &&
+      email === (initialData?.filters.email ?? '') &&
       status === (initialData?.filters.status ?? 'all') &&
       page === (initialData?.pagination.page ?? 1)
     ) {
@@ -421,11 +419,11 @@ export function AdminUsersPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void load({ username, status, page })
+      void load({ email, status, page })
     }, 280)
 
     return () => window.clearTimeout(timer)
-  }, [initialData, page, status, username])
+  }, [initialData, page, status, email])
 
   async function toggleUser(user: AdminUserListItem) {
     setBusyUserId(user.id)
@@ -437,8 +435,8 @@ export function AdminUsersPanel({
       )
       showSuccessToast(
         user.is_active
-          ? `Пользователь @${user.username} заблокирован.`
-          : `Пользователь @${user.username} снова активен.`,
+          ? `Пользователь ${user.email} заблокирован.`
+          : `Пользователь ${user.email} снова активен.`,
       )
       await load()
     } catch (error) {
@@ -450,14 +448,14 @@ export function AdminUsersPanel({
 
   async function deleteUser(user: AdminUserListItem) {
     const confirmed = window.confirm(
-      `Удалить пользователя @${user.username}? Это действие нельзя отменить.`,
+      `Удалить пользователя ${user.email}? Это действие нельзя отменить.`,
     )
     if (!confirmed) return
 
     setBusyUserId(user.id)
     try {
       await api(`/admin/users/${user.id}`, { method: 'DELETE' }, 'required')
-      showSuccessToast(`Пользователь @${user.username} удалён.`)
+      showSuccessToast(`Пользователь ${user.email} удалён.`)
       const nextPage = (response?.users.length ?? 0) <= 1 && page > 1 ? page - 1 : page
       if (nextPage !== page) {
         setPage(nextPage)
@@ -480,15 +478,15 @@ export function AdminUsersPanel({
         }
         description={
           canDeleteUsers
-            ? 'Серверная фильтрация по логину помогает быстро найти нужный аккаунт, изменить статус или удалить запись после подтверждения действия.'
-            : 'Серверная фильтрация по логину помогает быстро найти нужный аккаунт, а статус виден сразу в списке без переходов между экранами.'
+            ? 'Серверная фильтрация по email помогает быстро найти нужный аккаунт, изменить статус или удалить запись после подтверждения действия.'
+            : 'Серверная фильтрация по email помогает быстро найти нужный аккаунт, а статус виден сразу в списке без переходов между экранами.'
         }
-        username={username}
+        email={email}
         status={status}
         total={response?.pagination.total}
         loading={loading}
-        onUsernameChange={(value) => {
-          setUsername(value)
+        onEmailChange={(value) => {
+          setEmail(value)
           setPage(1)
         }}
         onStatusChange={(value) => {
@@ -533,7 +531,7 @@ export function AdminUsersPanel({
           <div className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
             <p className="text-lg font-black text-slate-900">Совпадений не найдено</p>
             <p className="mt-3 text-sm leading-7 text-slate-500">
-              Попробуйте изменить логин или переключить фильтр статуса.
+              Попробуйте изменить email или переключить фильтр статуса.
             </p>
           </div>
         ) : null}
@@ -554,7 +552,7 @@ export function AdminTeacherRequestsPanel({
   initialData: AdminTeacherRequestsResponse | null
 }) {
   const [response, setResponse] = useState(initialData)
-  const [username, setUsername] = useState(initialData?.filters.username ?? '')
+  const [email, setEmail] = useState(initialData?.filters.email ?? '')
   const [status, setStatus] = useState<TeacherApprovalFilter>(
     initialData?.filters.status ?? 'pending',
   )
@@ -564,18 +562,18 @@ export function AdminTeacherRequestsPanel({
   const skipInitialLoad = useRef(Boolean(initialData))
 
   async function load(next?: {
-    username?: string
+    email?: string
     status?: TeacherApprovalFilter
     page?: number
   }) {
-    const nextUsername = next?.username ?? username
+    const nextEmail = next?.email ?? email
     const nextStatus = next?.status ?? status
     const nextPage = next?.page ?? page
     setLoading(true)
     try {
       const data = await api<AdminTeacherRequestsResponse>(
         `/admin/teacher-requests${buildQuery({
-          username: nextUsername,
+          email: nextEmail,
           status: nextStatus,
           page: nextPage,
           page_size: DIRECTORY_PAGE_SIZE,
@@ -594,7 +592,7 @@ export function AdminTeacherRequestsPanel({
   useEffect(() => {
     if (
       skipInitialLoad.current &&
-      username === (initialData?.filters.username ?? '') &&
+      email === (initialData?.filters.email ?? '') &&
       status === (initialData?.filters.status ?? 'pending') &&
       page === (initialData?.pagination.page ?? 1)
     ) {
@@ -603,11 +601,11 @@ export function AdminTeacherRequestsPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void load({ username, status, page })
+      void load({ email, status, page })
     }, 280)
 
     return () => window.clearTimeout(timer)
-  }, [initialData, page, status, username])
+  }, [initialData, page, status, email])
 
   async function changeRequest(user: AdminUserListItem, action: 'approve' | 'reject') {
     setBusyUserId(user.id)
@@ -619,8 +617,8 @@ export function AdminTeacherRequestsPanel({
       )
       showSuccessToast(
         action === 'approve'
-          ? `Учитель @${user.username} подтверждён.`
-          : `Заявка @${user.username} отклонена и будет удалена через 15 минут.`,
+          ? `Учитель ${user.email} подтверждён.`
+          : `Заявка ${user.email} отклонена и будет удалена через 15 минут.`,
       )
       await load()
     } catch (error) {
@@ -651,13 +649,13 @@ export function AdminTeacherRequestsPanel({
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
           <label className="space-y-2">
-            <span className="text-sm font-semibold text-slate-700">Логин учителя</span>
+            <span className="text-sm font-semibold text-slate-700">Email учителя</span>
             <input
               className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              placeholder="Например, mentor"
-              value={username}
+              placeholder="Например, mentor@school.ru"
+              value={email}
               onChange={(event) => {
-                setUsername(event.target.value)
+                setEmail(event.target.value)
                 setPage(1)
               }}
             />
@@ -737,7 +735,7 @@ export function SuperadminAdminsPanel({
   initialData: AdminAdminDirectoryResponse | null
 }) {
   const [response, setResponse] = useState(initialData)
-  const [username, setUsername] = useState(initialData?.filters.username ?? '')
+  const [email, setEmail] = useState(initialData?.filters.email ?? '')
   const [status, setStatus] = useState<'all' | 'active' | 'blocked'>(
     initialData?.filters.status ?? 'all',
   )
@@ -747,24 +745,23 @@ export function SuperadminAdminsPanel({
   const [form, setForm] = useState({
     full_name: '',
     email: '',
-    username: '',
     password: '',
   })
   const skipInitialLoad = useRef(Boolean(initialData))
 
   async function load(next?: {
-    username?: string
+    email?: string
     status?: 'all' | 'active' | 'blocked'
     page?: number
   }) {
-    const nextUsername = next?.username ?? username
+    const nextEmail = next?.email ?? email
     const nextStatus = next?.status ?? status
     const nextPage = next?.page ?? page
     setLoading(true)
     try {
       const data = await api<AdminAdminDirectoryResponse>(
         `/admin/admins${buildQuery({
-          username: nextUsername,
+          email: nextEmail,
           status: nextStatus,
           page: nextPage,
           page_size: DIRECTORY_PAGE_SIZE,
@@ -783,7 +780,7 @@ export function SuperadminAdminsPanel({
   useEffect(() => {
     if (
       skipInitialLoad.current &&
-      username === (initialData?.filters.username ?? '') &&
+      email === (initialData?.filters.email ?? '') &&
       status === (initialData?.filters.status ?? 'all') &&
       page === (initialData?.pagination.page ?? 1)
     ) {
@@ -792,19 +789,14 @@ export function SuperadminAdminsPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void load({ username, status, page })
+      void load({ email, status, page })
     }, 280)
 
     return () => window.clearTimeout(timer)
-  }, [initialData, page, status, username])
+  }, [initialData, page, status, email])
 
   async function createAdmin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const normalizedUsername = form.username.trim().toLowerCase()
-    if (normalizedUsername.length > USERNAME_MAX_LENGTH) {
-      showInfoToast(`Логин должен содержать не более ${USERNAME_MAX_LENGTH} символов.`)
-      return
-    }
     if (form.password.length < 12) {
       showInfoToast('Пароль должен содержать не менее 12 символов.')
       return
@@ -820,13 +812,14 @@ export function SuperadminAdminsPanel({
         {
           method: 'POST',
           body: JSON.stringify({
-            ...form,
-            username: normalizedUsername,
+            full_name: form.full_name,
+            email: form.email.trim().toLowerCase(),
+            password: form.password,
           }),
         },
         'required',
       )
-      setForm({ full_name: '', email: '', username: '', password: '' })
+      setForm({ full_name: '', email: '', password: '' })
       showSuccessToast('Новый администратор создан.')
       setPage(1)
       await load({ page: 1 })
@@ -845,10 +838,10 @@ export function SuperadminAdminsPanel({
       )
       showSuccessToast(
         action === 'delete'
-          ? `Администратор @${user.username} удалён.`
+          ? `Администратор ${user.email} удалён.`
           : action === 'block'
-            ? `Администратор @${user.username} заблокирован.`
-            : `Администратор @${user.username} снова активен.`,
+            ? `Администратор ${user.email} заблокирован.`
+            : `Администратор ${user.email} снова активен.`,
       )
       await load()
     } catch (error) {
@@ -887,21 +880,6 @@ export function SuperadminAdminsPanel({
             />
           </label>
           <label className="space-y-2">
-            <span className="text-sm font-semibold text-slate-700">Логин</span>
-            <input
-              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              value={form.username}
-              maxLength={USERNAME_MAX_LENGTH}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  username: event.target.value.slice(0, USERNAME_MAX_LENGTH),
-                })
-              }
-              placeholder="opsadmin"
-            />
-          </label>
-          <label className="space-y-2">
             <span className="text-sm font-semibold text-slate-700">Пароль</span>
             <input
               type="password"
@@ -919,13 +897,13 @@ export function SuperadminAdminsPanel({
       <div className="space-y-6">
         <DirectoryToolbar
           title="Поиск и контроль админ-аккаунтов"
-          description="Список обычных администраторов вынесен в отдельный модуль с серверным поиском по логину и быстрыми действиями по доступу."
-          username={username}
+          description="Список обычных администраторов вынесен в отдельный модуль с серверным поиском по email и быстрыми действиями по доступу."
+          email={email}
           status={status}
           total={response?.pagination.total}
           loading={loading}
-          onUsernameChange={(value) => {
-            setUsername(value)
+          onEmailChange={(value) => {
+            setEmail(value)
             setPage(1)
           }}
           onStatusChange={(value) => {
@@ -1336,16 +1314,16 @@ export function AdminLessonsPanel({
 }
 
 function renderAuditSummary(log: AdminAuditLogItem) {
-  const actorLabel = log.actor.full_name || (log.actor.username ? `@${log.actor.username}` : log.actor_role)
+  const actorLabel = log.actor.full_name || log.actor.email || log.actor_role
   const targetLabel =
-    log.target.full_name || (log.target.username ? `@${log.target.username}` : log.entity_label)
+    log.target.full_name || log.target.email || log.entity_label
   const actionLabel = AUDIT_ACTION_LABELS[log.action] || log.action
   return `${actorLabel} · ${actionLabel} · ${targetLabel}`
 }
 
 function siteActivitySummary(log: SiteActivityLogItem) {
-  const who = log.user?.username
-    ? `@${log.user.username}`
+  const who = log.user?.email
+    ? log.user.email
     : log.user_role === 'anonymous'
       ? 'без сессии'
       : log.user_role
@@ -1361,7 +1339,9 @@ export function AdminAuditLogPanel({
   const [response, setResponse] = useState(initialData)
   const [action, setAction] = useState(initialData?.filters.action ?? 'all')
   const [actorRole, setActorRole] = useState(initialData?.filters.actor_role ?? 'all')
-  const [actorLogin, setActorLogin] = useState(initialData?.filters.actor_login ?? '')
+  const [actorLogin, setActorLogin] = useState(
+    initialData?.filters.actor_email ?? initialData?.filters.actor_login ?? '',
+  )
   const [target, setTarget] = useState(initialData?.filters.target ?? '')
   const [auditSort, setAuditSort] = useState(initialData?.filters.sort ?? 'created_at')
   const [auditOrder, setAuditOrder] = useState(
@@ -1431,7 +1411,7 @@ export function AdminAuditLogPanel({
         `/admin/audit-logs${buildQuery({
           action: nextAction,
           actor_role: nextActorRole,
-          actor_login: nextActorLogin,
+          actor_email: nextActorLogin,
           target: nextTarget,
           page: nextPage,
           page_size: DIRECTORY_PAGE_SIZE,
@@ -1455,7 +1435,7 @@ export function AdminAuditLogPanel({
     try {
       const data = await api<SiteActivityLogResponse>(
         `/admin/site-activity-logs${buildQuery({
-          username: siteUser,
+          email: siteUser,
           method: siteMethod,
           path: sitePath,
           status: siteStatus,
@@ -1507,7 +1487,7 @@ export function AdminAuditLogPanel({
       action === (initialData?.filters.action ?? 'all') &&
       actorRole === (initialData?.filters.actor_role ?? 'all') &&
       target === (initialData?.filters.target ?? '') &&
-      (initialData?.filters.actor_login ?? '') === actorLogin &&
+      (initialData?.filters.actor_email ?? initialData?.filters.actor_login ?? '') === actorLogin &&
       (initialData?.filters.sort ?? 'created_at') === auditSort &&
       (initialData?.filters.order === 'asc' || initialData?.filters.order === 'desc'
         ? initialData.filters.order
@@ -1644,7 +1624,7 @@ export function AdminAuditLogPanel({
                 <h2 className="text-2xl font-black text-slate-900">Записи с последней выгрузки</h2>
                 <p className="text-sm leading-7 text-slate-500">
                   События администрирования, ещё не ушедшие в суточный архив. Фильтры, сортировка по дате, действию и
-                  логину исполнителя.
+                  и email исполнителя.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1688,10 +1668,10 @@ export function AdminAuditLogPanel({
                 </select>
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Логин исполнителя</span>
+                <span className="text-sm font-semibold text-slate-700">Email исполнителя</span>
                 <input
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Часть логина"
+                  placeholder="Часть email"
                   value={actorLogin}
                   onChange={(event) => {
                     setActorLogin(event.target.value)
@@ -1765,10 +1745,10 @@ export function AdminAuditLogPanel({
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               <label className="space-y-2">
-                <span className="text-sm font-semibold text-slate-700">Логин</span>
+                <span className="text-sm font-semibold text-slate-700">Email пользователя</span>
                 <input
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  placeholder="Часть логина"
+                  placeholder="Часть email"
                   value={siteUser}
                   onChange={(e) => {
                     setSiteUser(e.target.value)

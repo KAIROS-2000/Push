@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -oE \"/[a-z0-9/\\\\-\\\\$\\\\{]*\")"
+    ]
+  }
+}

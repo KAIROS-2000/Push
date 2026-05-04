@@ -98,7 +98,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         app,
         *,
         full_name: str,
-        username: str,
         email: str,
         password: str,
         role: str,
@@ -111,7 +110,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         with app.app_context():
             user = User(
                 full_name=full_name,
-                username=username,
                 email=email,
                 password_hash=hash_password(password),
                 role=UserRole(role),
@@ -128,7 +126,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         teacher_id = self.create_user(
             app,
             full_name='Teacher One',
-            username='teach1',
             email='teacher1@example.com',
             password='TeacherPass123!',
             role='teacher',
@@ -136,7 +133,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         other_teacher_id = self.create_user(
             app,
             full_name='Teacher Two',
-            username='teach2',
             email='teacher2@example.com',
             password='TeacherPass123!',
             role='teacher',
@@ -144,7 +140,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         student_id = self.create_user(
             app,
             full_name='Student One',
-            username='stud1',
             email='student1@example.com',
             password='StudentPass123!',
             role='student',
@@ -153,7 +148,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         other_student_id = self.create_user(
             app,
             full_name='Student Two',
-            username='stud2',
             email='student2@example.com',
             password='StudentPass123!',
             role='student',
@@ -162,7 +156,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         admin_id = self.create_user(
             app,
             full_name='Admin User',
-            username='admin1',
             email='admin@example.com',
             password='AdminPass123!',
             role='admin',
@@ -170,7 +163,6 @@ class TeacherStudentMessagingTests(unittest.TestCase):
         superadmin_id = self.create_user(
             app,
             full_name='Super Admin',
-            username='root1',
             email='root@example.com',
             password='RootPass123!',
             role='superadmin',

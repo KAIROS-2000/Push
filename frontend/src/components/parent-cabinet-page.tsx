@@ -2,7 +2,7 @@
 
 import { ParentTeacherChatPanel } from '@/components/parent-teacher-chat-panel'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
-import { api, getApiErrorMessage } from '@/lib/api'
+import { api, getApiErrorMessage, resendVerification } from '@/lib/api'
 import { useSessionUser } from '@/lib/auth-session'
 import { RolePill } from '@/components/role-pill'
 import {
@@ -23,9 +23,21 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
-import type { UserItem } from '@/types'
+import {
+  DEFAULT_PARENT_VIEW_MODE,
+  PARENT_VIEW_MODE_CHANGE_EVENT,
+  type ParentViewMode,
+  getStoredParentViewMode,
+  persistParentViewMode,
+} from '@/lib/parent-view-mode'
+import type { UsefulTaskItem, UsefulTaskListResponse, UserItem } from '@/types'
 
-type Child = { id: number; display_name: string; relationship_label?: string | null }
+type Child = {
+  id: number
+  display_name: string
+  relationship_label?: string | null
+  age_group?: string | null
+}
 
 type ParentClassroomContact = {
   thread_id: number | null
@@ -66,6 +78,7 @@ type SkillModule = {
 type PracticeItem = {
   id: string
   assignment_title: string
+  assignment_image_url: string | null
   score: number
   status: string
   feedback: string
@@ -146,9 +159,11 @@ function normalizeSkillModules(value: unknown[]): SkillModule[] {
 function normalizePracticeItems(value: unknown[]): PracticeItem[] {
   return value.map((item, index) => {
     const row = toRecord(item)
+    const rawImage = row.assignment_image_url
     return {
       id: String(row.id ?? index),
       assignment_title: toStringValue(row.assignment_title, 'Задание'),
+      assignment_image_url: typeof rawImage === 'string' && rawImage ? rawImage : null,
       score: clampPercent(toNumber(row.score)),
       status: toStringValue(row.status, 'submitted'),
       feedback: toStringValue(row.feedback, ''),
@@ -160,7 +175,8 @@ function normalizePracticeItems(value: unknown[]): PracticeItem[] {
 function practiceStatusRu(status: string) {
   if (status === 'pending_review') return 'Ожидает проверки'
   if (status === 'checked') return 'Проверено'
-  if (status === 'needs_revision') return 'Нужно исправить'
+  // Parent cabinet copy is positive-leaning (P3a): avoid "must fix" framing.
+  if (status === 'needs_revision') return 'На доработке'
   if (status === 'submitted') return 'Отправлено'
   return 'В работе'
 }
@@ -381,6 +397,18 @@ export function ParentCabinetPage() {
   const [linkBusy, setLinkBusy] = useState(false)
   const [children, setChildren] = useState<Child[]>([])
   const [selected, setSelected] = useState<number | null>(null)
+  // Parent profile gate: backend refuses /parent/children/link until the
+  // parent has full_name + phone AND a verified email. We mirror that here
+  // so the UI can show a focused "complete your profile" card BEFORE the
+  // user tries to attach a child and gets a 400.
+  const [profileStatus, setProfileStatus] = useState<{
+    ready_to_link_child: boolean
+    missing_fields: string[]
+    user: { full_name: string; phone: string; email: string; email_verified: boolean }
+  } | null>(null)
+  const [profileForm, setProfileForm] = useState({ full_name: '', phone: '' })
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileResending, setProfileResending] = useState(false)
   const [digest, setDigest] = useState<Record<string, unknown> | null>(null)
   const [skills, setSkills] = useState<unknown[]>([])
   const [activity, setActivity] = useState<Record<string, unknown> | null>(null)
@@ -394,9 +422,40 @@ export function ParentCabinetPage() {
   const [chatOpen, setChatOpen] = useState<ParentChatOpen | null>(null)
   const [chatStarting, setChatStarting] = useState(false)
   const [achievements, setAchievements] = useState<unknown[]>([])
+  const [usefulTasks, setUsefulTasks] = useState<UsefulTaskItem[]>([])
   const [loadErr, setLoadErr] = useState('')
+  // P3b: simple (default) shows only successes & achievements; extended unlocks all blocks.
+  // SSR-safe: render with the default first, then hydrate from localStorage on mount.
+  const [viewMode, setViewMode] = useState<ParentViewMode>(DEFAULT_PARENT_VIEW_MODE)
 
-  useUserPageMotion(rootRef, [selected, children.length])
+  useUserPageMotion(rootRef, [selected, children.length, viewMode])
+
+  useEffect(() => {
+    const stored = getStoredParentViewMode()
+    if (stored) setViewMode(stored)
+    function onExternalChange(event: Event) {
+      const next = (event as CustomEvent<ParentViewMode>).detail
+      if (next === 'simple' || next === 'extended') setViewMode(next)
+    }
+    function onStorageChange(event: StorageEvent) {
+      // Cross-tab sync.
+      if (event.key !== 'codequest_parent_view_mode' || !event.newValue) return
+      if (event.newValue === 'simple' || event.newValue === 'extended') {
+        setViewMode(event.newValue)
+      }
+    }
+    window.addEventListener(PARENT_VIEW_MODE_CHANGE_EVENT, onExternalChange as EventListener)
+    window.addEventListener('storage', onStorageChange)
+    return () => {
+      window.removeEventListener(PARENT_VIEW_MODE_CHANGE_EVENT, onExternalChange as EventListener)
+      window.removeEventListener('storage', onStorageChange)
+    }
+  }, [])
+
+  const switchViewMode = useCallback((next: ParentViewMode) => {
+    setViewMode(next)
+    persistParentViewMode(next)
+  }, [])
 
   useEffect(() => {
     if (status === 'unknown') return
@@ -409,6 +468,28 @@ export function ParentCabinetPage() {
     }
   }, [user, status, router])
 
+  const loadProfileStatus = useCallback(async () => {
+    try {
+      const status = await api<{
+        ready_to_link_child: boolean
+        missing_fields: string[]
+        required_fields: string[]
+        user: { full_name: string; phone: string; email: string; email_verified: boolean }
+      }>('/parent/profile/status', undefined, 'required')
+      setProfileStatus({
+        ready_to_link_child: status.ready_to_link_child,
+        missing_fields: status.missing_fields || [],
+        user: status.user,
+      })
+      setProfileForm((prev) => ({
+        full_name: prev.full_name || status.user.full_name || '',
+        phone: prev.phone || status.user.phone || '',
+      }))
+    } catch {
+      // Non-fatal: profile gate will simply not render the prompt.
+    }
+  }, [])
+
   const loadBase = useCallback(async () => {
     const d = await api<{
       children: Child[]
@@ -416,7 +497,8 @@ export function ParentCabinetPage() {
     }>('/parent/dashboard', undefined, 'required')
     setChildren(d.children || [])
     if (d.selected_child_id) setSelected(d.selected_child_id)
-  }, [])
+    await loadProfileStatus()
+  }, [loadProfileStatus])
 
   const loadChild = useCallback(
     async (childId: number) => {
@@ -525,6 +607,27 @@ export function ParentCabinetPage() {
     if (selected) void loadChild(selected)
   }, [selected, loadChild])
 
+  // Useful tasks (P2 widget): fetch top items filtered by the child's age_group.
+  // Lives outside loadChild because it is independent of submission/digest data.
+  useEffect(() => {
+    if (!selected) {
+      setUsefulTasks([])
+      return
+    }
+    const child = children.find(c => c.id === selected)
+    const ageGroup = child?.age_group && child.age_group !== 'adult' ? child.age_group : null
+    const params = new URLSearchParams()
+    if (ageGroup) params.set('age_group', ageGroup)
+    params.set('limit', '4')
+    api<UsefulTaskListResponse>(
+      `/useful${params.toString() ? `?${params.toString()}` : ''}`,
+      undefined,
+      'required',
+    )
+      .then(data => setUsefulTasks(data.tasks || []))
+      .catch(() => setUsefulTasks([]))
+  }, [selected, children])
+
   async function onLink() {
     const code = linkCode.trim().toUpperCase().replace(/\s/g, '')
     if (code.length !== 12) {
@@ -542,8 +645,49 @@ export function ParentCabinetPage() {
       await loadBase()
     } catch (e) {
       showErrorToast(getApiErrorMessage(e, 'Не удалось привязать код.'))
+      // Refresh the profile gate so a 400/parent_profile_incomplete can
+      // surface the correct hint without the user having to refresh.
+      void loadProfileStatus()
     } finally {
       setLinkBusy(false)
+    }
+  }
+
+  async function onSaveProfile() {
+    const fullName = profileForm.full_name.trim()
+    const phoneInput = profileForm.phone.trim()
+    if (!fullName) {
+      showErrorToast('Укажите имя.')
+      return
+    }
+    if (!phoneInput) {
+      showErrorToast('Укажите номер телефона.')
+      return
+    }
+    setProfileSaving(true)
+    try {
+      await api('/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({ full_name: fullName, phone: phoneInput }),
+      }, 'required')
+      showSuccessToast('Профиль обновлён.')
+      await loadProfileStatus()
+    } catch (e) {
+      showErrorToast(getApiErrorMessage(e, 'Не удалось сохранить профиль.'))
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  async function onResendVerification() {
+    setProfileResending(true)
+    try {
+      await resendVerification()
+      showSuccessToast('Письмо отправлено повторно. Проверьте почту.')
+    } catch (e) {
+      showErrorToast(getApiErrorMessage(e, 'Не удалось отправить письмо повторно.'))
+    } finally {
+      setProfileResending(false)
     }
   }
 
@@ -707,13 +851,14 @@ export function ParentCabinetPage() {
           ? `Продолжить модуль «${focusModule.title}»`
           : 'Сохранять спокойный темп занятий'
 
-  const parentMetrics = [
+  const allParentMetrics = [
     {
       icon: TrendingUp,
       label: 'Темп недели',
       value: String(weeklyActions),
       detail: `${weeklyLessons} уроков · ${weeklyAssignments} практик · ${trendText(weeklyActions, previousActions)}`,
       tone: 'blue' as const,
+      simple: true,
     },
     {
       icon: Flame,
@@ -721,13 +866,15 @@ export function ParentCabinetPage() {
       value: streakDays ? `${streakDays} дн.` : '—',
       detail: streakDays >= 7 ? 'ритм уже устойчивый' : 'мягко поддерживайте регулярность',
       tone: 'yellow' as const,
+      simple: true,
     },
     {
       icon: BarChart3,
       label: 'Средний балл',
       value: visibleAverageScore ? `${visibleAverageScore}%` : '—',
-      detail: visibleAverageScore >= 80 ? 'решения уверенные' : 'полезно разобрать ошибки',
+      detail: visibleAverageScore >= 80 ? 'решения уверенные' : 'есть зоны для роста',
       tone: visibleAverageScore >= 80 ? 'green' as const : 'violet' as const,
+      simple: true,
     },
     {
       icon: BookOpenCheck,
@@ -735,13 +882,15 @@ export function ParentCabinetPage() {
       value: skillModules.length ? `${masteredModules}/${skillModules.length}` : '—',
       detail: `${overallProgress}% среднего прогресса`,
       tone: needsHelpModules.length ? 'rose' as const : 'green' as const,
+      simple: true,
     },
     {
       icon: TriangleAlert,
       label: 'Зоны внимания',
       value: String(importantSignals.length + needsHelpModules.length + pendingPractice.length),
-      detail: importantSignals.length ? 'есть рекомендации для поддержки' : 'критичных сигналов нет',
+      detail: importantSignals.length ? 'есть рекомендации для поддержки' : 'всё спокойно',
       tone: importantSignals.length ? 'rose' as const : 'green' as const,
+      simple: false,
     },
     {
       icon: MessageCircle,
@@ -749,8 +898,12 @@ export function ParentCabinetPage() {
       value: unreadMessages ? `${unreadMessages}` : '0',
       detail: unreadMessages ? 'непрочитанных сообщений' : 'диалоги с педагогами в порядке',
       tone: unreadMessages ? 'yellow' as const : 'blue' as const,
+      simple: false,
     },
   ]
+  const parentMetrics = viewMode === 'simple'
+    ? allParentMetrics.filter(metric => metric.simple)
+    : allParentMetrics
 
   if (status === 'unknown' || !user || user.role !== 'parent') {
     return <div className="codequest-card p-6">Загружаем кабинет…</div>
@@ -768,6 +921,43 @@ export function ParentCabinetPage() {
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
               Спокойный обзор учёбы: что уже получается, где нужен взрослый рядом и какой следующий шаг
               поддержит ребёнка без давления.
+            </p>
+            <div
+              className="mt-4 inline-flex rounded-full border border-slate-200 bg-white p-1 text-xs font-semibold shadow-sm"
+              role="tablist"
+              aria-label="Режим кабинета"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'simple'}
+                onClick={() => switchViewMode('simple')}
+                className={`rounded-full px-4 py-1.5 transition ${
+                  viewMode === 'simple'
+                    ? 'bg-sky-600 text-white shadow'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Кратко
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'extended'}
+                onClick={() => switchViewMode('extended')}
+                className={`rounded-full px-4 py-1.5 transition ${
+                  viewMode === 'extended'
+                    ? 'bg-sky-600 text-white shadow'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Подробно
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              {viewMode === 'simple'
+                ? 'Только успехи и достижения. Подробности доступны в режиме «Подробно».'
+                : 'Полный обзор: метрики, активность, сигналы, переписка, настройки.'}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="brand-chip brand-chip--soft">
@@ -840,26 +1030,96 @@ export function ParentCabinetPage() {
             <p className="mt-4 text-sm text-slate-600">Пока нет привязанных детей — добавьте код из кабинета ребёнка.</p>
           )}
 
-          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end">
-            <div className="min-w-0 flex-1">
-              <label className="text-xs font-bold uppercase text-slate-500">Код от ребёнка (12 символов)</label>
-              <input
-                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 font-mono uppercase"
-                value={linkCode}
-                onChange={e => setLinkCode(e.target.value)}
-                placeholder="например, A1B2C3D4E5F6"
-                maxLength={14}
-              />
+          {profileStatus && !profileStatus.ready_to_link_child ? (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">
+                Завершите профиль, чтобы привязать ребёнка
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-700">
+                Для привязки нужны имя, номер телефона и подтверждённый email.
+                Это нужно один раз — потом вы сможете добавлять детей по их кодам.
+              </p>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs font-bold uppercase text-slate-500">Имя</span>
+                  <input
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-2"
+                    value={profileForm.full_name}
+                    onChange={e => setProfileForm(s => ({ ...s, full_name: e.target.value }))}
+                    placeholder="Например, Анна"
+                    autoComplete="name"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-bold uppercase text-slate-500">Телефон</span>
+                  <input
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-2"
+                    value={profileForm.phone}
+                    onChange={e => setProfileForm(s => ({ ...s, phone: e.target.value }))}
+                    placeholder="+7 912 345-67-89"
+                    inputMode="tel"
+                    autoComplete="tel"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onSaveProfile}
+                  disabled={profileSaving}
+                  className="brand-button-primary disabled:opacity-50"
+                >
+                  {profileSaving ? 'Сохраняем…' : 'Сохранить имя и телефон'}
+                </button>
+                {!profileStatus.user.email_verified ? (
+                  <button
+                    type="button"
+                    onClick={onResendVerification}
+                    disabled={profileResending}
+                    className="brand-button-secondary disabled:opacity-50"
+                  >
+                    {profileResending ? 'Отправляем…' : 'Отправить письмо подтверждения'}
+                  </button>
+                ) : null}
+              </div>
+
+              <ul className="mt-4 space-y-1 text-xs text-slate-600">
+                <li className={profileStatus.missing_fields.includes('full_name') ? 'text-amber-700' : 'text-emerald-700'}>
+                  {profileStatus.missing_fields.includes('full_name') ? '◯' : '✓'} Имя
+                </li>
+                <li className={profileStatus.missing_fields.includes('phone') ? 'text-amber-700' : 'text-emerald-700'}>
+                  {profileStatus.missing_fields.includes('phone') ? '◯' : '✓'} Номер телефона
+                </li>
+                <li className={profileStatus.missing_fields.includes('email_verified') ? 'text-amber-700' : 'text-emerald-700'}>
+                  {profileStatus.missing_fields.includes('email_verified') ? '◯' : '✓'} Подтверждённый email{' '}
+                  ({profileStatus.user.email})
+                </li>
+              </ul>
             </div>
-            <button
-              type="button"
-              onClick={onLink}
-              disabled={linkBusy}
-              className="brand-button-primary shrink-0 disabled:opacity-50"
-            >
-              {linkBusy ? 'Связываем…' : 'Добавить ребёнка'}
-            </button>
-          </div>
+          ) : (
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1">
+                <label className="text-xs font-bold uppercase text-slate-500">Код от ребёнка (12 символов)</label>
+                <input
+                  className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 font-mono uppercase"
+                  value={linkCode}
+                  onChange={e => setLinkCode(e.target.value)}
+                  placeholder="например, A1B2C3D4E5F6"
+                  maxLength={14}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={onLink}
+                disabled={linkBusy}
+                className="brand-button-primary shrink-0 disabled:opacity-50"
+              >
+                {linkBusy ? 'Связываем…' : 'Добавить ребёнка'}
+              </button>
+            </div>
+          )}
         </section>
 
         {selected && (
@@ -877,55 +1137,57 @@ export function ParentCabinetPage() {
               ))}
             </section>
 
-            <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
-              <section className="parent-week-summary codequest-card p-5 sm:p-6" data-motion-item>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="brand-eyebrow">Неделя</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Что важно сейчас</h2>
+            {viewMode === 'extended' && (
+              <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
+                <section className="parent-week-summary codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="brand-eyebrow">Неделя</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Что важно сейчас</h2>
+                    </div>
+                    <span className="brand-chip brand-chip--soft">
+                      {activityMinutes ? `${activityMinutes} мин` : 'время не оценено'}
+                    </span>
                   </div>
-                  <span className="brand-chip brand-chip--soft">
-                    {activityMinutes ? `${activityMinutes} мин` : 'время не оценено'}
-                  </span>
-                </div>
-                <p className="mt-4 text-sm leading-7 text-slate-800">
-                  {(digest?.paragraph as string) || 'Загружаем спокойный недельный обзор…'}
-                </p>
-                <div className="parent-action-strip mt-5">
-                  <Sparkles size={22} strokeWidth={2.2} />
-                  <div>
-                    <p>Следующий мягкий шаг</p>
-                    <strong>{nextFocus}</strong>
+                  <p className="mt-4 text-sm leading-7 text-slate-800">
+                    {(digest?.paragraph as string) || 'Загружаем спокойный недельный обзор…'}
+                  </p>
+                  <div className="parent-action-strip mt-5">
+                    <Sparkles size={22} strokeWidth={2.2} />
+                    <div>
+                      <p>Следующий мягкий шаг</p>
+                      <strong>{nextFocus}</strong>
+                    </div>
                   </div>
-                </div>
-                <p className="mt-3 text-xs leading-5 text-slate-500">
-                  {(digest?.label as string) || 'Оценка активности не является точным временем у экрана.'}
-                </p>
-              </section>
+                  <p className="mt-3 text-xs leading-5 text-slate-500">
+                    {(digest?.label as string) || 'Оценка активности не является точным временем у экрана.'}
+                  </p>
+                </section>
 
-              <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="brand-eyebrow">Динамика</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Активность по дням</h2>
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="brand-eyebrow">Динамика</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Активность по дням</h2>
+                    </div>
+                    <span className="brand-chip brand-chip--warm">
+                      {trendText(weeklyActions, previousActions)}
+                    </span>
                   </div>
-                  <span className="brand-chip brand-chip--warm">
-                    {trendText(weeklyActions, previousActions)}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-slate-600">
-                  {(activity?.trend_text as string) || 'Сравниваем уроки и практику с прошлой неделей.'}
-                </p>
-                <div className="mt-5">
-                  <WeekActivityChart rows={weeklyActivity} previousRows={previousWeekActivity} />
-                </div>
-                <div className="parent-chart-legend mt-4">
-                  <span><i className="parent-chart-legend__dot parent-chart-legend__dot--lessons" />Уроки</span>
-                  <span><i className="parent-chart-legend__dot parent-chart-legend__dot--assignments" />Практика</span>
-                  <span><i className="parent-chart-legend__line" />Прошлая неделя</span>
-                </div>
-              </section>
-            </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    {(activity?.trend_text as string) || 'Сравниваем уроки и практику с прошлой неделей.'}
+                  </p>
+                  <div className="mt-5">
+                    <WeekActivityChart rows={weeklyActivity} previousRows={previousWeekActivity} />
+                  </div>
+                  <div className="parent-chart-legend mt-4">
+                    <span><i className="parent-chart-legend__dot parent-chart-legend__dot--lessons" />Уроки</span>
+                    <span><i className="parent-chart-legend__dot parent-chart-legend__dot--assignments" />Практика</span>
+                    <span><i className="parent-chart-legend__line" />Прошлая неделя</span>
+                  </div>
+                </section>
+              </div>
+            )}
 
             <section className="codequest-card p-5 sm:p-6" data-motion-item>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -942,76 +1204,90 @@ export function ParentCabinetPage() {
               </div>
             </section>
 
-            <div className="grid gap-6 xl:grid-cols-[0.98fr_1.02fr]">
-              <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="brand-eyebrow">Практика</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Баллы и статусы</h2>
+            {viewMode === 'extended' && (
+              <div className="grid gap-6 xl:grid-cols-[0.98fr_1.02fr]">
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="brand-eyebrow">Практика</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Баллы и статусы</h2>
+                    </div>
+                    <span className="brand-chip brand-chip--soft">
+                      Средний: {practiceAverageScore ? `${practiceAverageScore}%` : '—'}
+                    </span>
                   </div>
-                  <span className="brand-chip brand-chip--soft">
-                    Средний: {practiceAverageScore ? `${practiceAverageScore}%` : '—'}
-                  </span>
-                </div>
-                <div className="mt-5">
-                  <PracticeScoreChart items={practiceItems} />
-                </div>
-                <ul className="mt-5 space-y-2 text-sm">
-                  {practiceItems.slice(0, 6).map(item => (
-                    <li key={item.id} className="parent-practice-row">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-slate-900">{item.assignment_title}</p>
-                        <p className="mt-1 text-xs text-slate-500">{formatPracticeDate(item.submitted_at)}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={`parent-status-chip parent-status-chip--${practiceStatusTone(item.status)}`}>
-                          {practiceStatusRu(item.status)}
-                        </span>
-                        <span className="parent-score-badge">{item.score}%</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="brand-eyebrow">Поддержка</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Сигналы для родителя</h2>
+                  <div className="mt-5">
+                    <PracticeScoreChart items={practiceItems} />
                   </div>
-                  <span className="brand-chip brand-chip--soft">
-                    {importantSignals.length ? 'нужна реакция' : 'спокойно'}
-                  </span>
-                </div>
-                <ul className="mt-5 grid gap-3 sm:grid-cols-2">
-                  {signalItems.length ? (
-                    signalItems.map((sig, i) => {
-                      const severity = String(sig.severity || 'info')
-                      return (
-                        <li
-                          key={`${String(sig.title || 'signal')}-${i}`}
-                          className={`parent-signal-card parent-signal-card--${severity}`}
-                        >
-                          <p className="font-bold text-slate-900">{String(sig.title || 'Сигнал')}</p>
-                          <p className="mt-1 text-xs uppercase text-slate-500">{severityRu(severity)}</p>
-                          <p className="mt-2 text-sm leading-6 text-slate-700">{String(sig.explanation || '')}</p>
-                          <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">
-                            {String(sig.suggested_action || '')}
-                          </p>
-                        </li>
-                      )
-                    })
-                  ) : (
-                    <li className="parent-empty-state sm:col-span-2">
-                      Нет тревожных сигналов. Можно поддерживать привычный ритм и хвалить за регулярность.
-                    </li>
-                  )}
-                </ul>
-              </section>
-            </div>
+                  <ul className="mt-5 space-y-2 text-sm">
+                    {practiceItems.slice(0, 6).map(item => (
+                      <li key={item.id} className="parent-practice-row">
+                        <div className="flex min-w-0 items-center gap-3">
+                          {item.assignment_image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={item.assignment_image_url}
+                              alt=""
+                              className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                              loading="lazy"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-900">{item.assignment_title}</p>
+                            <p className="mt-1 text-xs text-slate-500">{formatPracticeDate(item.submitted_at)}</p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className={`parent-status-chip parent-status-chip--${practiceStatusTone(item.status)}`}>
+                            {practiceStatusRu(item.status)}
+                          </span>
+                          <span className="parent-score-badge">{item.score}%</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
 
-            <div className="grid gap-6 lg:grid-cols-2">
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="brand-eyebrow">Поддержка</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Сигналы для родителя</h2>
+                    </div>
+                    <span className="brand-chip brand-chip--soft">
+                      {importantSignals.length ? 'нужна реакция' : 'спокойно'}
+                    </span>
+                  </div>
+                  <ul className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {signalItems.length ? (
+                      signalItems.map((sig, i) => {
+                        const severity = String(sig.severity || 'info')
+                        return (
+                          <li
+                            key={`${String(sig.title || 'signal')}-${i}`}
+                            className={`parent-signal-card parent-signal-card--${severity}`}
+                          >
+                            <p className="font-bold text-slate-900">{String(sig.title || 'Сигнал')}</p>
+                            <p className="mt-1 text-xs uppercase text-slate-500">{severityRu(severity)}</p>
+                            <p className="mt-2 text-sm leading-6 text-slate-700">{String(sig.explanation || '')}</p>
+                            <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">
+                              {String(sig.suggested_action || '')}
+                            </p>
+                          </li>
+                        )
+                      })
+                    ) : (
+                      <li className="parent-empty-state sm:col-span-2">
+                        Нет тревожных сигналов. Можно поддерживать привычный ритм и хвалить за регулярность.
+                      </li>
+                    )}
+                  </ul>
+                </section>
+              </div>
+            )}
+
+            <div className={viewMode === 'simple' ? '' : 'grid gap-6 lg:grid-cols-2'}>
               <section className="codequest-card p-5 sm:p-6" data-motion-item>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -1045,63 +1321,106 @@ export function ParentCabinetPage() {
                 </ul>
               </section>
 
+              {viewMode === 'extended' && (
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="brand-eyebrow">Педагоги</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Сообщения по классам</h2>
+                    </div>
+                    <MessageCircle className="text-sky-600" size={28} strokeWidth={2.2} aria-hidden="true" />
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    Учителя классов, в которых учится выбранный ребёнок. Чат создаётся при первом сообщении.
+                  </p>
+                  {contactsForChild.length ? (
+                    <ul className="mt-5 space-y-2 text-sm">
+                      {contactsForChild.map(c => {
+                        const key = `${c.classroom.id}-${c.child.id}`
+                        return (
+                          <li key={key} className="parent-contact-row">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-900">
+                                {c.teacher.full_name || 'Педагог'}{' '}
+                                <span className="font-normal text-slate-500">·</span>{' '}
+                                {c.classroom.name || 'Класс'}
+                              </p>
+                              {c.latest_preview ? (
+                                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{c.latest_preview}</p>
+                              ) : (
+                                <p className="mt-1 text-xs text-slate-500">Диалог пока без сообщений.</p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {c.unread_count > 0 ? (
+                                <span className="messaging-unread-badge">{c.unread_count}</span>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="brand-button-secondary h-9 px-3 text-xs disabled:opacity-50"
+                                disabled={chatStarting || !c.can_message}
+                                onClick={() => void openParentTeacherChat(c)}
+                                title={!c.can_message ? 'Включите в разделе «Согласия»' : undefined}
+                              >
+                                {!c.can_message ? 'Связь отключена' : c.thread_id ? 'Открыть' : 'Написать'}
+                              </button>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="parent-empty-state mt-5">
+                      Пока нет классов, где состоит этот ребёнок. Пусть введёт код класса в своём кабинете, затем
+                      обновите страницу.
+                    </p>
+                  )}
+                </section>
+              )}
+            </div>
+
+            {usefulTasks.length > 0 && (
               <section className="codequest-card p-5 sm:p-6" data-motion-item>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="brand-eyebrow">Педагоги</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Сообщения по классам</h2>
+                    <p className="brand-eyebrow">Подборка</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-900">Полезные задания для ребёнка</h2>
+                    <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                      Курируемая подборка вне обязательного расписания — для интересной самостоятельной работы.
+                    </p>
                   </div>
-                  <MessageCircle className="text-sky-600" size={28} strokeWidth={2.2} aria-hidden="true" />
+                  <Link href="/useful" className="brand-button-secondary h-9 shrink-0 px-3 text-xs">
+                    Все материалы
+                  </Link>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-slate-600">
-                  Учителя классов, в которых учится выбранный ребёнок. Чат создаётся при первом сообщении.
-                </p>
-                {contactsForChild.length ? (
-                  <ul className="mt-5 space-y-2 text-sm">
-                    {contactsForChild.map(c => {
-                      const key = `${c.classroom.id}-${c.child.id}`
-                      return (
-                        <li key={key} className="parent-contact-row">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-900">
-                              {c.teacher.full_name || 'Педагог'}{' '}
-                              <span className="font-normal text-slate-500">·</span>{' '}
-                              {c.classroom.name || 'Класс'}
-                            </p>
-                            {c.latest_preview ? (
-                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{c.latest_preview}</p>
-                            ) : (
-                              <p className="mt-1 text-xs text-slate-500">Диалог пока без сообщений.</p>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            {c.unread_count > 0 ? (
-                              <span className="messaging-unread-badge">{c.unread_count}</span>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="brand-button-secondary h-9 px-3 text-xs disabled:opacity-50"
-                              disabled={chatStarting || !c.can_message}
-                              onClick={() => void openParentTeacherChat(c)}
-                              title={!c.can_message ? 'Включите в разделе «Согласия»' : undefined}
-                            >
-                              {!c.can_message ? 'Связь отключена' : c.thread_id ? 'Открыть' : 'Написать'}
-                            </button>
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : (
-                  <p className="parent-empty-state mt-5">
-                    Пока нет классов, где состоит этот ребёнок. Пусть введёт код класса в своём кабинете, затем
-                    обновите страницу.
-                  </p>
-                )}
+                <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {usefulTasks.map(task => (
+                    <li
+                      key={task.id}
+                      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                    >
+                      {task.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={task.image_url}
+                          alt=""
+                          className="h-24 w-full object-cover"
+                          loading="lazy"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      <div className="p-3">
+                        <p className="text-sm font-bold text-slate-900">{task.title}</p>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{task.summary}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </section>
-            </div>
+            )}
 
-            <div className="grid gap-6 lg:grid-cols-2">
+            {viewMode === 'extended' && (
+              <div className="grid gap-6 lg:grid-cols-2">
               <section className="codequest-card p-5 sm:p-6" data-motion-item>
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1182,37 +1501,40 @@ export function ParentCabinetPage() {
                 </div>
               </section>
             </div>
+            )}
 
-            <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
-              <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                <p className="brand-eyebrow">Оплата</p>
-                <p className="mt-3 text-sm leading-6 text-slate-700">
-                  {String(billing?.message || 'Статус оплаты недоступен.')}
-                </p>
-              </section>
+            {viewMode === 'extended' && (
+              <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <p className="brand-eyebrow">Оплата</p>
+                  <p className="mt-3 text-sm leading-6 text-slate-700">
+                    {String(billing?.message || 'Статус оплаты недоступен.')}
+                  </p>
+                </section>
 
-              <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="brand-eyebrow">Уведомления</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">Последние события</h2>
+                <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="brand-eyebrow">Уведомления</p>
+                      <h2 className="mt-2 text-2xl font-black text-slate-900">Последние события</h2>
+                    </div>
+                    <ClipboardList className="text-sky-600" size={28} strokeWidth={2.2} aria-hidden="true" />
                   </div>
-                  <ClipboardList className="text-sky-600" size={28} strokeWidth={2.2} aria-hidden="true" />
-                </div>
-                <ul className="mt-5 space-y-2 text-sm">
-                  {noteItems.length ? (
-                    noteItems.slice(0, 8).map((n, i) => (
-                      <li key={`${String(n.title || 'note')}-${i}`} className="parent-note-row">
-                        <p className="font-semibold text-slate-900">{String(n.title || 'Уведомление')}</p>
-                        <p className="mt-1 text-slate-600">{String(n.body || '')}</p>
-                      </li>
-                    ))
-                  ) : (
-                    <li className="parent-empty-state">Новых уведомлений нет.</li>
-                  )}
-                </ul>
-              </section>
-            </div>
+                  <ul className="mt-5 space-y-2 text-sm">
+                    {noteItems.length ? (
+                      noteItems.slice(0, 8).map((n, i) => (
+                        <li key={`${String(n.title || 'note')}-${i}`} className="parent-note-row">
+                          <p className="font-semibold text-slate-900">{String(n.title || 'Уведомление')}</p>
+                          <p className="mt-1 text-slate-600">{String(n.body || '')}</p>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="parent-empty-state">Новых уведомлений нет.</li>
+                    )}
+                  </ul>
+                </section>
+              </div>
+            )}
           </div>
         )}
 

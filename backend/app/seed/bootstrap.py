@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import string
+from datetime import UTC, datetime
 
 from flask import current_app
 from sqlalchemy import inspect, text
@@ -21,19 +22,13 @@ from ..models.learning import (
     has_explicit_code_task_intent,
     normalize_task_validation,
 )
+from ..models.useful import UsefulTask
 from ..models.user import User, UserRole
 
 
 def generate_code(length: int = 8) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-
-def _username_from_email(email: str, fallback: str) -> str:
-    normalized = (email or '').strip().lower()
-    if normalized and '@' in normalized:
-        return normalized.split('@')[0]
-    return fallback
 
 
 def bootstrap_superadmin() -> None:
@@ -43,16 +38,16 @@ def bootstrap_superadmin() -> None:
         return
     if User.query.filter_by(email=email).first():
         return
-    username = email.split('@')[0]
     db.session.add(
         User(
             full_name=current_app.config['SUPERADMIN_NAME'],
-            username=username,
             email=email,
             password_hash=hash_password(password),
             role=UserRole.SUPERADMIN,
             age_group='adult',
             xp=5000,
+            email_verified=True,
+            email_verified_at=datetime.now(UTC),
         )
     )
     db.session.commit()
@@ -895,44 +890,45 @@ def seed_demo_users() -> None:
     if not all([student_email, student_password, teacher_email, teacher_password, admin_email, admin_password]):
         return
 
-    student_username = _username_from_email(student_email, 'student_seed')
-    teacher_username = _username_from_email(teacher_email, 'teacher_seed')
-    admin_username = _username_from_email(admin_email, 'admin_seed')
     if User.query.filter(
         (User.email == student_email) | (User.email == teacher_email) | (User.email == admin_email)
     ).first():
         return
 
+    verified_at = datetime.now(UTC)
     users = [
         User(
             full_name='Тестовый ученик',
-            username=student_username,
             email=student_email,
             password_hash=hash_password(student_password),
             role=UserRole.STUDENT,
             age_group='middle',
             xp=360,
             streak=6,
+            email_verified=True,
+            email_verified_at=verified_at,
         ),
         User(
             full_name='Тестовый учитель',
-            username=teacher_username,
             email=teacher_email,
             password_hash=hash_password(teacher_password),
             role=UserRole.TEACHER,
             age_group='adult',
             xp=1200,
             streak=12,
+            email_verified=True,
+            email_verified_at=verified_at,
         ),
         User(
             full_name='Тестовый администратор',
-            username=admin_username,
             email=admin_email,
             password_hash=hash_password(admin_password),
             role=UserRole.ADMIN,
             age_group='adult',
             xp=2400,
             streak=18,
+            email_verified=True,
+            email_verified_at=verified_at,
         ),
     ]
     db.session.add_all(users)
@@ -1042,6 +1038,361 @@ def repair_legacy_code_task_validations() -> None:
         db.session.commit()
 
 
+def seed_useful_tasks() -> None:
+    """Seed 3 published useful tasks per age group (9 total). Idempotent by slug."""
+    tasks = [
+        # ── Junior (10–12 лет) ─────────────────────────────────────────────
+        {
+            'slug': 'junior-scratch-platformer',
+            'title': 'Сделай платформер в Scratch',
+            'summary': (
+                'Создай персонажа, который прыгает по платформам и собирает монеты. '
+                'Scratch не требует написания кода — всё строится из блоков, как конструктор. '
+                'Отличный старт для тех, кто ещё не писал программы.'
+            ),
+            'body': (
+                '## Что нужно сделать\n'
+                '1. Зарегистрируйся на scratch.mit.edu\n'
+                '2. Создай нового персонажа и нарисуй платформы\n'
+                '3. Добавь блок «когда клавиша ↑ нажата → изменить y на 10»\n'
+                '4. Добавь гравитацию: в цикле уменьшай y на 1, пока не касаешься пола\n'
+                '5. Добавь монеты — спрайты, которые исчезают при прикосновении\n\n'
+                '## Совет\n'
+                'Посмотри раздел «Примеры» на сайте Scratch — там есть готовые платформеры '
+                'с открытым кодом. Разберись, как они работают, и улучши свой.'
+            ),
+            'external_url': 'https://scratch.mit.edu/projects/editor/?tutorial=all',
+            'age_groups': ['junior'],
+            'topic': 'игры',
+            'difficulty': 'easy',
+            'is_published': True,
+        },
+        {
+            'slug': 'junior-html-my-page',
+            'title': 'Моя первая страница на HTML',
+            'summary': (
+                'Напиши HTML-страницу о себе: имя, любимые игры, раздел «мои интересы». '
+                'Узнаешь, что такое теги, атрибуты и как браузер читает код.'
+            ),
+            'body': (
+                '## Минимальная структура\n'
+                '```html\n'
+                '<!DOCTYPE html>\n'
+                '<html>\n'
+                '  <head><title>Моя страница</title></head>\n'
+                '  <body>\n'
+                '    <h1>Привет, я — Имя!</h1>\n'
+                '    <p>Мне нравится программировать.</p>\n'
+                '  </body>\n'
+                '</html>\n'
+                '```\n\n'
+                '## Задание\n'
+                '- Добавь заголовок h1 со своим именем\n'
+                '- Добавь список ul/li с тремя любимыми играми или хобби\n'
+                '- Добавь картинку через тег img\n'
+                '- Открой файл в браузере и посмотри результат'
+            ),
+            'external_url': 'https://htmlacademy.ru/courses/basic-html-css',
+            'age_groups': ['junior'],
+            'topic': 'html',
+            'difficulty': 'easy',
+            'is_published': True,
+        },
+        {
+            'slug': 'junior-python-turtle',
+            'title': 'Рисуем геометрию с Python Turtle',
+            'summary': (
+                'С помощью модуля turtle нарисуй квадрат, треугольник и звезду. '
+                'Узнаешь про циклы for и команды вперёд/поворот — первый настоящий Python.'
+            ),
+            'body': (
+                '## Запуск\n'
+                'Установи Python 3 и запусти IDLE или любой редактор.\n\n'
+                '```python\n'
+                'import turtle\n'
+                't = turtle.Turtle()\n'
+                'for _ in range(4):\n'
+                '    t.forward(100)\n'
+                '    t.right(90)\n'
+                'turtle.done()\n'
+                '```\n\n'
+                '## Задания\n'
+                '1. Квадрат (4 стороны, поворот 90°)\n'
+                '2. Треугольник (3 стороны, поворот 120°)\n'
+                '3. Звезда (5 лучей, поворот 144°)\n'
+                '4. Попробуй изменить цвет через t.color("red")'
+            ),
+            'external_url': 'https://docs.python.org/3/library/turtle.html',
+            'age_groups': ['junior'],
+            'topic': 'python',
+            'difficulty': 'easy',
+            'is_published': True,
+        },
+
+        # ── Middle (13–15 лет) ─────────────────────────────────────────────
+        {
+            'slug': 'middle-python-guess-game',
+            'title': 'Игра «Угадай число» на Python',
+            'summary': (
+                'Напиши игру: компьютер загадывает число от 1 до 100, игрок пытается угадать. '
+                'Практика циклов while, условий if/elif/else, функции random.randint и ввода с клавиатуры.'
+            ),
+            'body': (
+                '## Шаги\n'
+                '```python\n'
+                'import random\n\n'
+                'secret = random.randint(1, 100)\n'
+                'attempts = 0\n\n'
+                'while True:\n'
+                '    guess = int(input("Твой вариант: "))\n'
+                '    attempts += 1\n'
+                '    if guess < secret:\n'
+                '        print("Больше!")\n'
+                '    elif guess > secret:\n'
+                '        print("Меньше!")\n'
+                '    else:\n'
+                '        print(f"Верно! Попыток: {attempts}")\n'
+                '        break\n'
+                '```\n\n'
+                '## Усложнения\n'
+                '- Добавь лимит попыток (например, 7)\n'
+                '- Покажи рейтинг: «Отлично / Хорошо / Неплохо» в зависимости от числа попыток\n'
+                '- Добавь возможность сыграть снова без перезапуска программы'
+            ),
+            'external_url': 'https://replit.com/languages/python3',
+            'age_groups': ['middle'],
+            'topic': 'python',
+            'difficulty': 'easy',
+            'is_published': True,
+        },
+        {
+            'slug': 'middle-css-flexbox-card',
+            'title': 'Карточка профиля на CSS Flexbox',
+            'summary': (
+                'Свёрстай карточку пользователя: аватар, имя, описание и кнопки «Написать» / «Подписаться». '
+                'Знакомство с Flexbox, box-shadow, border-radius и hover-эффектами.'
+            ),
+            'body': (
+                '## Что должно получиться\n'
+                'Карточка 320px шириной: аватар сверху по центру, ниже имя жирным, '
+                'затем короткое описание, затем два button в ряд через flex.\n\n'
+                '## Ключевые свойства\n'
+                '```css\n'
+                '.card {\n'
+                '  display: flex;\n'
+                '  flex-direction: column;\n'
+                '  align-items: center;\n'
+                '  gap: 12px;\n'
+                '  padding: 24px;\n'
+                '  border-radius: 16px;\n'
+                '  box-shadow: 0 4px 20px rgba(0,0,0,.08);\n'
+                '}\n'
+                '.actions { display: flex; gap: 8px; }\n'
+                '```\n\n'
+                '## Задание\n'
+                '- Добавь transition на кнопки: плавное изменение фона при наведении\n'
+                '- Сделай карточку адаптивной: на узком экране кнопки переносятся вертикально\n'
+                '- Попробуй тёмную тему через media prefers-color-scheme'
+            ),
+            'external_url': 'https://flexboxfroggy.com/#ru',
+            'age_groups': ['middle'],
+            'topic': 'css',
+            'difficulty': 'medium',
+            'is_published': True,
+        },
+        {
+            'slug': 'middle-algorithms-sorting',
+            'title': 'Пузырьковая и быстрая сортировка',
+            'summary': (
+                'Реализуй два алгоритма сортировки на Python, сравни их скорость на 10 000 элементов. '
+                'Поймёшь, что такое O(n²) vs O(n log n) на практике.'
+            ),
+            'body': (
+                '## Пузырьковая сортировка\n'
+                '```python\n'
+                'def bubble_sort(arr):\n'
+                '    n = len(arr)\n'
+                '    for i in range(n):\n'
+                '        for j in range(0, n - i - 1):\n'
+                '            if arr[j] > arr[j + 1]:\n'
+                '                arr[j], arr[j + 1] = arr[j + 1], arr[j]\n'
+                '    return arr\n'
+                '```\n\n'
+                '## Быстрая сортировка\n'
+                '```python\n'
+                'def quick_sort(arr):\n'
+                '    if len(arr) <= 1:\n'
+                '        return arr\n'
+                '    pivot = arr[len(arr) // 2]\n'
+                '    left = [x for x in arr if x < pivot]\n'
+                '    mid  = [x for x in arr if x == pivot]\n'
+                '    right= [x for x in arr if x > pivot]\n'
+                '    return quick_sort(left) + mid + quick_sort(right)\n'
+                '```\n\n'
+                '## Сравни время\n'
+                '```python\n'
+                'import random, time\n'
+                'data = [random.randint(0, 10000) for _ in range(10000)]\n'
+                'start = time.time(); bubble_sort(data[:]); print("Bubble:", time.time()-start)\n'
+                'start = time.time(); quick_sort(data[:]); print("Quick: ", time.time()-start)\n'
+                '```'
+            ),
+            'external_url': 'https://visualgo.net/ru/sorting',
+            'age_groups': ['middle'],
+            'topic': 'алгоритмы',
+            'difficulty': 'medium',
+            'is_published': True,
+        },
+
+        # ── Senior (16–17 лет) ─────────────────────────────────────────────
+        {
+            'slug': 'senior-python-todo-api',
+            'title': 'REST API для списка задач на Flask',
+            'summary': (
+                'Напиши простой REST API: GET /tasks, POST /tasks, DELETE /tasks/<id>. '
+                'Данные храни в памяти (список). Протестируй через curl или Postman.'
+            ),
+            'body': (
+                '## Минимальный сервер\n'
+                '```python\n'
+                'from flask import Flask, request, jsonify\n\n'
+                'app = Flask(__name__)\n'
+                'tasks = []\n'
+                'next_id = 1\n\n'
+                '@app.get("/tasks")\n'
+                'def get_tasks():\n'
+                '    return jsonify(tasks)\n\n'
+                '@app.post("/tasks")\n'
+                'def create_task():\n'
+                '    global next_id\n'
+                '    body = request.get_json()\n'
+                '    task = {"id": next_id, "title": body["title"], "done": False}\n'
+                '    tasks.append(task); next_id += 1\n'
+                '    return jsonify(task), 201\n\n'
+                '@app.delete("/tasks/<int:task_id>")\n'
+                'def delete_task(task_id):\n'
+                '    global tasks\n'
+                '    tasks = [t for t in tasks if t["id"] != task_id]\n'
+                '    return {"ok": True}\n\n'
+                'app.run(debug=True)\n'
+                '```\n\n'
+                '## Усложнения\n'
+                '- Добавь PATCH /tasks/<id> для пометки выполненным\n'
+                '- Подключи SQLite через sqlite3 вместо списка в памяти\n'
+                '- Добавь валидацию: 400, если title отсутствует или пустой'
+            ),
+            'external_url': 'https://flask.palletsprojects.com/en/stable/quickstart/',
+            'age_groups': ['senior'],
+            'topic': 'python',
+            'difficulty': 'medium',
+            'is_published': True,
+        },
+        {
+            'slug': 'senior-js-fetch-weather',
+            'title': 'Виджет погоды на JavaScript + Fetch API',
+            'summary': (
+                'Запроси данные с открытого API wttr.in, распарси JSON и отобрази '
+                'температуру, иконку и описание погоды на странице. Практика async/await и DOM.'
+            ),
+            'body': (
+                '## Базовый запрос\n'
+                '```javascript\n'
+                'async function getWeather(city) {\n'
+                '  const res = await fetch(\n'
+                '    `https://wttr.in/${city}?format=j1`\n'
+                '  );\n'
+                '  const data = await res.json();\n'
+                '  const current = data.current_condition[0];\n'
+                '  return {\n'
+                '    temp: current.temp_C,\n'
+                '    feels: current.FeelsLikeC,\n'
+                '    desc: current.weatherDesc[0].value,\n'
+                '  };\n'
+                '}\n\n'
+                'getWeather("Moscow").then(w => {\n'
+                '  document.getElementById("weather").textContent =\n'
+                '    `${w.temp}°C, ощущается как ${w.feels}°C — ${w.desc}`;\n'
+                '});\n'
+                '```\n\n'
+                '## Задание\n'
+                '- Добавь input для ввода города и кнопку\n'
+                '- Покажи спиннер загрузки во время запроса\n'
+                '- Обработай ошибку сети через try/catch и покажи сообщение пользователю\n'
+                '- Красиво оформи карточку погоды с CSS'
+            ),
+            'external_url': 'https://wttr.in/:help',
+            'age_groups': ['senior'],
+            'topic': 'javascript',
+            'difficulty': 'medium',
+            'is_published': True,
+        },
+        {
+            'slug': 'senior-git-workflow',
+            'title': 'Git на практике: ветки, конфликты, PR',
+            'summary': (
+                'Пройди полный цикл командной разработки: создай ветку, внеси изменения, '
+                'намеренно вызови конфликт слияния и разреши его. Обязательный навык для любого разработчика.'
+            ),
+            'body': (
+                '## Упражнение\n'
+                '```bash\n'
+                '# Инициализируй репозиторий\n'
+                'git init my-project && cd my-project\n'
+                'echo "# My Project" > README.md\n'
+                'git add . && git commit -m "init"\n\n'
+                '# Создай две ветки от main\n'
+                'git checkout -b feature/alice\n'
+                'echo "Alice was here" >> README.md\n'
+                'git commit -am "alice: add note"\n\n'
+                'git checkout main\n'
+                'git checkout -b feature/bob\n'
+                'echo "Bob was here" >> README.md\n'
+                'git commit -am "bob: add note"\n\n'
+                '# Смерджи Alice в main, затем попробуй смерджить Bob\n'
+                'git checkout main\n'
+                'git merge feature/alice\n'
+                'git merge feature/bob  # будет конфликт!\n'
+                '```\n\n'
+                '## Как разрешить конфликт\n'
+                'Открой README.md, найди маркеры `<<<<<<<`, `=======`, `>>>>>>>`. '
+                'Выбери нужный вариант, удали маркеры, сохрани файл и выполни:\n'
+                '```bash\n'
+                'git add README.md && git commit -m "resolve: merge alice and bob"\n'
+                '```\n\n'
+                '## Изучи дополнительно\n'
+                '- git rebase vs git merge\n'
+                '- git stash для сохранения незакоммиченных изменений\n'
+                '- git log --oneline --graph для красивой истории'
+            ),
+            'external_url': 'https://learngitbranching.js.org/?locale=ru_RU',
+            'age_groups': ['senior'],
+            'topic': 'git',
+            'difficulty': 'hard',
+            'is_published': True,
+        },
+    ]
+
+    existing_slugs = {row.slug for row in UsefulTask.query.with_entities(UsefulTask.slug).all()}
+    added = 0
+    for data in tasks:
+        if data['slug'] in existing_slugs:
+            continue
+        db.session.add(UsefulTask(
+            slug=data['slug'],
+            title=data['title'],
+            summary=data['summary'],
+            body=data['body'],
+            external_url=data.get('external_url'),
+            age_groups=data['age_groups'],
+            topic=data.get('topic'),
+            difficulty=data['difficulty'],
+            is_published=data['is_published'],
+        ))
+        added += 1
+    if added:
+        db.session.commit()
+
+
 def seed_all(enable_demo_data: bool = True) -> None:
     if current_app.config.get('SUPERADMIN_BOOTSTRAP', False):
         bootstrap_superadmin()
@@ -1049,6 +1400,7 @@ def seed_all(enable_demo_data: bool = True) -> None:
     cleanup_deprecated_learning_artifacts()
     seed_modules()
     repair_legacy_code_task_validations()
+    seed_useful_tasks()
     if enable_demo_data:
         seed_demo_users()
         seed_classes_and_assignments()

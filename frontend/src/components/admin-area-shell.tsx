@@ -11,6 +11,8 @@ type AdminSection =
   | 'lessons'
   | 'modules'
   | 'logs'
+  | 'media'
+  | 'useful'
 
 interface NavItem {
   key: AdminSection
@@ -56,6 +58,18 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/admin/modules',
       label: 'Модули',
       description: 'Публикация и каталог',
+    },
+    {
+      key: 'media',
+      href: '/admin/media',
+      label: 'Картинки',
+      description: 'Обложки заданий',
+    },
+    {
+      key: 'useful',
+      href: '/admin/useful',
+      label: 'Подборка',
+      description: 'Полезные задания',
     },
     {
       key: 'logs',
@@ -106,6 +120,18 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/superadmin/modules',
       label: 'Модули',
       description: 'Публикация и каталог',
+    },
+    {
+      key: 'media',
+      href: '/superadmin/media',
+      label: 'Картинки',
+      description: 'Обложки заданий',
+    },
+    {
+      key: 'useful',
+      href: '/superadmin/useful',
+      label: 'Подборка',
+      description: 'Полезные задания',
     },
     {
       key: 'logs',

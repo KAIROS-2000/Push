@@ -318,17 +318,18 @@ def help_and_risk_signals(
             lt = row.lesson.title if row.lesson else "уроке"
             signals.append(
                 {
+                    # Parent-facing copy: positive framing per P3a.
                     "severity": "warning",
-                    "title": "Нужна помощь с темой",
-                    "explanation": f"В уроке «{lt}» есть запрос на доработку.",
-                    "suggested_action": "Стоит повторить тему вместе с преподавателем.",
+                    "title": "Зона для роста",
+                    "explanation": f"В уроке «{lt}» преподаватель предложил доработать решение.",
+                    "suggested_action": "Можно вместе с ребёнком уточнить комментарий преподавателя.",
                 }
             )
         if (row.attempts or 0) >= 4 and (row.score or 0) < 60 and row.status != "completed":
             signals.append(
                 {
                     "severity": "info",
-                    "title": "Много попыток без уверенного результата",
+                    "title": "Стоит разобрать тему вместе",
                     "explanation": "Несколько попыток — часть обучения; важна поддержка без давления.",
                     "suggested_action": "Предложите вместе разобрать задание по шагам.",
                 }

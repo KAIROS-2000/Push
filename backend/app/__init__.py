@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import redis
 
-from flask import Flask, g, has_request_context, request, send_from_directory
+from flask import Flask, abort, g, has_request_context, request, send_from_directory
 from flask.testing import FlaskClient
 from flask_cors import CORS
 from sqlalchemy import event
@@ -27,6 +27,7 @@ from .api.staff_messaging import staff_messaging_bp
 from .api.parent_cabinet import parent_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
+from .api.useful import useful_bp
 from .cli import register_commands
 from .core.config import Config, resolve_jwt_signing_keys, resolve_redis_password
 from .core.db import db
@@ -52,10 +53,21 @@ COMMON_SECRET_KEY_PLACEHOLDERS = (
     "super-secret-key",
     "example",
     "todo",
+    # Reject example-file leftovers that pass length but encode obvious dev defaults.
+    "devpostgres",
+    "devredis",
+    "devjudge",
+    "localonly",
+    "localdev",
+    "passphrase",
 )
 PUBLIC_UNSAFE_API_PATHS = {
     "/api/auth/login",
     "/api/auth/register",
+    "/api/auth/verify-email",
+    "/api/auth/resend-verification",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
 }
 
 
@@ -122,6 +134,10 @@ def _validate_postgres_password(app: Flask) -> None:
     password = parsed.password or ""
     if password in {"", "codequest", "postgres", "password"} or len(password) < 16:
         raise RuntimeError("Set a strong PostgreSQL password before running in production mode.")
+    if _contains_placeholder_secret_fragment(password):
+        raise RuntimeError(
+            "PostgreSQL password must not contain placeholder fragments (Dev/Local/example/etc) in production."
+        )
 
 
 class _CSRFAwareFlaskClient(FlaskClient):
@@ -333,6 +349,7 @@ def create_app() -> Flask:
     app.register_blueprint(messaging_bp, url_prefix="/api/messaging")
     app.register_blueprint(staff_messaging_bp, url_prefix="/api/staff-messaging")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
+    app.register_blueprint(useful_bp, url_prefix="/api/useful")
 
     @app.get("/api/health")
     def health():
@@ -387,17 +404,46 @@ def create_app() -> Flask:
             return None
         return {"message": "CSRF token missing or invalid.", "code": "csrf_invalid"}, 403
 
+    # Defense-in-depth: send_from_directory blocks `..` traversal, but we additionally
+    # restrict file extensions so mis-placed files (e.g. .html, raw .svg with embedded scripts)
+    # cannot be served as media even if an operator copies them into the media directories.
+    _ALLOWED_MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+    def _ensure_allowed_media_extension(filename: str) -> None:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in _ALLOWED_MEDIA_EXTENSIONS:
+            abort(404)
+
     @app.get("/api/mascot/<path:filename>")
     def mascot_sprite(filename: str):
+        _ensure_allowed_media_extension(filename)
         return send_from_directory(SPRITE_DIR, filename)
 
     @app.get("/api/media/avatars/<path:filename>")
     def media_avatar(filename: str):
+        _ensure_allowed_media_extension(filename)
         return send_from_directory(MEDIA_DIR / "avatars", filename)
 
     @app.get("/api/media/frames/<path:filename>")
     def media_frame(filename: str):
+        _ensure_allowed_media_extension(filename)
         return send_from_directory(MEDIA_DIR / "frames", filename)
+
+    # Assignment cover images allow .svg in addition to raster formats: SVG placeholders
+    # are generated server-side (no user input substituted into <text>), and our global
+    # CSP for /api/* responses (`default-src 'none'`) blocks any inline script execution
+    # if a malformed SVG sneaks in. Avatars/frames keep the stricter raster-only whitelist.
+    _ALLOWED_ASSIGNMENT_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+
+    def _ensure_allowed_assignment_image_extension(filename: str) -> None:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in _ALLOWED_ASSIGNMENT_IMAGE_EXTENSIONS:
+            abort(404)
+
+    @app.get("/api/media/assignment-images/<path:filename>")
+    def media_assignment_image(filename: str):
+        _ensure_allowed_assignment_image_extension(filename)
+        return send_from_directory(MEDIA_DIR / "assignment-images", filename)
 
     @app.after_request
     def apply_security_headers(response):

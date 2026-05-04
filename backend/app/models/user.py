@@ -18,8 +18,6 @@ class UserRole(enum.Enum):
     SUPERADMIN = 'superadmin'
 
 
-USERNAME_MIN_LENGTH = 5
-USERNAME_MAX_LENGTH = 10
 JSONType = JSONB().with_variant(db.JSON(), 'sqlite')
 TEACHER_APPROVAL_PENDING = 'pending'
 TEACHER_APPROVAL_APPROVED = 'approved'
@@ -36,7 +34,6 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(120), nullable=False)
-    username = db.Column(db.String(60), unique=True, nullable=False, index=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     phone = db.Column(db.String(20), unique=True, nullable=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
@@ -58,6 +55,14 @@ class User(db.Model):
     teacher_rejection_expires_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     session_version = db.Column(db.Integer, nullable=False, default=0)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # Default is True so admin-created users, seeded superadmins/demo accounts
+    # and DB rows that predate the email-verification feature can log in
+    # immediately. The /auth/register endpoint explicitly sets this to False
+    # for self-signups (student/teacher/parent) so the email-confirmation gate
+    # really applies to people who haven't proven control of the inbox yet.
+    email_verified = db.Column(db.Boolean, nullable=False, default=True, server_default='1')
+    email_verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    password_changed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
     classes_created = db.relationship('Classroom', back_populates='teacher', foreign_keys='Classroom.teacher_id')
@@ -65,6 +70,7 @@ class User(db.Model):
     achievements = db.relationship('UserAchievement', back_populates='user', cascade='all, delete-orphan')
     memberships = db.relationship('ClassMembership', back_populates='student', cascade='all, delete-orphan')
     refresh_tokens = db.relationship('RefreshToken', back_populates='user', cascade='all, delete-orphan')
+    email_tokens = db.relationship('EmailToken', back_populates='user', cascade='all, delete-orphan')
 
     def touch_login(self) -> None:
         self.last_login_at = datetime.now(UTC)
@@ -105,7 +111,6 @@ class User(db.Model):
         return {
             'id': self.id,
             'full_name': self.full_name,
-            'username': self.username,
             'email': self.email,
             'phone': self.phone,
             'role': self.role.value,
@@ -123,6 +128,7 @@ class User(db.Model):
             'teacher_rejection_expires_at': self.teacher_rejection_expires_at.isoformat()
             if self.teacher_rejection_expires_at
             else None,
+            'email_verified': bool(self.email_verified),
         }
 
     def to_parent_dict(self) -> dict:
@@ -162,12 +168,12 @@ class AdminAuditLog(db.Model):
             'actor': {
                 'id': self.actor_user_id,
                 'role': self.actor_role,
-                'username': details.get('actor_username'),
+                'email': details.get('actor_email'),
                 'full_name': details.get('actor_name'),
             },
             'target': {
                 'label': self.entity_label,
-                'username': details.get('target_username'),
+                'email': details.get('target_email'),
                 'full_name': details.get('target_name'),
                 'role': details.get('target_role'),
             },
@@ -192,7 +198,13 @@ class SiteActivityLog(db.Model):
 
     user = db.relationship('User', backref=db.backref('site_activity_logs', lazy='dynamic'))
 
-    def to_dict(self, *, username: str | None = None) -> dict:
+    def to_dict(self, *, user_email: str | None = None) -> dict:
+        user_payload: dict = {
+            'id': self.user_id,
+            'role': self.user_role,
+        }
+        if user_email is not None:
+            user_payload['email'] = user_email
         return {
             'id': self.id,
             'user_id': self.user_id,
@@ -202,11 +214,7 @@ class SiteActivityLog(db.Model):
             'status_code': self.status_code,
             'client_ip': self.client_ip,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'user': {
-                'id': self.user_id,
-                'username': username,
-                'role': self.user_role,
-            },
+            'user': user_payload,
         }
 
 
@@ -241,3 +249,55 @@ class SecurityThrottle(db.Model):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+
+EMAIL_TOKEN_PURPOSE_VERIFICATION = 'email_verification'
+EMAIL_TOKEN_PURPOSE_PASSWORD_RESET = 'password_reset'
+EMAIL_TOKEN_PURPOSES = {
+    EMAIL_TOKEN_PURPOSE_VERIFICATION,
+    EMAIL_TOKEN_PURPOSE_PASSWORD_RESET,
+}
+
+
+class EmailToken(db.Model):
+    """Single-use, hashed token for email verification and password reset flows.
+
+    Raw tokens are NEVER persisted: only their SHA-256 hash hex is stored. The raw
+    token leaves the backend exactly once — embedded in the outgoing email link.
+    """
+
+    __tablename__ = 'email_tokens'
+    __table_args__ = (
+        UniqueConstraint('token_hash', name='uq_email_tokens_token_hash'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    purpose = db.Column(db.String(32), nullable=False, index=True)
+    token_hash = db.Column(db.String(128), nullable=False, index=True)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+        index=True,
+    )
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    request_ip = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+
+    user = db.relationship('User', back_populates='email_tokens')
+
+    def is_active(self, *, now: datetime | None = None) -> bool:
+        moment = now or datetime.now(UTC)
+        if self.used_at is not None:
+            return False
+        expires_at = self.expires_at
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return bool(expires_at and expires_at > moment)

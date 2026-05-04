@@ -70,7 +70,6 @@ class AdminLessonCreationTests(unittest.TestCase):
         with app.app_context():
             admin = User(
                 full_name='Admin Example',
-                username='admin',
                 email='admin@example.com',
                 password_hash=hash_password('AdminPass123!'),
                 role=UserRole.ADMIN,

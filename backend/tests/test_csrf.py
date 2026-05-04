@@ -72,7 +72,6 @@ class CsrfProtectionTests(unittest.TestCase):
         with app.app_context():
             user = User(
                 full_name='CSRF Student',
-                username=email.split('@')[0],
                 email=email,
                 password_hash=hash_password(password),
                 role=UserRole.STUDENT,

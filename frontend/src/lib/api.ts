@@ -1,5 +1,11 @@
 import { PUBLIC_API_URL } from './public-env'
 import { setAnonymousSession } from './session-store'
+import type {
+  ForgotPasswordResponse,
+  ResendVerificationResponse,
+  ResetPasswordResponse,
+  VerifyEmailResponse,
+} from '@/types'
 
 const API_URL = PUBLIC_API_URL
 let refreshRequest: Promise<boolean> | null = null
@@ -227,4 +233,40 @@ export async function api<T>(path: string, init: RequestInit = {}, auth: ApiAuth
   }
 
   return payload as T
+}
+
+/**
+ * Email/password recovery helpers — wrap the public auth endpoints so calling
+ * pages stay declarative and we keep transport details (auth mode, JSON body)
+ * in one place.
+ */
+
+export function verifyEmail(token: string): Promise<VerifyEmailResponse> {
+  return api<VerifyEmailResponse>('/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
+export function resendVerification(payload: { email?: string } = {}): Promise<ResendVerificationResponse> {
+  const body = payload.email ? JSON.stringify({ email: payload.email }) : JSON.stringify({})
+  return api<ResendVerificationResponse>(
+    '/auth/resend-verification',
+    { method: 'POST', body },
+    'optional',
+  )
+}
+
+export function forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+  return api<ForgotPasswordResponse>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export function resetPassword(token: string, newPassword: string): Promise<ResetPasswordResponse> {
+  return api<ResetPasswordResponse>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  })
 }

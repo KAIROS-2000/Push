@@ -75,7 +75,6 @@ class CosmeticsTests(unittest.TestCase):
         with app.app_context():
             user = User(
                 full_name="Test Student",
-                username="student",
                 email="student@example.com",
                 password_hash=hash_password("StrongPass123!"),
                 role=UserRole.STUDENT,

@@ -7,7 +7,6 @@ import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import { UserLocalTime } from '@/components/user-local-time'
-import { formatUserInstantRu } from '@/lib/user-local-time'
 import { DashboardData } from '@/types'
 import {
 	BookOpenCheck,
@@ -17,6 +16,52 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
+
+const PARENT_LINK_CODE_STORAGE_KEY = 'proghub_student_parent_link_code_v1'
+
+type StoredParentLinkCode = {
+	userId: number
+	code: string
+	expires_at: string
+}
+
+function readStoredParentLinkCode(userId: number): StoredParentLinkCode | null {
+	if (typeof window === 'undefined') return null
+	try {
+		const raw = sessionStorage.getItem(PARENT_LINK_CODE_STORAGE_KEY)
+		if (!raw) return null
+		const parsed = JSON.parse(raw) as StoredParentLinkCode
+		if (parsed.userId !== userId || !parsed.code || !parsed.expires_at) return null
+		return parsed
+	} catch {
+		return null
+	}
+}
+
+function writeStoredParentLinkCode(payload: StoredParentLinkCode) {
+	try {
+		sessionStorage.setItem(PARENT_LINK_CODE_STORAGE_KEY, JSON.stringify(payload))
+	} catch {
+		// ignore (private mode, disabled storage)
+	}
+}
+
+function clearStoredParentLinkCode() {
+	try {
+		sessionStorage.removeItem(PARENT_LINK_CODE_STORAGE_KEY)
+	} catch {
+		// ignore (private mode, disabled storage)
+	}
+}
+
+function linkCodeExpiryMatches(a: string, b: string) {
+	return new Date(a).getTime() === new Date(b).getTime()
+}
+
+function formatParentLinkCodeForDisplay(code: string) {
+	const compact = code.replace(/\s+/g, '').toUpperCase()
+	return compact.replace(/(.{4})/g, '$1 ').trim()
+}
 
 function lessonStateLabel(state?: string | null) {
 	if (state === 'completed') return 'Завершён'
@@ -44,6 +89,10 @@ export function DashboardView({
 	const [error, setError] = useState('')
 	const [classCode, setClassCode] = useState('')
 	const [showcaseOpen, setShowcaseOpen] = useState(false)
+	const [revealedParentLinkCode, setRevealedParentLinkCode] = useState<{
+		code: string
+		expires_at: string
+	} | null>(null)
 
 	useUserPageMotion(rootRef, [Boolean(data)])
 
@@ -60,6 +109,30 @@ export function DashboardView({
 			),
 		)
 	}, [initialData])
+
+	useEffect(() => {
+		if (!data || data.user.role !== 'student') return
+		const pl = data.parent_link_code
+		const exp = pl.expires_at
+		if (!pl.active || !exp) {
+			clearStoredParentLinkCode()
+			setRevealedParentLinkCode(null)
+			return
+		}
+		const stored = readStoredParentLinkCode(data.user.id)
+		setRevealedParentLinkCode(prev => {
+			if (stored && linkCodeExpiryMatches(stored.expires_at, exp)) {
+				return { code: stored.code, expires_at: exp }
+			}
+			if (stored && !linkCodeExpiryMatches(stored.expires_at, exp)) {
+				clearStoredParentLinkCode()
+			}
+			if (prev && linkCodeExpiryMatches(prev.expires_at, exp)) {
+				return prev
+			}
+			return null
+		})
+	}, [data])
 
 	async function joinClass() {
 		if (!classCode.trim()) {
@@ -84,6 +157,7 @@ export function DashboardView({
 	}
 
 	async function createParentLinkCode() {
+		if (!data || data.user.role !== 'student') return
 		try {
 			const res = await api<{
 				code: string
@@ -97,15 +171,31 @@ export function DashboardView({
 				},
 				'required',
 			)
-			const hint = res.message
-				? `${res.message} Код: ${res.code}`
-				: `Скопируйте код и передайте родителю. Код: ${res.code} (истекает ${formatUserInstantRu(res.expires_at)})`
-			showSuccessToast(hint)
+			writeStoredParentLinkCode({
+				userId: data.user.id,
+				code: res.code,
+				expires_at: res.expires_at,
+			})
+			setRevealedParentLinkCode({ code: res.code, expires_at: res.expires_at })
+			showSuccessToast(
+				res.message || 'Семейный код создан. Передайте его родителю.',
+			)
 			await loadDashboard()
 		} catch (e) {
 			showErrorToast(
 				getApiErrorMessage(e, 'Не удалось создать код для родителя.'),
 			)
+		}
+	}
+
+	async function copyRevealedParentLinkCode() {
+		if (!revealedParentLinkCode) return
+		try {
+			const plain = revealedParentLinkCode.code.replace(/\s+/g, '').toUpperCase()
+			await navigator.clipboard.writeText(plain)
+			showSuccessToast('Код скопирован в буфер обмена.')
+		} catch {
+			showErrorToast('Не удалось скопировать код.')
 		}
 	}
 
@@ -127,7 +217,16 @@ export function DashboardView({
 	const assignmentFocus = data.summary.assignments_open
 		? Math.min(100, data.summary.assignments_open * 24)
 		: 8
-	const achievementGlow = Math.min(100, data.summary.achievements * 18)
+	const achievementsTotal = data.summary.achievements_total
+	const achievementGlow =
+		typeof achievementsTotal === 'number' && achievementsTotal > 0
+			? Math.min(
+					100,
+					Math.round((data.summary.achievements / achievementsTotal) * 100),
+				)
+			: achievementsTotal === 0
+				? 0
+				: Math.min(100, data.summary.achievements * 18)
 	const streakProgress = Math.min(100, (data.user.streak / 7) * 100)
 	const daysToWeeklyStreak = Math.max(0, 7 - data.user.streak)
 
@@ -421,8 +520,18 @@ export function DashboardView({
 							data.assignments_preview.map(assignment => (
 								<div
 									key={assignment.id}
-									className='rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm'
+									className='overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm'
 								>
+									{assignment.image_url ? (
+										// eslint-disable-next-line @next/next/no-img-element
+										<img
+											src={assignment.image_url}
+											alt={`Обложка задания «${assignment.title}»`}
+											className='h-32 w-full object-cover sm:h-40'
+											loading='lazy'
+										/>
+									) : null}
+									<div className='p-4'>
 									<div className='flex flex-wrap items-start justify-between gap-3'>
 										<div>
 											<p className='break-words text-lg font-black text-slate-900'>
@@ -496,6 +605,7 @@ export function DashboardView({
 											</span>
 										)}
 									</div>
+									</div>
 								</div>
 							))
 						) : (
@@ -520,20 +630,47 @@ export function DashboardView({
 
 						<div className='mt-5 rounded-[26px] bg-slate-50 p-5'>
 							{data.parent_link_code?.active ? (
-								<p className='text-sm text-slate-700'>
-									Семейный код для родителя действует до{' '}
-									<span className='font-semibold text-slate-900'>
-										{data.parent_link_code.expires_at ? (
-											<UserLocalTime
-												iso={data.parent_link_code.expires_at}
-												variant='parentExpiry'
-											/>
-										) : (
-											'—'
-										)}
-									</span>
-									. Код виден только в момент создания — при необходимости создайте новый.
-								</p>
+								<div className='space-y-3 text-sm text-slate-700'>
+									<p>
+										Семейный код для родителя действует до{' '}
+										<span className='font-semibold text-slate-900'>
+											{data.parent_link_code.expires_at ? (
+												<UserLocalTime
+													iso={data.parent_link_code.expires_at}
+													variant='parentExpiry'
+												/>
+											) : (
+												'—'
+											)}
+										</span>
+										. Пока срок не истёк и код не введён родителем, вы можете
+										скопировать его здесь; при необходимости создайте новый —
+										старый перестанет действовать.
+									</p>
+									{revealedParentLinkCode ? (
+										<div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+											<p
+												className='select-all font-mono text-base font-bold tracking-wide text-slate-900'
+												translate='no'
+											>
+												{formatParentLinkCodeForDisplay(revealedParentLinkCode.code)}
+											</p>
+											<button
+												type='button'
+												onClick={() => void copyRevealedParentLinkCode()}
+												className='rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50'
+											>
+												Скопировать код
+											</button>
+										</div>
+									) : (
+										<p className='text-sm text-slate-600'>
+											Текущий код был создан раньше в этом браузере без сохранения
+											или на другом устройстве. Нажмите «Создать или обновить код»,
+											чтобы получить новый и увидеть его здесь.
+										</p>
+									)}
+								</div>
 							) : (
 								<p className='text-sm text-slate-500'>Семейный код ещё не создавался.</p>
 							)}

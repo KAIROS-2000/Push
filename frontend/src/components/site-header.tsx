@@ -186,6 +186,7 @@ export function SiteHeader() {
 			{ href: '/dashboard', label: 'Кабинет' },
 			{ href: '/messages', label: 'Сообщения' },
 			{ href: '/roadmap', label: 'Уроки' },
+			{ href: '/useful', label: 'Полезное' },
 			{ href: '/leaderboard', label: 'Рейтинг' },
 			{ href: '/tournament', label: 'Турнир' },
 			{ href: '/profile', label: 'Профиль' },
@@ -208,6 +209,7 @@ export function SiteHeader() {
 				{ href: '/admin/messages', label: 'Сообщения' },
 				{ href: '/admin/logs', label: 'Логи' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/useful', label: 'Полезное' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
@@ -217,6 +219,7 @@ export function SiteHeader() {
 				{ href: '/superadmin/messages', label: 'Сообщения' },
 				{ href: '/superadmin/logs', label: 'Логи' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/useful', label: 'Полезное' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
@@ -226,6 +229,7 @@ export function SiteHeader() {
 				{ href: '/teacher', label: 'Учитель' },
 				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/useful', label: 'Полезное' },
 				{ href: '/leaderboard', label: 'Рейтинг' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
@@ -236,6 +240,7 @@ export function SiteHeader() {
 			return [
 				{ href: '/parent/dashboard', label: 'Семейный кабинет' },
 				{ href: '/roadmap', label: 'Уроки' },
+				{ href: '/useful', label: 'Полезное' },
 				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },

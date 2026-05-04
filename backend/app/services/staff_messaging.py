@@ -43,7 +43,7 @@ def _user_payload(u: User | None) -> dict | None:
         return None
     return {
         "id": u.id,
-        "username": u.username,
+        "email": u.email,
         "full_name": u.full_name,
         "role": u.role.value,
     }
@@ -206,7 +206,7 @@ def _directory_listings(current: User) -> dict:
             User.teacher_approval_status == TEACHER_APPROVAL_APPROVED,
             User.id != current.id,
         )
-        .order_by(User.full_name.asc(), User.username.asc(), User.id.asc())
+        .order_by(User.full_name.asc(), User.email.asc(), User.id.asc())
         .limit(DIRECTORY_USER_LIMIT)
         .all()
     )
@@ -216,7 +216,7 @@ def _directory_listings(current: User) -> dict:
             User.is_active.is_(True),
             User.id != current.id,
         )
-        .order_by(User.full_name.asc(), User.username.asc(), User.id.asc())
+        .order_by(User.full_name.asc(), User.email.asc(), User.id.asc())
         .limit(DIRECTORY_USER_LIMIT)
         .all()
     )
@@ -237,9 +237,9 @@ def search_users_by_login(current: User, q: str) -> list[User]:
         User.query.filter(
             User.is_active.is_(True),
             User.id != current.id,
-            User.username.ilike(like),
+            User.email.ilike(like),
         )
-        .order_by(User.username.asc(), User.id.asc())
+        .order_by(User.email.asc(), User.id.asc())
         .limit(SEARCH_RESULTS_LIMIT)
         .all()
     )

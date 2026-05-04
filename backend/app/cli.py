@@ -59,3 +59,13 @@ def register_commands(app: Flask) -> None:
 
         result = run_audit_log_export()
         click.echo(str(result))
+
+    @app.cli.command("backfill-assignment-images")
+    @with_appcontext
+    def backfill_assignment_images_command() -> None:
+        from .core.db import db
+        from .services.assignment_images import backfill_assignment_placeholders
+
+        attached = backfill_assignment_placeholders()
+        db.session.commit()
+        click.echo(f"Assignment placeholders attached: {attached}.")

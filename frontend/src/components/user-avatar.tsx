@@ -5,7 +5,7 @@ import { PUBLIC_API_URL } from '@/lib/public-env'
 
 interface Props {
   avatarId: string | null | undefined
-  frameId: string | null | undefined
+  frameId?: string | null | undefined
   size?: number
   className?: string
 }

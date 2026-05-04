@@ -1,7 +1,12 @@
 'use client'
 
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
-import { api, getApiErrorMessage } from '@/lib/api'
+import {
+	ApiError,
+	api,
+	getApiErrorMessage,
+	resendVerification,
+} from '@/lib/api'
 import { queueMascotScenario } from '@/lib/mascot'
 import { setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
@@ -14,8 +19,6 @@ import { FormEvent, useMemo, useRef, useState } from 'react'
 
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
 const PASSWORD_WHITESPACE_RE = /\s/
-const USERNAME_MIN_LENGTH = 5
-const USERNAME_MAX_LENGTH = 10
 
 function strengthLabel(password: string) {
 	if (password.length < 10) return 'Слабый'
@@ -54,9 +57,15 @@ export function AuthForm({
 	const [showPassword, setShowPassword] = useState(false)
 	const [loading, setLoading] = useState(false)
 	const [notice, setNotice] = useState<string | null>(null)
+	const [postRegisterEmail, setPostRegisterEmail] = useState<string | null>(null)
+	const [postRegisterRole, setPostRegisterRole] = useState<UserItem['role'] | null>(null)
+	const [resending, setResending] = useState(false)
+	// Surfaced when the login response says email_not_verified — gives the
+	// user a clear explanation + a "send link again" button right next to
+	// the form they just submitted.
+	const [unverifiedLoginEmail, setUnverifiedLoginEmail] = useState<string | null>(null)
 	const [form, setForm] = useState({
 		full_name: '',
-		username: '',
 		email: '',
 		phone: '',
 		password: '',
@@ -74,67 +83,49 @@ export function AuthForm({
 	async function handleSubmit(event: FormEvent) {
 		event.preventDefault()
 		const normalizedCredential = form.email.trim().toLowerCase()
-		const normalizedUsername = form.username.trim()
 		const normalizedRegPhone = normalizeRuPhoneInput(form.phone)
-		if (mode === 'register' && !normalizedUsername) {
-			showErrorToast('Укажите username.')
-			return
-		}
+
+		setUnverifiedLoginEmail(null)
+
 		if (mode === 'register' && !isValidEmail(normalizedCredential)) {
 			showErrorToast('Укажите корректный email.')
 			return
 		}
-		if (
-			mode === 'register'
-			&& normalizedUsername.length < USERNAME_MIN_LENGTH
-		) {
-			showErrorToast(
-				`Логин должен содержать не менее ${USERNAME_MIN_LENGTH} символов.`,
-			)
-			return
-		}
-		if (
-			mode === 'register'
-			&& normalizedUsername.length > USERNAME_MAX_LENGTH
-		) {
-			showErrorToast(
-				`Логин должен содержать не более ${USERNAME_MAX_LENGTH} символов.`,
-			)
-			return
-		}
-		if (mode === 'register' && !form.password) {
-			showErrorToast('Укажите пароль.')
-			return
-		}
-		if (mode === 'register' && form.password.length < 10) {
-			showErrorToast('Пароль должен содержать не менее 10 символов.')
-			return
-		}
-		if (mode === 'register' && hasPasswordWhitespace(form.password)) {
-			showErrorToast('Пароль не должен содержать пробелы.')
-			return
-		}
-		if (
-			mode === 'register'
-			&& !isTeacherRegistration
-			&& !isParentRegistration
-			&& !form.age_group
-		) {
-			showErrorToast('Выберите возрастную группу ученика.')
-			return
-		}
-		if (mode === 'register' && !form.phone.trim()) {
-			showErrorToast('Укажите номер телефона.')
-			return
-		}
-		if (mode === 'register' && !isValidRuPhone(normalizedRegPhone)) {
-			showErrorToast(
-				'Укажите корректный российский номер телефона (например +7 912 345-67-89).',
-			)
-			return
+
+		// Parent self-signup is intentionally email-only: backend generates a
+		// password and sends it by email together with the verification link.
+		// Phone, name and email confirmation are required only at the
+		// "attach a child" step inside the cabinet.
+		if (mode === 'register' && !isParentRegistration) {
+			if (!form.password) {
+				showErrorToast('Укажите пароль.')
+				return
+			}
+			if (form.password.length < 10) {
+				showErrorToast('Пароль должен содержать не менее 10 символов.')
+				return
+			}
+			if (hasPasswordWhitespace(form.password)) {
+				showErrorToast('Пароль не должен содержать пробелы.')
+				return
+			}
+			if (!isTeacherRegistration && !form.age_group) {
+				showErrorToast('Выберите возрастную группу ученика.')
+				return
+			}
+			if (!form.phone.trim()) {
+				showErrorToast('Укажите номер телефона.')
+				return
+			}
+			if (!isValidRuPhone(normalizedRegPhone)) {
+				showErrorToast(
+					'Укажите корректный российский номер телефона (например +7 912 345-67-89).',
+				)
+				return
+			}
 		}
 		if (mode === 'login' && !normalizedCredential) {
-			showErrorToast('Укажите email или username.')
+			showErrorToast('Укажите email.')
 			return
 		}
 
@@ -145,33 +136,39 @@ export function AuthForm({
 			const payload =
 				mode === 'login'
 					? { login: normalizedCredential, password: form.password }
-					: {
-							full_name: form.full_name,
-							username: normalizedUsername,
-							email: normalizedCredential,
-							phone: normalizedRegPhone!,
-							password: form.password,
-							role: form.role,
-							theme: form.theme,
-							...(
-								isTeacherRegistration || isParentRegistration
-									? {}
-									: { age_group: form.age_group }
-							),
-						}
+					: isParentRegistration
+						? {
+								email: normalizedCredential,
+								role: 'parent',
+								theme: form.theme,
+							}
+						: {
+								full_name: form.full_name,
+								email: normalizedCredential,
+								phone: normalizedRegPhone!,
+								password: form.password,
+								role: form.role,
+								theme: form.theme,
+								...(isTeacherRegistration ? {} : { age_group: form.age_group }),
+							}
 
 			const result = await api<{
 				user?: UserItem
 				status?: 'pending'
 				message?: string
+				verification_email_sent?: boolean
+				requires_email_verification?: boolean
+				requires_login_after_verification?: boolean
 			}>('/auth/' + mode, {
 				method: 'POST',
 				body: JSON.stringify(payload),
 			})
 			if (mode === 'register' && result.status === 'pending') {
+				setPostRegisterEmail(normalizedCredential)
+				setPostRegisterRole('teacher')
 				setNotice(
 					result.message
-						|| 'Заявка учителя отправлена администратору. Войти можно будет после подтверждения.',
+						|| 'Заявка учителя отправлена администратору. Подтвердите email по ссылке из письма — без этого войти не получится даже после одобрения.',
 				)
 				setForm({ ...form, password: '' })
 				return
@@ -179,11 +176,37 @@ export function AuthForm({
 			if (!result.user) {
 				throw new Error('Сервер не вернул данные пользователя.')
 			}
+
+			if (mode === 'register') {
+				const isStudent = result.user.role === 'student'
+				const isParent = result.user.role === 'parent'
+				if (isParent) {
+					// Parent: backend creates a session immediately. We still park
+					// them on the cabinet entry, but the welcome card from
+					// parent-cabinet-page will prompt them to fill profile & verify.
+					setAuthenticatedSession(result.user)
+					setTheme(result.user?.theme || form.theme)
+					window.location.href = '/parent/dashboard'
+					return
+				}
+				// Student: backend deliberately does NOT create a session — the
+				// user must verify their email before we let them in. Show a
+				// "check your inbox" screen with a resend button.
+				if (isStudent) {
+					queueMascotScenario('post_register_intro')
+				}
+				setPostRegisterEmail(result.user.email)
+				setPostRegisterRole(result.user.role)
+				setNotice(
+					result.verification_email_sent === false
+						? 'Регистрация прошла, но письмо подтверждения не было отправлено. Запросите его повторно ниже.'
+						: 'Мы отправили письмо для подтверждения email. Откройте его и нажмите кнопку — после этого вы сможете войти в кабинет.',
+				)
+				setForm({ ...form, password: '' })
+				return
+			}
 			setAuthenticatedSession(result.user)
 			setTheme(result.user?.theme || form.theme)
-			if (mode === 'register' && result.user?.role === 'student') {
-				queueMascotScenario('post_register_intro')
-			}
 			const r = result.user?.role
 			if (r === 'parent') {
 				window.location.href = '/parent/dashboard'
@@ -197,11 +220,40 @@ export function AuthForm({
 				window.location.href = '/dashboard'
 			}
 		} catch (e) {
+			if (mode === 'login' && e instanceof ApiError) {
+				const code = (e.payload && typeof e.payload === 'object'
+					? (e.payload as Record<string, unknown>).code
+					: undefined) as string | undefined
+				if (code === 'email_not_verified') {
+					// Inline panel below the form replaces the toast — keeps the
+					// "send letter again" CTA right next to the user's eyes.
+					setUnverifiedLoginEmail(normalizedCredential)
+					return
+				}
+			}
 			showErrorToast(
 				getApiErrorMessage(e, 'Не удалось выполнить действие.'),
 			)
 		} finally {
 			setLoading(false)
+		}
+	}
+
+	async function handleLoginResendVerification() {
+		if (!unverifiedLoginEmail) return
+		setResending(true)
+		try {
+			await resendVerification({ email: unverifiedLoginEmail })
+			setNotice('Если аккаунт существует, мы отправили письмо подтверждения повторно. Проверьте почту.')
+		} catch (resendError) {
+			showErrorToast(
+				getApiErrorMessage(
+					resendError,
+					'Не удалось отправить письмо повторно. Попробуйте позже.',
+				),
+			)
+		} finally {
+			setResending(false)
 		}
 	}
 
@@ -323,7 +375,7 @@ export function AuthForm({
 							</h2>
 							<p className='auth-form-intro mt-3 text-sm leading-7 text-slate-600'>
 								{mode === 'login'
-									? 'Введите email или username и продолжайте с того места, где остановились.'
+									? 'Введите email и продолжайте с того места, где остановились.'
 									: isTeacherRegistration
 										? 'Заполните профиль учителя. После отправки администратор подтвердит доступ к кабинету.'
 										: isParentRegistration
@@ -345,54 +397,124 @@ export function AuthForm({
 						</div>
 					) : null}
 
-					<form className='mt-8 space-y-5' noValidate onSubmit={handleSubmit}>
-						{mode === 'register' && (
-							<div className='grid gap-5 md:grid-cols-2'>
-								<label className='space-y-2'>
-									<span className='auth-label text-sm font-semibold text-slate-700'>
-										Имя
-									</span>
-									<input
-										className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
-										autoComplete='name'
-										value={form.full_name}
-										onChange={e =>
-											setForm({ ...form, full_name: e.target.value })
-										}
-									/>
-								</label>
-								<label className='space-y-2'>
-									<span className='auth-label text-sm font-semibold text-slate-700'>
-										Username
-									</span>
-									<input
-										className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
-										autoComplete='username'
-										minLength={USERNAME_MIN_LENGTH}
-										maxLength={USERNAME_MAX_LENGTH}
-										value={form.username}
-										onChange={e =>
-											setForm({
-												...form,
-												username: e.target.value.slice(0, USERNAME_MAX_LENGTH),
-											})
-										}
-									/>
-								</label>
+					{unverifiedLoginEmail ? (
+						<div className='mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-slate-700'>
+							<p className='font-semibold text-slate-900'>Email не подтверждён</p>
+							<p className='mt-1'>
+								Мы отправили письмо для подтверждения на{' '}
+								<span className='font-semibold'>{unverifiedLoginEmail}</span>.
+								Откройте письмо и нажмите кнопку «Подтвердить email» — после
+								этого можно будет войти.
+							</p>
+							<div className='mt-4 flex flex-wrap gap-2'>
+								<button
+									type='button'
+									className='brand-button-secondary'
+									disabled={resending}
+									onClick={handleLoginResendVerification}
+								>
+									{resending ? 'Отправляем…' : 'Отправить письмо повторно'}
+								</button>
 							</div>
+						</div>
+					) : null}
+
+					{postRegisterEmail ? (
+						<div className='mt-6 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4 text-sm leading-6 text-slate-700'>
+							<p className='font-semibold text-slate-900'>Проверьте почту</p>
+							<p className='mt-1'>
+								{postRegisterRole === 'parent' ? (
+									<>
+										Мы отправили на{' '}
+										<span className='font-semibold'>{postRegisterEmail}</span>{' '}
+										временный пароль и ссылку для подтверждения email. Сейчас
+										вы уже вошли в кабинет — но чтобы привязать ребёнка,
+										нужно подтвердить почту, заполнить имя и телефон.
+									</>
+								) : (
+									<>
+										Мы отправили письмо на{' '}
+										<span className='font-semibold'>{postRegisterEmail}</span>.
+										Откройте его, нажмите «Подтвердить email» — и сможете
+										войти в кабинет.
+									</>
+								)}
+							</p>
+							<div className='mt-4 flex flex-wrap gap-2'>
+								<button
+									type='button'
+									className='brand-button-secondary'
+									disabled={resending}
+									onClick={async () => {
+										setResending(true)
+										try {
+											await resendVerification(
+												postRegisterRole === 'parent'
+													? undefined
+													: { email: postRegisterEmail },
+											)
+											setNotice('Письмо отправлено повторно. Проверьте папку «Спам».')
+										} catch (resendError) {
+											showErrorToast(
+												getApiErrorMessage(
+													resendError,
+													'Не удалось отправить письмо повторно. Попробуйте позже.',
+												),
+											)
+										} finally {
+											setResending(false)
+										}
+									}}
+								>
+									{resending ? 'Отправляем…' : 'Отправить письмо повторно'}
+								</button>
+								{postRegisterRole === 'parent' ? (
+									<Link
+										href='/parent/dashboard'
+										className='brand-button-ghost'
+									>
+										Перейти в кабинет
+									</Link>
+								) : (
+									<Link
+										href='/auth/login'
+										className='brand-button-ghost'
+									>
+										На страницу входа
+									</Link>
+								)}
+							</div>
+						</div>
+					) : null}
+
+					<form className='mt-8 space-y-5' noValidate onSubmit={handleSubmit}>
+						{mode === 'register' && !isParentRegistration && (
+							<label className='block space-y-2'>
+								<span className='auth-label text-sm font-semibold text-slate-700'>
+									Имя
+								</span>
+								<input
+									className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
+									autoComplete='name'
+									value={form.full_name}
+									onChange={e =>
+										setForm({ ...form, full_name: e.target.value })
+									}
+								/>
+							</label>
 						)}
 
 						<div className='grid gap-5 md:grid-cols-2'>
 							<label className='space-y-2'>
 								<span className='auth-label text-sm font-semibold text-slate-700'>
-									{mode === 'login' ? 'Почта или Логин' : 'Почта'}
+									Почта
 								</span>
 								<input
 									type={mode === 'login' ? 'text' : 'email'}
-									autoComplete={mode === 'login' ? 'username' : 'email'}
+									autoComplete={mode === 'login' ? 'email' : 'email'}
 									placeholder={
 										mode === 'login'
-											? 'Введите почту или логин'
+											? 'Введите почту'
 											: 'name@example.com'
 									}
 									className='auth-control w-full rounded-2xl border border-slate-200 px-4 py-3'
@@ -401,7 +523,7 @@ export function AuthForm({
 								/>
 							</label>
 
-							{mode === 'register' && (
+							{mode === 'register' && !isParentRegistration && (
 								<label className='space-y-2'>
 									<span className='auth-label text-sm font-semibold text-slate-700'>
 										Телефон
@@ -446,43 +568,65 @@ export function AuthForm({
 							)}
 						</div>
 
-						<label className='space-y-2'>
-							<span className='auth-label text-sm font-semibold text-slate-700'>
-								Пароль
-							</span>
-							<div className='auth-password-shell flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3'>
-								<input
-									className='auth-password-input w-full bg-transparent'
-									type={showPassword ? 'text' : 'password'}
-									autoComplete={
-										mode === 'login' ? 'current-password' : 'new-password'
-									}
-									value={form.password}
-									onChange={e => setForm({ ...form, password: e.target.value })}
-								/>
-								<button
-									type='button'
-									className='auth-password-toggle shrink-0 text-sm font-semibold text-sky-700'
-									onClick={() => setShowPassword(item => !item)}
-								>
-									{showPassword ? 'Скрыть' : 'Показать'}
-								</button>
+						{isParentRegistration ? (
+							<div className='rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-slate-700'>
+								<p className='font-semibold text-slate-900'>Только email</p>
+								<p className='mt-1'>
+									Для семейного кабинета достаточно почты. Мы пришлём временный
+									пароль и ссылку для подтверждения email одним письмом.
+									Имя и телефон вы заполните позже — они нужны только для
+									привязки ребёнка.
+								</p>
 							</div>
-							{mode === 'register' && (
-								<div className='auth-helper grid gap-1 text-sm text-slate-500'>
-									<p>
-										Надёжность пароля:{' '}
-										<span className='font-semibold text-slate-900'>
-											{strength}
-										</span>
-									</p>
-									<p>
-										Минимум 10 символов: строчные и заглавные буквы, цифра,
-										спецсимвол, без пробелов.
-									</p>
+						) : (
+							<label className='space-y-2'>
+								<span className='auth-label text-sm font-semibold text-slate-700'>
+									Пароль
+								</span>
+								<div className='auth-password-shell flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3'>
+									<input
+										className='auth-password-input w-full bg-transparent'
+										type={showPassword ? 'text' : 'password'}
+										autoComplete={
+											mode === 'login' ? 'current-password' : 'new-password'
+										}
+										value={form.password}
+										onChange={e => setForm({ ...form, password: e.target.value })}
+									/>
+									<button
+										type='button'
+										className='auth-password-toggle shrink-0 text-sm font-semibold text-sky-700'
+										onClick={() => setShowPassword(item => !item)}
+									>
+										{showPassword ? 'Скрыть' : 'Показать'}
+									</button>
 								</div>
-							)}
-						</label>
+								{mode === 'register' && (
+									<div className='auth-helper grid gap-1 text-sm text-slate-500'>
+										<p>
+											Надёжность пароля:{' '}
+											<span className='font-semibold text-slate-900'>
+												{strength}
+											</span>
+										</p>
+										<p>
+											Минимум 10 символов: строчные и заглавные буквы, цифра,
+											спецсимвол, без пробелов.
+										</p>
+									</div>
+								)}
+								{mode === 'login' && (
+									<div className='flex justify-end'>
+										<Link
+											href='/forgot-password'
+											className='text-sm font-semibold text-sky-700 hover:underline'
+										>
+											Забыли пароль?
+										</Link>
+									</div>
+								)}
+							</label>
+						)}
 
 						{mode === 'register' && !isTeacherRegistration && !isParentRegistration && (
 							<label className='space-y-2'>
@@ -521,7 +665,9 @@ export function AuthForm({
 									? 'Войти в кабинет'
 									: isTeacherRegistration
 										? 'Отправить заявку'
-										: 'Создать аккаунт'}
+										: isParentRegistration
+											? 'Создать семейный кабинет'
+											: 'Создать аккаунт'}
 						</button>
 					</form>
 				</section>

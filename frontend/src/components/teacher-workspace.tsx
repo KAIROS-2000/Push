@@ -556,7 +556,6 @@ async function copyToClipboard(value: string) {
 function getJoinRequestStudentName(request: ClassJoinRequestItem) {
 	return (
 		request.student_full_name ||
-		request.student_username ||
 		`Ученик #${request.student_id}`
 	)
 }
@@ -1461,7 +1460,6 @@ export function TeacherWorkspace({
 													{getJoinRequestStudentName(joinRequest)}
 												</p>
 												<p className='mt-1 text-sm text-slate-500'>
-													@{joinRequest.student_username || 'student'} ·{' '}
 													{joinRequest.classroom_name || 'класс без названия'}
 												</p>
 												<p className='mt-1 text-xs font-semibold text-slate-500'>
@@ -1545,7 +1543,7 @@ export function TeacherWorkspace({
 													{student.full_name}
 												</p>
 												<p className='text-sm text-slate-500'>
-													@{student.username}
+													{student.email}
 												</p>
 											</div>
 											<span className='rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700'>
@@ -2121,7 +2119,7 @@ export function TeacherWorkspace({
 										<div className='flex flex-wrap items-start justify-between gap-3'>
 											<div>
 												<p className='text-lg font-black text-slate-900'>
-													@{submission.student_username}
+													{submission.student_full_name || `Ученик #${submission.student_id}`}
 												</p>
 												<p className='text-sm text-slate-500'>
 													<UserLocalTime iso={submission.submitted_at} variant='submission' />

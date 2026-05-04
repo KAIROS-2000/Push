@@ -99,7 +99,6 @@ function normalizeParentMessagingThreads(payload: {
 
 interface TeacherChatRow {
 	id: number
-	username: string | null
 	fullName: string
 	conversationId: number | null
 	unread: number
@@ -159,7 +158,6 @@ function summaryStudentName(student: MessagingSummaryStudent) {
 	return (
 		student.student_name ??
 		student.full_name ??
-		student.username ??
 		'Ученик'
 	)
 }
@@ -208,7 +206,6 @@ function buildTeacherGroups(
 					)
 					return {
 						id: studentId,
-						username: student.username ?? null,
 						fullName: summaryStudentName(student),
 						conversationId:
 							student.conversation_id ?? conversation?.conversation_id ?? null,
@@ -277,7 +274,7 @@ function buildStudentChats(
 				teacherId: group.teacher?.id ?? conversation?.teacher_id ?? null,
 				teacherName:
 					group.teacher?.full_name ??
-					group.teacher?.username ??
+					group.teacher?.email ??
 					conversation?.teacher_name ??
 					'Учитель',
 				unread: group.unread_count ?? conversation?.unread_count ?? 0,
@@ -809,11 +806,6 @@ export function MessagesPageView({
 														</p>
 														<RolePill role='student' />
 													</div>
-													{student.username ? (
-														<p className='text-sm text-slate-500'>
-															@{student.username}
-														</p>
-													) : null}
 													<p className='mt-1 text-xs font-semibold text-slate-500'>
 														<UserLocalTime
 															iso={student.latestAt}
@@ -1236,11 +1228,11 @@ export function MessagesPageView({
 												<div className='min-w-0'>
 													<div className='flex flex-wrap items-center gap-2'>
 														<p className='font-semibold text-slate-900'>
-															{row.other.full_name || row.other.username}
+															{row.other.full_name || row.other.email}
 														</p>
 														<RolePill role={row.other.role as UserRole} />
 													</div>
-													<p className='text-xs text-slate-500'>@{row.other.username}</p>
+													<p className='text-xs text-slate-500'>{row.other.email}</p>
 												</div>
 												{row.unread_count > 0 ? (
 													<span className='messaging-unread-badge'>{row.unread_count}</span>

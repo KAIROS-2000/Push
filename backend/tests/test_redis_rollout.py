@@ -95,7 +95,7 @@ class LeaderboardRedisCacheTests(unittest.TestCase):
         )
 
         rows = [
-            {'id': 1, 'position': 1, 'username': 'u', 'full_name': 'U', 'xp': 10, 'level': 1, 'age_group': 'middle'}
+            {'id': 1, 'position': 1, 'full_name': 'U', 'xp': 10, 'level': 1, 'age_group': 'middle'}
         ]
         _write_leaderboard_to_cache(GLOBAL_LEADERBOARD_CACHE_KEY_ALL, rows)
         got = _read_leaderboard_from_cache(GLOBAL_LEADERBOARD_CACHE_KEY_ALL)

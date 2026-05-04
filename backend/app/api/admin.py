@@ -44,7 +44,6 @@ from ..models.user import (
     SiteActivityLog,
     User,
     UserRole,
-    USERNAME_MAX_LENGTH,
 )
 from ..seed.bootstrap import generate_code
 from ..services.teacher_approval_service import cleanup_expired_teacher_requests, teacher_rejection_expiration
@@ -158,7 +157,7 @@ def _serialize_admin_user(user: User) -> dict:
 
 
 def _list_users_for_roles(role_filters: tuple[UserRole, ...]) -> tuple[list[User], dict, dict]:
-    username_filter = (request.args.get('username') or '').strip().lower()
+    email_filter = (request.args.get('email') or '').strip().lower()
     status_filter = _normalize_status_filter(request.args.get('status'))
     page = _safe_int(request.args.get('page'), 1, minimum=1)
     page_size = _safe_int(
@@ -176,8 +175,8 @@ def _list_users_for_roles(role_filters: tuple[UserRole, ...]) -> tuple[list[User
                 User.teacher_approval_status == TEACHER_APPROVAL_APPROVED,
             )
         )
-    if username_filter:
-        query = query.filter(User.username.ilike(f'%{username_filter}%'))
+    if email_filter:
+        query = query.filter(User.email.ilike(f'%{email_filter}%'))
     if status_filter == 'active':
         query = query.filter(User.is_active.is_(True))
     elif status_filter == 'blocked':
@@ -187,7 +186,7 @@ def _list_users_for_roles(role_filters: tuple[UserRole, ...]) -> tuple[list[User
     total = query.count()
     items = query.offset((page - 1) * page_size).limit(page_size).all()
     return items, _pagination_payload(total, page, page_size), {
-        'username': username_filter,
+        'email': email_filter,
         'status': status_filter,
     }
 
@@ -203,7 +202,7 @@ def _log_admin_action(
 ) -> None:
     payload = details.copy() if isinstance(details, dict) else {}
     payload.setdefault('actor_name', actor.full_name)
-    payload.setdefault('actor_username', actor.username)
+    payload.setdefault('actor_email', actor.email)
     db.session.add(
         AdminAuditLog(
             actor_user_id=actor.id,
@@ -725,7 +724,7 @@ def users(current_user: User):
 def teacher_requests(current_user: User):
     if cleanup_expired_teacher_requests():
         db.session.commit()
-    username_filter = (request.args.get('username') or '').strip().lower()
+    email_filter = (request.args.get('email') or '').strip().lower()
     status_filter = _normalize_teacher_request_filter(request.args.get('status'))
     page = _safe_int(request.args.get('page'), 1, minimum=1)
     page_size = _safe_int(
@@ -736,8 +735,8 @@ def teacher_requests(current_user: User):
     )
 
     query = User.query.filter_by(role=UserRole.TEACHER)
-    if username_filter:
-        query = query.filter(User.username.ilike(f'%{username_filter}%'))
+    if email_filter:
+        query = query.filter(User.email.ilike(f'%{email_filter}%'))
     if status_filter != 'all':
         query = query.filter(User.teacher_approval_status == status_filter)
 
@@ -748,7 +747,7 @@ def teacher_requests(current_user: User):
         'teacher_requests': [_serialize_admin_user(user) for user in items],
         'pagination': _pagination_payload(total, page, page_size),
         'filters': {
-            'username': username_filter,
+            'email': email_filter,
             'status': status_filter,
         },
     }
@@ -779,10 +778,10 @@ def approve_teacher_request(current_user: User, user_id: int):
         action='teacher_request_approved',
         entity_type='teacher_request',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'previous_status': previous_status,
             'next_status': TEACHER_APPROVAL_APPROVED,
@@ -818,10 +817,10 @@ def reject_teacher_request(current_user: User, user_id: int):
         action='teacher_request_rejected',
         entity_type='teacher_request',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'previous_status': previous_status,
             'next_status': TEACHER_APPROVAL_REJECTED,
@@ -838,6 +837,8 @@ def reject_teacher_request(current_user: User, user_id: int):
 @admin_bp.patch('/users/<int:user_id>/block')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def block_user(current_user: User, user_id: int):
+    if user_id == current_user.id:
+        return {'message': 'Нельзя заблокировать самого себя.'}, 400
     user = User.query.get_or_404(user_id)
     error = _ensure_managed_user_target(user)
     if error:
@@ -851,10 +852,10 @@ def block_user(current_user: User, user_id: int):
         action='user_blocked',
         entity_type='user',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'status': 'blocked',
         },
@@ -876,10 +877,10 @@ def unblock_user(current_user: User, user_id: int):
         action='user_unblocked',
         entity_type='user',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'status': 'active',
         },
@@ -891,6 +892,8 @@ def unblock_user(current_user: User, user_id: int):
 @admin_bp.delete('/users/<int:user_id>')
 @auth_required([UserRole.SUPERADMIN])
 def delete_user(current_user: User, user_id: int):
+    if user_id == current_user.id:
+        return {'message': 'Нельзя удалить собственную учётную запись через этот раздел.'}, 400
     user = User.query.get_or_404(user_id)
     error = _ensure_managed_user_target(user)
     if error:
@@ -898,9 +901,8 @@ def delete_user(current_user: User, user_id: int):
 
     target_details = {
         'target_name': user.full_name,
-        'target_username': user.username,
+        'target_email': user.email,
         'target_role': user.role.value,
-        'email': user.email,
         'status': 'deleted',
     }
     revoke_refresh_tokens_for_user(user.id)
@@ -911,7 +913,7 @@ def delete_user(current_user: User, user_id: int):
         action='user_deleted',
         entity_type='user',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={**target_details, **cleanup_details},
     )
     db.session.delete(user)
@@ -1129,14 +1131,10 @@ def create_admin(current_user: User):
     if password_error:
         return {'message': password_error}, 400
 
-    username = (data.get('username') or email.split('@')[0]).strip().lower()
-    if len(username) > USERNAME_MAX_LENGTH:
-        return {'message': f'Логин должен содержать не более {USERNAME_MAX_LENGTH} символов.'}, 400
-    if User.query.filter((User.email == email) | (User.username == username)).first():
+    if User.query.filter_by(email=email).first():
         return {'message': 'Пользователь уже существует'}, 409
     admin = User(
         full_name=data.get('full_name', 'Администратор'),
-        username=username,
         email=email,
         password_hash=hash_password(password),
         role=UserRole.ADMIN,
@@ -1150,12 +1148,11 @@ def create_admin(current_user: User):
         action='admin_created',
         entity_type='admin',
         entity_id=admin.id,
-        entity_label=admin.username,
+        entity_label=admin.email,
         details={
             'target_name': admin.full_name,
-            'target_username': admin.username,
+            'target_email': admin.email,
             'target_role': admin.role.value,
-            'email': admin.email,
             'status': 'active',
         },
     )
@@ -1166,6 +1163,8 @@ def create_admin(current_user: User):
 @admin_bp.patch('/admins/<int:user_id>/block')
 @auth_required([UserRole.SUPERADMIN])
 def block_admin(current_user: User, user_id: int):
+    if user_id == current_user.id:
+        return {'message': 'Нельзя заблокировать самого себя.'}, 400
     user = User.query.get_or_404(user_id)
     error = _ensure_admin_target(user)
     if error:
@@ -1179,10 +1178,10 @@ def block_admin(current_user: User, user_id: int):
         action='admin_blocked',
         entity_type='admin',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'status': 'blocked',
         },
@@ -1204,10 +1203,10 @@ def unblock_admin(current_user: User, user_id: int):
         action='admin_unblocked',
         entity_type='admin',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'status': 'active',
         },
@@ -1219,6 +1218,8 @@ def unblock_admin(current_user: User, user_id: int):
 @admin_bp.delete('/admins/<int:user_id>')
 @auth_required([UserRole.SUPERADMIN])
 def delete_admin(current_user: User, user_id: int):
+    if user_id == current_user.id:
+        return {'message': 'Нельзя удалить собственную учётную запись.'}, 400
     user = User.query.get_or_404(user_id)
     error = _ensure_admin_target(user)
     if error:
@@ -1229,10 +1230,10 @@ def delete_admin(current_user: User, user_id: int):
         action='admin_deleted',
         entity_type='admin',
         entity_id=user.id,
-        entity_label=user.username,
+        entity_label=user.email,
         details={
             'target_name': user.full_name,
-            'target_username': user.username,
+            'target_email': user.email,
             'target_role': user.role.value,
             'email': user.email,
             'status': 'deleted',
@@ -1241,6 +1242,142 @@ def delete_admin(current_user: User, user_id: int):
     db.session.delete(user)
     db.session.commit()
     return {'message': 'Админ удалён'}
+
+
+@admin_bp.get('/assignments-light')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def list_assignments_light(current_user: User):
+    """Lean Assignment list for the media-attach admin screen.
+
+    Excludes description/lesson hydration to keep the payload small even for
+    schools with hundreds of assignments. Use the existing teacher endpoints
+    for full assignment details.
+    """
+    page = _safe_int(request.args.get('page'), 1, minimum=1)
+    page_size = _safe_int(
+        request.args.get('page_size'),
+        DEFAULT_DIRECTORY_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_DIRECTORY_PAGE_SIZE,
+    )
+    query = (
+        Assignment.query.outerjoin(Classroom, Classroom.id == Assignment.classroom_id)
+        .order_by(Assignment.created_at.desc(), Assignment.id.desc())
+    )
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'assignments': [
+            {
+                'id': item.id,
+                'title': item.title,
+                'classroom_name': item.classroom.name if item.classroom else None,
+                'image_id': item.image_id,
+                'image_url': item.image.public_url() if item.image else None,
+            }
+            for item in items
+        ],
+        'pagination': _pagination_payload(total, page, page_size),
+    }
+
+
+@admin_bp.get('/media/images')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def list_media_images(current_user: User):
+    from ..models.media import MEDIA_KIND_ASSIGNMENT_COVER, MediaAsset
+
+    page = _safe_int(request.args.get('page'), 1, minimum=1)
+    page_size = _safe_int(
+        request.args.get('page_size'),
+        DEFAULT_DIRECTORY_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_DIRECTORY_PAGE_SIZE,
+    )
+    query = MediaAsset.query.filter_by(kind=MEDIA_KIND_ASSIGNMENT_COVER).order_by(
+        MediaAsset.created_at.desc(), MediaAsset.id.desc()
+    )
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'images': [item.to_dict() for item in items],
+        'pagination': _pagination_payload(total, page, page_size),
+    }
+
+
+@admin_bp.post('/media/images')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def upload_media_image(current_user: User):
+    """Multipart upload of a single assignment cover image. Re-encodes to WebP server-side."""
+    from ..services.assignment_images import ImageValidationError, MAX_UPLOAD_BYTES, reencode_uploaded_image
+
+    upload = request.files.get('file')
+    if upload is None or not upload.filename:
+        return {'message': 'Файл не передан.'}, 400
+    raw_bytes = upload.read()
+    if len(raw_bytes) > MAX_UPLOAD_BYTES:
+        return {'message': f'Файл больше {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ.'}, 413
+    try:
+        asset = reencode_uploaded_image(raw_bytes, uploaded_by_id=current_user.id)
+    except ImageValidationError as exc:
+        return {'message': str(exc)}, 400
+    _log_admin_action(
+        current_user,
+        action='media_image_uploaded',
+        entity_type='media_asset',
+        entity_id=asset.id,
+        entity_label=asset.sha256,
+        details={
+            'format': asset.format,
+            'byte_size': asset.byte_size,
+            'width': asset.width,
+            'height': asset.height,
+        },
+    )
+    db.session.commit()
+    return {'image': asset.to_dict()}, 201
+
+
+@admin_bp.patch('/assignments/<int:assignment_id>/image')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def attach_assignment_image(current_user: User, assignment_id: int):
+    """Attach an existing MediaAsset to an Assignment, or detach if image_id is null."""
+    from ..models.media import MEDIA_KIND_ASSIGNMENT_COVER, MediaAsset
+
+    assignment = Assignment.query.get_or_404(assignment_id)
+    payload = request.get_json(silent=True) or {}
+    image_id_raw = payload.get('image_id')
+    if image_id_raw in (None, '', 0):
+        previous_image_id = assignment.image_id
+        assignment.image_id = None
+        _log_admin_action(
+            current_user,
+            action='assignment_image_detached',
+            entity_type='assignment',
+            entity_id=assignment.id,
+            entity_label=assignment.title,
+            details={'previous_image_id': previous_image_id},
+        )
+        db.session.commit()
+        return {'assignment': assignment.to_dict()}
+
+    try:
+        image_id = int(image_id_raw)
+    except (TypeError, ValueError):
+        return {'message': 'Некорректный image_id.'}, 400
+    media = MediaAsset.query.get(image_id)
+    if media is None or media.kind != MEDIA_KIND_ASSIGNMENT_COVER:
+        return {'message': 'Изображение не найдено.'}, 404
+    assignment.image_id = media.id
+    _log_admin_action(
+        current_user,
+        action='assignment_image_attached',
+        entity_type='assignment',
+        entity_id=assignment.id,
+        entity_label=assignment.title,
+        details={'image_id': media.id, 'image_sha256': media.sha256},
+    )
+    db.session.commit()
+    return {'assignment': assignment.to_dict()}
 
 
 @admin_bp.get('/audit-log-archives')
@@ -1282,9 +1419,9 @@ def audit_logs(current_user: User):
     action_filter = (request.args.get('action') or '').strip().lower()
     actor_role_filter = (request.args.get('actor_role') or '').strip().lower()
     target_filter = (request.args.get('target') or '').strip().lower()
-    actor_login_filter = (request.args.get('actor_login') or '').strip().lower()
+    actor_login_filter = (request.args.get('actor_email') or request.args.get('actor_login') or '').strip().lower()
     sort_key = (request.args.get('sort') or 'created_at').strip().lower()
-    if sort_key not in {'created_at', 'action', 'username'}:
+    if sort_key not in {'created_at', 'action', 'email'}:
         sort_key = 'created_at'
     order = _normalize_sort_order(request.args.get('order'), default='desc' if sort_key == 'created_at' else 'asc')
     page = _safe_int(request.args.get('page'), 1, minimum=1)
@@ -1303,10 +1440,10 @@ def audit_logs(current_user: User):
     if target_filter:
         query = query.filter(AdminAuditLog.entity_label.ilike(f'%{target_filter}%'))
     if actor_login_filter:
-        query = query.filter(func.coalesce(User.username, '').ilike(f'%{actor_login_filter}%'))
+        query = query.filter(func.coalesce(User.email, '').ilike(f'%{actor_login_filter}%'))
 
-    if sort_key == 'username':
-        sort_col = func.coalesce(User.username, '')
+    if sort_key == 'email':
+        sort_col = func.coalesce(User.email, '')
         primary = sort_col.asc() if order == 'asc' else sort_col.desc()
     elif sort_key == 'action':
         primary = AdminAuditLog.action.asc() if order == 'asc' else AdminAuditLog.action.desc()
@@ -1325,6 +1462,7 @@ def audit_logs(current_user: User):
             'actor_role': actor_role_filter or 'all',
             'target': target_filter,
             'actor_login': actor_login_filter,
+            'actor_email': actor_login_filter,
             'sort': sort_key,
             'order': order,
         },
@@ -1334,14 +1472,14 @@ def audit_logs(current_user: User):
 @admin_bp.get('/site-activity-logs')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def site_activity_logs(current_user: User):
-    username_filter = (request.args.get('username') or '').strip().lower()
+    email_filter = (request.args.get('email') or '').strip().lower()
     method_filter = (request.args.get('method') or '').strip().upper()
     path_filter = (request.args.get('path') or '').strip().lower()
     status_filter_raw = (request.args.get('status') or '').strip()
     role_filter = (request.args.get('role') or '').strip().lower()
     ip_filter = (request.args.get('ip') or '').strip().lower()
     sort_key = (request.args.get('sort') or 'created_at').strip().lower()
-    if sort_key not in {'created_at', 'method', 'path', 'status_code', 'username', 'role', 'client_ip'}:
+    if sort_key not in {'created_at', 'method', 'path', 'status_code', 'email', 'role', 'client_ip'}:
         sort_key = 'created_at'
     order = _normalize_sort_order(request.args.get('order'), default='desc' if sort_key == 'created_at' else 'asc')
     page = _safe_int(request.args.get('page'), 1, minimum=1)
@@ -1353,8 +1491,8 @@ def site_activity_logs(current_user: User):
     )
 
     query = SiteActivityLog.query.outerjoin(User, User.id == SiteActivityLog.user_id)
-    if username_filter:
-        query = query.filter(func.coalesce(User.username, '').ilike(f'%{username_filter}%'))
+    if email_filter:
+        query = query.filter(func.coalesce(User.email, '').ilike(f'%{email_filter}%'))
     if method_filter and method_filter != 'ALL':
         query = query.filter(SiteActivityLog.method == method_filter)
     if path_filter:
@@ -1366,8 +1504,8 @@ def site_activity_logs(current_user: User):
     if ip_filter:
         query = query.filter(SiteActivityLog.client_ip.ilike(f'%{ip_filter}%'))
 
-    if sort_key == 'username':
-        sort_col = func.coalesce(User.username, '')
+    if sort_key == 'email':
+        sort_col = func.coalesce(User.email, '')
         primary = sort_col.asc() if order == 'asc' else sort_col.desc()
     elif sort_key == 'method':
         primary = SiteActivityLog.method.asc() if order == 'asc' else SiteActivityLog.method.desc()
@@ -1385,13 +1523,13 @@ def site_activity_logs(current_user: User):
     id_order = SiteActivityLog.id.asc() if order == 'asc' else SiteActivityLog.id.desc()
     query = query.order_by(primary, id_order)
     total = query.count()
-    rows = query.with_entities(SiteActivityLog, User.username).offset((page - 1) * page_size).limit(page_size).all()
-    out = [log.to_dict(username=uname) for log, uname in rows]
+    rows = query.with_entities(SiteActivityLog, User.email).offset((page - 1) * page_size).limit(page_size).all()
+    out = [log.to_dict(user_email=uemail) for log, uemail in rows]
     return {
         'site_activity_logs': out,
         'pagination': _pagination_payload(total, page, page_size),
         'filters': {
-            'username': username_filter,
+            'email': email_filter,
             'method': method_filter or 'ALL',
             'path': path_filter,
             'status': status_filter_raw,

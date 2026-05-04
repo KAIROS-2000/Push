@@ -1,5 +1,24 @@
-from .user import AdminAuditLog, RefreshToken, SecurityThrottle, SiteActivityLog, User, UserRole
+from .user import (
+    AdminAuditLog,
+    EMAIL_TOKEN_PURPOSE_PASSWORD_RESET,
+    EMAIL_TOKEN_PURPOSE_VERIFICATION,
+    EMAIL_TOKEN_PURPOSES,
+    EmailToken,
+    RefreshToken,
+    SecurityThrottle,
+    SiteActivityLog,
+    User,
+    UserRole,
+)
 from .cosmetics import UserOwnedCosmetic
+from .media import MediaAsset, MEDIA_KIND_ASSIGNMENT_COVER
+from .useful import (
+    UsefulTask,
+    VALID_USEFUL_AGE_GROUPS,
+    VALID_USEFUL_DIFFICULTIES,
+    normalize_age_groups,
+    normalize_useful_difficulty,
+)
 from .messaging import Conversation, ConversationReadState, Message
 from .staff_messaging import StaffDirectMessage, StaffDirectReadState, StaffDirectThread
 from .learning import (
@@ -33,9 +52,20 @@ __all__ = [
     'SiteActivityLog',
     'RefreshToken',
     'SecurityThrottle',
+    'EmailToken',
+    'EMAIL_TOKEN_PURPOSE_VERIFICATION',
+    'EMAIL_TOKEN_PURPOSE_PASSWORD_RESET',
+    'EMAIL_TOKEN_PURPOSES',
     'User',
     'UserRole',
     'UserOwnedCosmetic',
+    'MediaAsset',
+    'MEDIA_KIND_ASSIGNMENT_COVER',
+    'UsefulTask',
+    'VALID_USEFUL_AGE_GROUPS',
+    'VALID_USEFUL_DIFFICULTIES',
+    'normalize_age_groups',
+    'normalize_useful_difficulty',
     'Conversation',
     'ConversationReadState',
     'Message',

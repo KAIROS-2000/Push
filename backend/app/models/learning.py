@@ -675,10 +675,10 @@ class ClassJoinRequest(db.Model):
 
     def to_dict(self) -> dict:
         student_name = None
-        student_username = None
+        student_email = None
         if self.student:
             student_name = self.student.full_name
-            student_username = self.student.username
+            student_email = self.student.email
 
         return {
             "id": self.id,
@@ -687,7 +687,7 @@ class ClassJoinRequest(db.Model):
             "classroom_code": self.classroom.code if self.classroom else None,
             "student_id": self.student_id,
             "student_full_name": student_name,
-            "student_username": student_username,
+            "student_email": student_email,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
@@ -705,6 +705,9 @@ class Assignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     classroom_id = db.Column(db.Integer, db.ForeignKey("classrooms.id"), nullable=False)
     lesson_id = db.Column(db.Integer, db.ForeignKey("lessons.id"), nullable=True)
+    image_id = db.Column(
+        db.Integer, db.ForeignKey("media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title = db.Column(db.String(160), nullable=False)
     description = db.Column(db.Text, nullable=False)
     difficulty = db.Column(db.String(20), nullable=False, default="medium")
@@ -716,6 +719,7 @@ class Assignment(db.Model):
 
     classroom = db.relationship("Classroom", back_populates="assignments")
     lesson = db.relationship("Lesson")
+    image = db.relationship("MediaAsset", foreign_keys=[image_id])
     submissions = db.relationship(
         "AssignmentSubmission",
         back_populates="assignment",
@@ -738,6 +742,8 @@ class Assignment(db.Model):
             "submission_format": metadata["submission_format"],
             "lesson": self.lesson.to_summary_dict() if self.lesson else None,
             "lesson_url": f"/lessons/{self.lesson_id}" if self.lesson_id else None,
+            "image_id": self.image_id,
+            "image_url": self.image.public_url() if self.image else None,
         }
 
 
@@ -780,7 +786,8 @@ class AssignmentSubmission(db.Model):
             "id": self.id,
             "assignment_id": self.assignment_id,
             "student_id": self.student_id,
-            "student_username": self.student.username if self.student else None,
+            "student_full_name": self.student.full_name if self.student else None,
+            "student_email": self.student.email if self.student else None,
             "answer": self.answer,
             "score": self.score,
             "status": self.status,
@@ -789,10 +796,14 @@ class AssignmentSubmission(db.Model):
         }
 
     def to_parent_dict(self) -> dict:
+        cover_url = None
+        if self.assignment and self.assignment.image:
+            cover_url = self.assignment.image.public_url()
         return {
             "id": self.id,
             "assignment_id": self.assignment_id,
             "assignment_title": self.assignment.title if self.assignment else None,
+            "assignment_image_url": cover_url,
             "score": self.score,
             "status": self.status,
             "feedback": self.feedback,

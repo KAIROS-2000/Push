@@ -61,11 +61,11 @@ function AdminNewThreadComposer({
 					<p className='brand-eyebrow'>Новый чат</p>
 					<div className='mt-2 flex flex-wrap items-center gap-2'>
 						<h3 className='text-2xl font-black text-slate-900'>
-							{peer.full_name?.trim() || peer.username}
+							{peer.full_name?.trim() || peer.email}
 						</h3>
 						<RolePill role={peer.role} />
 					</div>
-					<p className='mt-1 text-sm text-slate-500'>@{peer.username}</p>
+					<p className='mt-1 text-sm text-slate-500'>{peer.email}</p>
 				</div>
 			</header>
 			{error ? (
@@ -141,7 +141,7 @@ function DirectoryList({
 									: 'border-slate-200 bg-slate-50 hover:border-slate-300'
 							}`}
 						>
-							<span className='min-w-0 truncate'>{u.full_name || u.username}</span>
+							<span className='min-w-0 truncate'>{u.full_name || u.email}</span>
 							<span className='flex shrink-0 items-center gap-1'>
 								<RolePill role={u.role} />
 								{hasThread ? null : (
@@ -280,7 +280,7 @@ export function AdminMessagesPageView({
 						<p className='brand-eyebrow'>Сообщения</p>
 						<h1 className='mt-2 text-2xl font-black text-slate-900 sm:text-3xl'>Переписка</h1>
 						<p className='mt-1 max-w-2xl text-sm text-slate-600'>
-							Список учителей и роли администрации, а также поиск по логину. Первое сообщение пользователю
+							Список учителей и роли администрации, а также поиск по email. Первое сообщение пользователю
 							добавляет чат в список переписок.
 						</p>
 					</div>
@@ -304,7 +304,7 @@ export function AdminMessagesPageView({
 						<input
 							type='search'
 							className='h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm'
-							placeholder='Поиск по логину (от 2 симв.)'
+							placeholder='Поиск по email (от 2 симв.)'
 							value={search}
 							onChange={e => setSearch(e.target.value)}
 						/>
@@ -334,7 +334,7 @@ export function AdminMessagesPageView({
 											onClick={() => onPickUser(u)}
 										>
 											<span className='min-w-0'>
-												<span className='block font-semibold text-slate-900'>{u.username}</span>
+												<span className='block font-semibold text-slate-900'>{u.email}</span>
 												<span className='text-xs text-slate-500'>{u.full_name}</span>
 											</span>
 											<RolePill role={u.role} />
@@ -383,8 +383,8 @@ export function AdminMessagesPageView({
 											>
 												<div className='flex items-start justify-between gap-2'>
 													<div className='min-w-0'>
-														<p className='font-semibold text-slate-900'>{row.other.full_name || row.other.username}</p>
-														<p className='text-xs text-slate-500'>@{row.other.username}</p>
+														<p className='font-semibold text-slate-900'>{row.other.full_name || row.other.email}</p>
+														<p className='text-xs text-slate-500'>{row.other.email}</p>
 													</div>
 													{row.unread_count > 0 ? (
 														<span className='messaging-unread-badge'>{row.unread_count}</span>
@@ -427,8 +427,8 @@ export function AdminMessagesPageView({
 								<Users size={24} className='text-slate-400' />
 								<h2 className='mt-2 text-2xl font-black text-slate-900'>Выберите адресата</h2>
 								<p className='mt-1 text-sm text-slate-500'>
-									Слева — каталог, поиск по логину и переписки. Ученики и преподаватели в обычном
-									разделе «Сообщения» поиска по логину не используют.
+									Слева — каталог, поиск по email и переписки. Ученики и преподаватели в обычном
+									разделе «Сообщения» этого поиска не используют.
 								</p>
 								<a
 									href={`${basePath}/users`}

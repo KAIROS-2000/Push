@@ -64,8 +64,6 @@ const LazyLessonCodeEditor = dynamic(
 	},
 )
 
-type ViewerRole = 'student' | 'teacher' | 'parent' | 'admin' | 'superadmin'
-
 function OrderQuestion({
 	question,
 	value,
@@ -465,9 +463,6 @@ export function LessonPlayer({
 	const normalizedInitialData = initialData
 		? normalizeLessonPayload(initialData)
 		: null
-	const [currentUserRole, setCurrentUserRole] = useState<ViewerRole | null>(
-		normalizedInitialData?.viewerRole ?? null,
-	)
 	const [lesson, setLesson] = useState<LessonDetail | null>(
 		normalizedInitialData?.lesson ?? null,
 	)
@@ -502,11 +497,6 @@ export function LessonPlayer({
 		),
 	)
 	const isTeacherLesson = Boolean(lesson?.is_custom)
-	const bypassCompletionApi =
-		currentUserRole !== null &&
-		currentUserRole !== 'student' &&
-		currentUserRole !== 'parent'
-
 	useEffect(() => {
 		if (initialData) return
 		setError('')
@@ -514,7 +504,6 @@ export function LessonPlayer({
 		api<LessonPlayerPayload>(`/lessons/${lessonId}`, undefined, 'required')
 			.then(data => {
 				const normalized = normalizeLessonPayload(data)
-				setCurrentUserRole(normalized.viewerRole)
 				setLesson(normalized.lesson)
 				setProgress(normalized.progress)
 				setAnswer('')
@@ -542,11 +531,7 @@ export function LessonPlayer({
 	}, [initialData, lessonId])
 
 	useEffect(() => {
-		if (
-			!lesson ||
-			(currentUserRole !== 'student' && currentUserRole !== 'parent')
-		)
-			return
+		if (!lesson) return
 		if (startedLessonRef.current === lesson.id) return
 		startedLessonRef.current = lesson.id
 
@@ -559,7 +544,7 @@ export function LessonPlayer({
 			.catch(() => {
 				startedLessonRef.current = null
 			})
-	}, [currentUserRole, lesson])
+	}, [lesson])
 
 	const quiz = useMemo<QuizItem | null>(
 		() => lesson?.quizzes?.[0] || null,
@@ -577,7 +562,7 @@ export function LessonPlayer({
 	const lessonNeedsTeacherReview = Boolean(
 		isTeacherLesson && (!task || taskNeedsTeacherReview),
 	)
-	const teacherReviewFlow = lessonNeedsTeacherReview && !bypassCompletionApi
+	const teacherReviewFlow = lessonNeedsTeacherReview
 	const supportsCodePractice = ageGroupSupportsCodePractice(
 		lesson?.module.age_group,
 	)
@@ -674,13 +659,9 @@ export function LessonPlayer({
 			: 'Сохрани прогресс и продолжай'
 	const completionDescription = teacherReviewFlow
 		? 'Мы сохраним текущий прогресс и отправим урок учителю на проверку. После проверки откроется следующий шаг.'
-		: bypassCompletionApi
-			? nextLesson
-				? 'Можно вернуться к урокам или сразу открыть следующий урок модуля.'
-				: 'Можно вернуться к урокам и выбрать следующий шаг.'
-			: nextLesson
-				? 'Сохраним результат урока и дадим выбор: вернуться к урокам или сразу перейти к следующему уроку модуля.'
-				: 'Сохраним результат урока и поможем вернуться к урокам, чтобы выбрать следующий шаг.'
+		: nextLesson
+			? 'Сохраним результат урока и дадим выбор: вернуться к урокам или сразу перейти к следующему уроку модуля.'
+			: 'Сохраним результат урока и поможем вернуться к урокам, чтобы выбрать следующий шаг.'
 	const completionBadgeLabel = completionReady ? '100%' : `${progressPercent}%`
 	const nextActionTitle = savingCompletion
 		? 'Сохраняем...'
@@ -779,7 +760,10 @@ export function LessonPlayer({
 				`/tasks/${task.id}/submit`,
 				{
 					method: 'POST',
-					body: JSON.stringify({ answer, hints_used: completedHints }),
+					body: JSON.stringify({
+						answer,
+						hints_used: completedHints,
+					}),
 				},
 				'required',
 			)
@@ -900,10 +884,6 @@ export function LessonPlayer({
 	}
 
 	async function finishLesson(redirectTo?: string) {
-		if (bypassCompletionApi) {
-			router.push(redirectTo || '/roadmap')
-			return
-		}
 		setSavingCompletion(true)
 		try {
 			const data = await api<{

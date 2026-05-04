@@ -38,6 +38,9 @@ PARENT_LINK_REDEEM_THROTTLE_SCOPE = 'parent_link_redeem'
 REGISTER_THROTTLE_SCOPE = 'register'
 REGISTER_IP_THROTTLE_SCOPE = 'register_ip'
 REFRESH_THROTTLE_SCOPE = 'refresh'
+CLASS_JOIN_THROTTLE_SCOPE = 'class_join'
+PASSWORD_RESET_THROTTLE_SCOPE = 'password_reset'
+RESEND_VERIFICATION_THROTTLE_SCOPE = 'resend_verification'
 SESSION_VERSION_CACHE_TTL_SECONDS = 30
 COMMON_WEAK_PASSWORDS = {
     '123456',
@@ -57,6 +60,41 @@ SAFE_HTTP_METHODS = {'GET', 'HEAD', 'OPTIONS'}
 
 def hash_password(password: str) -> str:
     return generate_password_hash(password)
+
+
+_INITIAL_PASSWORD_LOWER = 'abcdefghjkmnpqrstuvwxyz'  # exclude i/l/o for readability
+_INITIAL_PASSWORD_UPPER = 'ABCDEFGHJKMNPQRSTUVWXYZ'
+_INITIAL_PASSWORD_DIGITS = '23456789'  # exclude 0/1
+_INITIAL_PASSWORD_SPECIALS = '!@#%&*-_=+'
+
+
+def generate_initial_password(length: int = 14) -> str:
+    """Generate a strong, human-typeable initial password.
+
+    Used for parent self-registration where the user supplies only an email
+    and the password is delivered by mail. Guarantees `validate_password()`
+    passes (length, lowercase, uppercase, digit, special, no whitespace).
+    """
+
+    length = max(length, DEFAULT_PASSWORD_MIN_LENGTH + 2)
+    pools = (
+        _INITIAL_PASSWORD_LOWER,
+        _INITIAL_PASSWORD_UPPER,
+        _INITIAL_PASSWORD_DIGITS,
+        _INITIAL_PASSWORD_SPECIALS,
+    )
+    # Seed with one character from each class so policy checks always pass,
+    # then fill the remainder from the union and shuffle.
+    chars = [secrets.choice(pool) for pool in pools]
+    union = ''.join(pools)
+    chars.extend(secrets.choice(union) for _ in range(length - len(chars)))
+    secrets.SystemRandom().shuffle(chars)
+    candidate = ''.join(chars)
+    # Re-roll if we somehow violate the policy (extremely unlikely given the
+    # construction above, but the failure mode is silent so we double-check).
+    if validate_password(candidate) is not None:
+        return generate_initial_password(length + 2)
+    return candidate
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -137,6 +175,24 @@ def _throttle_settings(scope: str) -> tuple[int, int, int]:
             int(current_app.config.get('REFRESH_RATE_LIMIT_WINDOW_SECONDS', 60)),
             int(current_app.config.get('REFRESH_RATE_LIMIT_MAX_FAILURES', 45)),
             int(current_app.config.get('REFRESH_RATE_LIMIT_BLOCK_SECONDS', 300)),
+        )
+    if scope == CLASS_JOIN_THROTTLE_SCOPE:
+        return (
+            int(current_app.config.get('CLASS_JOIN_RATE_LIMIT_WINDOW_SECONDS', 600)),
+            int(current_app.config.get('CLASS_JOIN_RATE_LIMIT_MAX_FAILURES', 12)),
+            int(current_app.config.get('CLASS_JOIN_RATE_LIMIT_BLOCK_SECONDS', 600)),
+        )
+    if scope == PASSWORD_RESET_THROTTLE_SCOPE:
+        return (
+            int(current_app.config.get('PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS', 3600)),
+            int(current_app.config.get('PASSWORD_RESET_RATE_LIMIT_MAX_REQUESTS', 5)),
+            int(current_app.config.get('PASSWORD_RESET_RATE_LIMIT_BLOCK_SECONDS', 3600)),
+        )
+    if scope == RESEND_VERIFICATION_THROTTLE_SCOPE:
+        return (
+            int(current_app.config.get('RESEND_VERIFICATION_RATE_LIMIT_WINDOW_SECONDS', 3600)),
+            int(current_app.config.get('RESEND_VERIFICATION_RATE_LIMIT_MAX_REQUESTS', 5)),
+            int(current_app.config.get('RESEND_VERIFICATION_RATE_LIMIT_BLOCK_SECONDS', 3600)),
         )
     return (900, 10, 900)
 
@@ -327,6 +383,44 @@ def register_refresh_failure(ip_address: str | None = None) -> bool:
 
 def clear_refresh_throttle(ip_address: str | None = None) -> None:
     clear_throttle_failures(REFRESH_THROTTLE_SCOPE, 'token_refresh', ip_address)
+
+
+def password_reset_attempt_allowed(email: str, ip_address: str | None = None) -> bool:
+    subject = (email or '').strip().lower() or 'unknown'
+    return throttle_allowed(PASSWORD_RESET_THROTTLE_SCOPE, subject, ip_address)
+
+
+def register_password_reset_attempt(email: str, ip_address: str | None = None) -> bool:
+    subject = (email or '').strip().lower() or 'unknown'
+    return register_throttle_failure(PASSWORD_RESET_THROTTLE_SCOPE, subject, ip_address)
+
+
+def resend_verification_attempt_allowed(subject: str, ip_address: str | None = None) -> bool:
+    normalized = (subject or '').strip().lower() or 'unknown'
+    return throttle_allowed(RESEND_VERIFICATION_THROTTLE_SCOPE, normalized, ip_address)
+
+
+def register_resend_verification_attempt(subject: str, ip_address: str | None = None) -> bool:
+    normalized = (subject or '').strip().lower() or 'unknown'
+    return register_throttle_failure(RESEND_VERIFICATION_THROTTLE_SCOPE, normalized, ip_address)
+
+
+def class_join_attempt_allowed(user_id: int, ip_address: str | None = None) -> bool:
+    return throttle_allowed(
+        CLASS_JOIN_THROTTLE_SCOPE, f'class_join:{int(user_id)}', ip_address
+    )
+
+
+def register_class_join_failure(user_id: int, ip_address: str | None = None) -> bool:
+    return register_throttle_failure(
+        CLASS_JOIN_THROTTLE_SCOPE, f'class_join:{int(user_id)}', ip_address
+    )
+
+
+def clear_class_join_failures(user_id: int, ip_address: str | None = None) -> None:
+    clear_throttle_failures(
+        CLASS_JOIN_THROTTLE_SCOPE, f'class_join:{int(user_id)}', ip_address
+    )
 
 
 def _session_version_redis_key(user_id: int) -> str:
@@ -688,6 +782,15 @@ def auth_required(roles: list[UserRole] | None = None) -> Callable:
 
             if not user:
                 return {'message': 'Сессия больше недействительна.', 'code': 'session_revoked'}, 401
+            if not user.email_verified:
+                from ..services.email_tokens import delete_unverified_user_if_verification_expired
+
+                if delete_unverified_user_if_verification_expired(user):
+                    db.session.commit()
+                    return {
+                        'message': 'Срок подтверждения email истёк. Аккаунт удалён.',
+                        'code': 'email_verification_expired',
+                    }, 401
             teacher_approval_error = teacher_approval_auth_error(user)
             if teacher_approval_error:
                 return teacher_approval_error

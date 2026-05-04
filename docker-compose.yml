@@ -108,7 +108,9 @@ services:
       JUDGE_RUNNER_PORT: "8090"
       JUDGE_RUNNER_MAX_CONCURRENCY: ${JUDGE_RUNNER_MAX_CONCURRENCY:-4}
       JUDGE_RUNNER_MAX_TEST_CONCURRENCY: ${JUDGE_RUNNER_MAX_TEST_CONCURRENCY:-4}
-      JUDGE_RUNNER_AUTH_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+      # No default: a missing/empty value must fail compose start, not silently boot a
+      # runner that accepts a well-known token. Set in .env (see .env.example).
+      JUDGE_RUNNER_AUTH_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:?JUDGE_RUNNER_AUTH_TOKEN must be set in .env (32+ random chars)}
     expose:
       - "8090"
     # -----------------------------------------------------------------------
@@ -181,7 +183,7 @@ services:
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       FLASK_DEBUG: ${FLASK_DEBUG:-0}
       CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
-      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:?JUDGE_RUNNER_AUTH_TOKEN must be set in .env (32+ random chars)}
       CODE_JUDGE_ALLOW_LOCAL_FALLBACK: "false"
       METRICS_DEBUG: ${METRICS_DEBUG:-0}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -222,7 +224,7 @@ services:
       ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       FLASK_DEBUG: ${FLASK_DEBUG:-0}
       CODE_JUDGE_RUNNER_URL: http://judge-runner:8090/execute
-      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:-local-dev-judge-token-change-me}
+      CODE_JUDGE_RUNNER_TOKEN: ${JUDGE_RUNNER_AUTH_TOKEN:?JUDGE_RUNNER_AUTH_TOKEN must be set in .env (32+ random chars)}
       CODE_JUDGE_ALLOW_LOCAL_FALLBACK: "false"
       METRICS_DEBUG: ${METRICS_DEBUG:-0}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

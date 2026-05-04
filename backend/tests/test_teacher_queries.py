@@ -70,7 +70,6 @@ class TeacherReadPathTests(unittest.TestCase):
         with app.app_context():
             teacher = User(
                 full_name='Teacher Example',
-                username='teacher',
                 email='teacher@example.com',
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,
@@ -78,7 +77,6 @@ class TeacherReadPathTests(unittest.TestCase):
             )
             student = User(
                 full_name='Student Example',
-                username='student',
                 email='student@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -118,7 +116,6 @@ class TeacherReadPathTests(unittest.TestCase):
         with app.app_context():
             teacher = User(
                 full_name='Teacher Example',
-                username='teacher',
                 email='teacher@example.com',
                 password_hash=hash_password('TeacherPass123!'),
                 role=UserRole.TEACHER,
@@ -573,7 +570,6 @@ class TeacherReadPathTests(unittest.TestCase):
         with app.app_context():
             s1 = User(
                 full_name='S One',
-                username='stud1',
                 email='stud1@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,
@@ -581,7 +577,6 @@ class TeacherReadPathTests(unittest.TestCase):
             )
             s2 = User(
                 full_name='S Two',
-                username='stud2',
                 email='stud2@example.com',
                 password_hash=hash_password('StudentPass123!'),
                 role=UserRole.STUDENT,

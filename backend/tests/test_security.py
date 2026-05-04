@@ -85,7 +85,6 @@ class SecurityRegressionTests(unittest.TestCase):
         with app.app_context():
             user = User(
                 full_name='Test Student',
-                username=email.split('@')[0],
                 email=email,
                 password_hash=hash_password(password),
                 role=UserRole.STUDENT,
@@ -174,7 +173,6 @@ class SecurityRegressionTests(unittest.TestCase):
 
             parent = User(
                 full_name='Parent',
-                username='par1',
                 email='par1@example.com',
                 phone='+79990001122',
                 password_hash=hash_password('ParentPass123!'),
@@ -234,7 +232,13 @@ class SecurityRegressionTests(unittest.TestCase):
             with app.app_context():
                 self.assertGreater(RefreshToken.query.filter_by(user_id=user_id).count(), 0)
 
-            patch_response = client.patch('/api/users/me', json={'password': 'NewStrongPass123!'})
+            patch_response = client.patch(
+                '/api/users/me',
+                json={
+                    'current_password': 'StrongPass123!',
+                    'password': 'NewStrongPass123!',
+                },
+            )
             self.assertEqual(patch_response.status_code, 200)
 
             with app.app_context():
@@ -272,7 +276,7 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn('телефон', response.get_json().get('message', '').lower())
 
-    def test_register_rejects_short_username(self):
+    def test_register_ignores_legacy_username_field(self):
         app = self.create_app()
         with app.test_client() as client:
             response = client.post(
@@ -286,8 +290,8 @@ class SecurityRegressionTests(unittest.TestCase):
                     'age_group': 'middle',
                 },
             )
-            self.assertEqual(response.status_code, 400)
-            self.assertIn('не менее 5', response.get_json().get('message', '').lower())
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.get_json()['user']['email'], 'regshort@example.com')
 
     def test_register_succeeds_with_russian_phone(self):
         app = self.create_app()

@@ -1,5 +1,10 @@
 name: ci
 
+# AUDIT C-10 (open): SECRET_KEY and DATABASE_URL credentials below are CI-only fixtures.
+# Production deployments MUST set these via the operator's `.env`/Docker secrets.
+# Recommended hardening: move SECRET_KEY into GitHub Actions Secrets and reference as
+# `${{ secrets.CI_SECRET_KEY }}`, generated via `openssl rand -hex 32`. Done outside of code.
+
 on:
   push:
     branches: [main, master]
@@ -135,6 +140,10 @@ jobs:
           cp .env.example .env
           mkdir -p secrets
           cp secrets/redis_password.example secrets/redis_password
+          cp secrets/postgres_password.example secrets/postgres_password
+          # JUDGE_RUNNER_AUTH_TOKEN must be present (compose now fails hard if unset).
+          # Use a deterministic CI-only value; production sets it via the operator's .env.
+          printf '\nJUDGE_RUNNER_AUTH_TOKEN=ci-only-judge-token-%s\n' "$(openssl rand -hex 16)" >> .env
       - name: Build and start services
         run: docker compose up -d --build db redis judge-runner backend-init backend frontend
       - name: Wait for backend health

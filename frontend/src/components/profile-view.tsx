@@ -1,6 +1,21 @@
 'use client'
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  BadgeCheck,
+  Clock,
+  Eye,
+  Flame,
+  Map,
+  Moon,
+  RotateCcw,
+  Sparkles,
+  Sunrise,
+  Timer,
+  Trophy,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { fetchSessionUser } from '@/lib/auth-session'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
@@ -15,10 +30,42 @@ import type { AppTheme, UserItem } from '@/types'
 
 interface AchievementItem {
   id: number
+  code: string
   name: string
   description: string
+  icon: string
   xp_reward: number
   earned: boolean
+}
+
+const ICON_MAP: Record<string, LucideIcon> = {
+  sparkles: Sparkles,
+  'badge-check': BadgeCheck,
+  flame: Flame,
+  map: Map,
+  zap: Zap,
+  clock: Clock,
+  moon: Moon,
+  sunrise: Sunrise,
+  trophy: Trophy,
+  timer: Timer,
+  'eye-off': Eye,
+  'rotate-ccw': RotateCcw,
+}
+
+function AchievementIcon({ icon, earned }: { icon: string; earned: boolean }) {
+  const Icon = ICON_MAP[icon] ?? Sparkles
+  return (
+    <div
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors ${
+        earned
+          ? 'bg-emerald-100 text-emerald-600'
+          : 'bg-slate-100 text-slate-400'
+      }`}
+    >
+      <Icon size={20} strokeWidth={1.75} />
+    </div>
+  )
 }
 
 const THEME_OPTIONS: Array<{ value: AppTheme; label: string }> = [
@@ -180,7 +227,7 @@ export function ProfileView() {
               {profile.full_name}
             </h1>
             <p className="mt-3 break-words text-base leading-7 text-slate-600 sm:text-lg">
-              @{profile.username} · {profile.email}
+              {profile.email}
             </p>
             <p className="mt-1 break-words text-base leading-7 text-slate-600 sm:text-lg">
               {phoneDisplay ? (
@@ -268,24 +315,27 @@ export function ProfileView() {
             {achievements.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-[24px] border p-4 ${
+                className={`rounded-[24px] border p-4 transition-colors ${
                   item.earned ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'
                 }`}
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="break-words font-black text-slate-900">{item.name}</p>
-                    <p className="mt-1 text-sm leading-7 text-slate-600">{item.description}</p>
+                <div className="flex items-start gap-3">
+                  <AchievementIcon icon={item.icon} earned={item.earned} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="break-words font-black text-slate-900">{item.name}</p>
+                      <span
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                          item.earned ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {item.earned ? 'Получено' : 'Не получено'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">{item.description}</p>
+                    <p className="mt-2 text-sm font-semibold text-sky-700">+{item.xp_reward} XP</p>
                   </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-bold ${
-                      item.earned ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {item.earned ? 'Получено' : 'Не получено'}
-                  </span>
                 </div>
-                <p className="mt-3 text-sm font-semibold text-sky-700">+{item.xp_reward} XP</p>
               </div>
             ))}
           </div>

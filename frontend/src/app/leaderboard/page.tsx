@@ -1,5 +1,6 @@
 'use client'
 
+import { UserAvatar } from '@/components/user-avatar'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { api } from '@/lib/api'
 import { useEffect, useRef, useState } from 'react'
@@ -9,8 +10,9 @@ type LeaderboardScope = 'global' | 'class'
 interface Row {
 	id?: number
 	position: number
-	username?: string | null
 	full_name?: string | null
+	avatar_id?: string | null
+	frame_id?: string | null
 	xp: number
 	level: number
 	age_group: string | null
@@ -115,16 +117,25 @@ function formatLeaderboardIdentity(row: Row) {
 		firstTokenFromName(row.full_name) ||
 		firstTokenFromName(row.name) ||
 		''
-	const username =
-		typeof row.username === 'string'
-			? row.username.trim()
-			: ''
 
-	if (displayName && username && displayName !== username) {
-		return `${displayName} · ${username}`
-	}
+	return displayName || `Участник #${row.position}`
+}
 
-	return displayName || username || `Участник #${row.position}`
+function LeaderboardAvatar({
+	row,
+	size = 44,
+}: {
+	row: Row
+	size?: number
+}) {
+	return (
+		<UserAvatar
+			avatarId={row.avatar_id}
+			frameId={row.frame_id}
+			size={size}
+			className='leaderboard-row-avatar shrink-0 shadow-sm'
+		/>
+	)
 }
 
 function formatAgeGroup(ageGroup: string | null) {
@@ -252,7 +263,7 @@ export default function LeaderboardPage() {
 		<main ref={rootRef} className='brand-app-shell'>
 			<div className='page-shell mx-auto w-full max-w-[96rem]'>
 				<section
-					className='codequest-card overflow-hidden p-6 sm:px-8 sm:py-8 lg:pl-3'
+					className='codequest-card p-6 sm:px-8 sm:py-8 lg:pl-3'
 					data-motion-reveal
 				>
 					<p className='brand-eyebrow'>Top players</p>
@@ -332,7 +343,7 @@ export default function LeaderboardPage() {
 									<div className='leaderboard-podium mt-4'>
 										{podium.map((row, index) => (
 											<article
-												key={row.id ?? `${row.username ?? row.position}-${row.position}`}
+												key={row.id ?? `p-${row.position}`}
 												className={`leaderboard-podium__card min-h-0 p-3 sm:p-3.5 lg:p-2.5 ${index === 0 ? 'leaderboard-podium__card--top' : ''} ${index === 1 ? 'leaderboard-podium__card--rung2' : ''} ${index === 2 ? 'leaderboard-podium__card--rung3' : ''}`}
 												data-motion-item
 												data-motion-hover
@@ -353,17 +364,20 @@ export default function LeaderboardPage() {
 														{row.xp} XP
 													</span>
 												</div>
-												<h2
-													className={`mt-2 min-h-0 flex-1 overflow-hidden font-black leading-tight text-slate-900 line-clamp-2 ${
-														index === 0
-															? 'text-lg sm:text-xl'
-															: index === 1
-																? 'text-base sm:text-lg'
-																: 'text-sm sm:text-base'
-													}`}
-												>
-													{formatLeaderboardIdentity(row)}
-												</h2>
+												<div className='mt-3 flex min-h-0 flex-1 items-center gap-3'>
+													<LeaderboardAvatar row={row} size={index === 0 ? 56 : 48} />
+													<h2
+														className={`min-h-0 flex-1 overflow-hidden font-black leading-tight text-slate-900 line-clamp-2 ${
+															index === 0
+																? 'text-lg sm:text-xl'
+																: index === 1
+																	? 'text-base sm:text-lg'
+																	: 'text-sm sm:text-base'
+														}`}
+													>
+														{formatLeaderboardIdentity(row)}
+													</h2>
+												</div>
 												<div className='mt-auto flex shrink-0 flex-wrap gap-1.5 pt-1 text-xs sm:text-sm text-slate-600'>
 													<span className='rounded-full bg-slate-50 px-2 py-0.5'>
 														Группа: {formatAgeGroup(row.age_group)}
@@ -386,18 +400,21 @@ export default function LeaderboardPage() {
 							<div className='mt-8 space-y-3 md:hidden' data-motion-stagger>
 								{rest.map(row => (
 									<article
-										key={row.id ?? `${row.username ?? row.position}-${row.position}`}
+										key={row.id ?? `p-${row.position}`}
 										className='rounded-[22px] border border-slate-200 bg-slate-50 p-4'
 										data-motion-item
 									>
 										<div className='flex items-start justify-between gap-3'>
-											<div>
-												<p className='text-xs font-bold uppercase tracking-[0.16em] text-slate-500'>
-													#{row.position}
-												</p>
-												<h2 className='mt-1 text-lg font-black text-slate-900'>
-													{formatLeaderboardIdentity(row)}
-												</h2>
+											<div className='flex min-w-0 items-center gap-3'>
+												<LeaderboardAvatar row={row} size={44} />
+												<div className='min-w-0'>
+													<p className='text-xs font-bold uppercase tracking-[0.16em] text-slate-500'>
+														#{row.position}
+													</p>
+													<h2 className='mt-1 truncate text-lg font-black text-slate-900'>
+														{formatLeaderboardIdentity(row)}
+													</h2>
+												</div>
 											</div>
 											<span className='rounded-full bg-white px-3 py-1 text-sm font-semibold text-sky-700'>
 												{row.xp} XP
@@ -431,14 +448,19 @@ export default function LeaderboardPage() {
 									<tbody>
 										{rest.map(row => (
 											<tr
-												key={row.id ?? `${row.username ?? row.position}-${row.position}`}
+												key={row.id ?? `p-${row.position}`}
 												className='border-b border-slate-100 text-sm'
 											>
 												<td className='py-3 pl-0 pr-3 font-bold text-slate-900 sm:px-2 lg:pl-0'>
 													{row.position}
 												</td>
 												<td className='px-2 py-3 sm:px-3 sm:py-4'>
-													{formatLeaderboardIdentity(row)}
+													<div className='flex items-center gap-3'>
+														<LeaderboardAvatar row={row} size={36} />
+														<span className='font-semibold text-slate-900'>
+															{formatLeaderboardIdentity(row)}
+														</span>
+													</div>
 												</td>
 												<td className='px-2 py-3 sm:px-3 sm:py-4'>
 													{formatAgeGroup(row.age_group)}
