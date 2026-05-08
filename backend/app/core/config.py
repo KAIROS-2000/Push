@@ -185,6 +185,8 @@ class Config:
     EMAIL_VERIFICATION_TOKEN_TTL_MINUTES = int(_env('EMAIL_VERIFICATION_TOKEN_TTL_MINUTES') or '1440')
     PASSWORD_RESET_TOKEN_TTL_MINUTES = int(_env('PASSWORD_RESET_TOKEN_TTL_MINUTES') or '30')
     EMAIL_DRY_RUN = _as_bool(os.getenv('EMAIL_DRY_RUN'), default=False)
+    # If false: no outgoing mail; new users skip email verification; see /api/auth/register.
+    SEND_MAIL = _as_bool(os.getenv('SEND_MAIL'), default=True)
     PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS = int(_env('PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS') or '3600')
     PASSWORD_RESET_RATE_LIMIT_MAX_REQUESTS = int(_env('PASSWORD_RESET_RATE_LIMIT_MAX_REQUESTS') or '5')
     PASSWORD_RESET_RATE_LIMIT_BLOCK_SECONDS = int(_env('PASSWORD_RESET_RATE_LIMIT_BLOCK_SECONDS') or '3600')

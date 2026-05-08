@@ -11,6 +11,7 @@ from ..models.learning import ClassMembership, Classroom
 from ..models.messaging import Conversation, ConversationReadState, Message
 from ..models.user import User, UserRole
 from ..services import staff_messaging as staff_messaging_service
+from ..services import support_tickets as support_tickets_service
 
 
 messaging_bp = Blueprint("messaging", __name__)
@@ -368,11 +369,14 @@ def summary(current_user: User):
     total_unread = sum(row["unread_count"] for row in conversation_rows)
     staff_direct = staff_messaging_service.peer_threads_summary_block(current_user)
     total_unread += int(staff_direct.get("total_unread") or 0)
+    support_tickets = support_tickets_service.user_inbox_summary(current_user)
+    total_unread += int(support_tickets.get("total_unread") or 0)
     payload = {
         "role": current_user.role.value,
         "total_unread": total_unread,
         "conversations": conversation_rows,
         "staff_direct": staff_direct,
+        "support_tickets": support_tickets,
     }
     if current_user.role == UserRole.TEACHER:
         payload["classes"] = _teacher_summary_classes(current_user, conversations)

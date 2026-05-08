@@ -365,16 +365,6 @@ def child_practice_history(user: User, child_id: int):
     return {"items": parent_insights.assignment_rows_for_parent(child, 50, NO_WHITELIST)}
 
 
-@parent_bp.get("/children/<int:child_id>/signals")
-@auth_required([UserRole.PARENT])
-def child_signals(user: User, child_id: int):
-    child, err = _child_user_for_parent(user, child_id)
-    if err:
-        return err
-    assert child is not None
-    return {"signals": parent_insights.help_and_risk_signals(child, NO_WHITELIST)}
-
-
 @parent_bp.get("/children/<int:child_id>/safety")
 @auth_required([UserRole.PARENT])
 def get_safety(user: User, child_id: int):

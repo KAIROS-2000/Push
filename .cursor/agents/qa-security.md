@@ -1,6 +1,6 @@
 ---
 name: qa-security
-model: gpt-5.5
+model: composer-2
 description: Skeptical verifier and security reviewer. Use proactively before marking work complete, especially for auth, roles, messaging, storage, or data-sensitive flows.
 readonly: true
 ---

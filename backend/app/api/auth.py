@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import UTC, datetime
 
-from flask import Blueprint, make_response, request
+from flask import Blueprint, current_app, make_response, request
 
 from ..core.achievements import sync_achievements_for_user
 from ..core.db import db
@@ -111,19 +111,17 @@ def register():
 
     Three distinct sub-flows (selected by `role` in the body):
 
-    * **student** — email + phone + password. NO session is created. The user
-      must verify their email via the link from the welcome letter and only
-      then can log in. We deliberately mirror the teacher flow here so
-      "verified email" is a real precondition for entering the cabinet.
+    * **student** — email + phone + password. Normally NO session is created until
+      email is verified via the link. If ``SEND_MAIL`` is false in config, the user
+      is marked verified immediately, a session is issued, and no message is sent.
     * **teacher** — email + phone + password. NO session, status `pending`,
-      admin must approve. Email verification still required at login.
+      admin must approve. Email verification is normally required at login; with
+      ``SEND_MAIL`` false the email is treated as verified from creation (mail is not sent).
     * **parent** — ONLY email is accepted. The backend generates a strong
-      random password, persists its hash, sends a single welcome email
-      containing both the password and the verification link, and creates a
-      session immediately so the parent can browse the cabinet right away.
-      Phone, full name and email verification are required only at the
-      moment the parent tries to attach a child (enforced in the
-      parent_cabinet API).
+      random password, persists its hash, and normally sends a welcome email
+      with password + verification link. With ``SEND_MAIL`` false, no email is sent,
+      the parent is marked verified, and the plaintext ``initial_password`` is
+      returned in the JSON response (dev/local only — keep ``SEND_MAIL`` true in production).
     """
 
     ip = request.remote_addr or 'unknown'
@@ -189,7 +187,10 @@ def _register_student_or_teacher(email: str, role: str, data: dict, ip: str):
         return {'message': 'Пользователь с таким номером телефона уже зарегистрирован.'}, 409
 
     is_teacher_registration = role == UserRole.TEACHER.value
+    send_mail = current_app.config.get('SEND_MAIL', True)
+    auto_verify_email = not send_mail
     requested_theme = data.get('theme') if data.get('theme') in {'light', 'dark'} else 'light'
+    now = datetime.now(UTC)
     user = User(
         full_name=data.get('full_name') or '',
         email=email,
@@ -202,25 +203,57 @@ def _register_student_or_teacher(email: str, role: str, data: dict, ip: str):
         teacher_approval_status=TEACHER_APPROVAL_PENDING
         if is_teacher_registration
         else TEACHER_APPROVAL_APPROVED,
-        email_verified=False,
-        password_changed_at=datetime.now(UTC),
+        email_verified=auto_verify_email,
+        password_changed_at=now,
     )
+    if auto_verify_email:
+        user.email_verified_at = now
     db.session.add(user)
     db.session.flush()
 
-    issued = issue_verification_token(user)
-    verification_email_sent = _try_send_verification_email(user, issued.raw_token)
+    verification_email_sent = False
+    if send_mail:
+        issued = issue_verification_token(user)
+        verification_email_sent = _try_send_verification_email(user, issued.raw_token)
     clear_register_throttle(email, ip)
     db.session.commit()
 
     if is_teacher_registration:
         return {
-            'message': 'Заявка учителя отправлена администратору. После одобрения подтвердите email — мы прислали ссылку.',
+            'message': (
+                'Заявка учителя отправлена администратору. После одобрения подтвердите email — мы прислали ссылку.'
+                if send_mail
+                else (
+                    'Заявка учителя отправлена администратору. Отправка писем отключена — email '
+                    'считается подтверждённым; после одобрения вы сможете войти.'
+                )
+            ),
             'status': TEACHER_APPROVAL_PENDING,
             'teacher_request': user.to_dict(),
             'verification_email_sent': verification_email_sent,
-            'requires_email_verification': True,
+            'requires_email_verification': send_mail,
         }, 201
+
+    # Student
+    if not send_mail:
+        user.touch_login()
+        sync_achievements_for_user(user)
+        tokens = create_token_pair(user)
+        db.session.commit()
+        response = make_response(
+            {
+                'message': (
+                    'Регистрация успешна. Отправка писем отключена — вход выполнен, '
+                    'email считается подтверждённым.'
+                ),
+                'password_strength': password_strength(password),
+                'user': user.to_dict(),
+                'verification_email_sent': False,
+                'requires_email_verification': False,
+            },
+            201,
+        )
+        return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
 
     # Student: NO session — user must verify email before logging in.
     return {
@@ -241,8 +274,11 @@ def _register_parent(email: str, data: dict, ip: str):
         db.session.commit()
         return {'message': 'Пользователь с таким email уже существует.'}, 409
 
+    send_mail = current_app.config.get('SEND_MAIL', True)
+    now = datetime.now(UTC)
     initial_password = generate_initial_password()
     requested_theme = data.get('theme') if data.get('theme') in {'light', 'dark'} else 'light'
+    auto_verify = not send_mail
     user = User(
         full_name='',  # parent fills name later, before linking a child
         email=email,
@@ -253,37 +289,52 @@ def _register_parent(email: str, data: dict, ip: str):
         theme=requested_theme,
         is_active=True,
         teacher_approval_status=TEACHER_APPROVAL_APPROVED,
-        email_verified=False,
-        password_changed_at=datetime.now(UTC),
+        email_verified=auto_verify,
+        password_changed_at=now,
     )
+    if auto_verify:
+        user.email_verified_at = now
     db.session.add(user)
     db.session.flush()
 
-    issued = issue_verification_token(user)
-    welcome_sent = _try_send_parent_welcome_email(user, initial_password, issued.raw_token)
+    welcome_sent = False
+    if send_mail:
+        issued = issue_verification_token(user)
+        welcome_sent = _try_send_parent_welcome_email(user, initial_password, issued.raw_token)
 
     user.touch_login()
     tokens = create_token_pair(user)
     clear_register_throttle(email, ip)
     db.session.commit()
 
-    response = make_response(
-        {
-            'message': (
+    profile_fields = ['full_name', 'phone']
+    if send_mail:
+        profile_fields.append('email_verified')
+
+    body: dict = {
+        'message': (
+            (
                 'Семейный кабинет создан. Мы отправили на почту временный пароль и ссылку '
                 'для подтверждения email. Подтвердите почту, заполните имя и телефон — '
                 'и сможете привязать ребёнка.'
-            ),
-            'user': user.to_dict(),
-            'verification_email_sent': welcome_sent,
-            'requires_email_verification': True,
-            'parent_initial_password_sent': welcome_sent,
-            # Frontend uses this to build the "complete profile" prompt before
-            # the parent can attach a child.
-            'parent_profile_required_fields': ['full_name', 'phone', 'email_verified'],
-        },
-        201,
-    )
+            )
+            if send_mail
+            else (
+                'Семейный кабинет создан. Отправка писем отключена — email считается '
+                'подтверждённым. Заполните имя и телефон, чтобы привязать ребёнка. '
+                'Временный пароль показан один раз на экране регистрации.'
+            )
+        ),
+        'user': user.to_dict(),
+        'verification_email_sent': welcome_sent,
+        'requires_email_verification': send_mail,
+        'parent_initial_password_sent': welcome_sent,
+        'parent_profile_required_fields': profile_fields,
+    }
+    if not send_mail:
+        body['initial_password'] = initial_password
+
+    response = make_response(body, 201)
     return set_auth_cookies(response, tokens['access_token'], tokens['refresh_token'])
 
 

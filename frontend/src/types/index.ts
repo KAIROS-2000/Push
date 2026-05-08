@@ -666,6 +666,50 @@ export interface StaffDirectPeerSummary {
   threads: StaffDirectThreadRow[]
 }
 
+export interface SupportTicketSummaryRow {
+  ticket_id: number
+  category: string
+  subject: string
+  status: string
+  created_at: string | null
+  updated_at: string | null
+  unread_count: number
+  latest_message_at?: string | null
+  latest_message_preview?: string | null
+}
+
+export interface SupportTicketsSummaryBlock {
+  total_unread: number
+  tickets: SupportTicketSummaryRow[]
+}
+
+export interface SupportTicketDetail {
+  id: number
+  category: string
+  subject: string
+  description: string
+  status: string
+  created_at: string | null
+  updated_at: string | null
+  user?: StaffDirectUserRef
+}
+
+export interface SupportTicketMessage {
+  id: number
+  ticket_id: number
+  sender_id: number
+  sender?: StaffDirectUserRef | null
+  sender_name?: string | null
+  sender_role?: string | null
+  body: string
+  created_at: string
+  is_own?: boolean
+}
+
+export interface SupportStaffTicketRow extends SupportTicketSummaryRow {
+  user?: StaffDirectUserRef | null
+}
+
 export interface StaffMessagingDirectory {
   teachers: StaffDirectUserRef[]
   staff: StaffDirectUserRef[]
@@ -683,6 +727,7 @@ export interface MessagingSummaryResponse {
   conversations: MessagingConversationSummary[]
   classes?: MessagingSummaryClass[]
   staff_direct?: StaffDirectPeerSummary
+  support_tickets?: SupportTicketsSummaryBlock
 }
 
 export interface MessagingMessage {

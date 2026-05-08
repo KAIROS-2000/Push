@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { MessagingPanel } from '@/components/messaging-panel'
 import { ParentTeacherChatPanel } from '@/components/parent-teacher-chat-panel'
 import { StaffDirectThreadPanel } from '@/components/staff-direct-thread-panel'
+import { SupportTicketChatPanel } from '@/components/support-ticket-chat-panel'
 import { RolePill } from '@/components/role-pill'
 import { UserLocalTime } from '@/components/user-local-time'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
@@ -26,6 +27,7 @@ import {
 	Bell,
 	BellOff,
 	ChevronRight,
+	Headphones,
 	Inbox,
 	Loader2,
 	MessageCircle,
@@ -49,6 +51,8 @@ type BrowserNotificationPermission =
 interface MessagesPageViewProps {
 	user: UserItem
 	initialSummary?: MessagingSummaryResponse | null
+	/** После отправки анкеты поддержки открыть этот тикет в чате. */
+	initialOpenTicketId?: number | null
 }
 
 interface ParentClassroomContact {
@@ -350,6 +354,7 @@ function notificationBody(
 export function MessagesPageView({
 	user,
 	initialSummary = null,
+	initialOpenTicketId = null,
 }: MessagesPageViewProps) {
 	const role: MessagingRole =
 		user.role === 'teacher' ? 'teacher' : user.role === 'parent' ? 'parent' : 'student'
@@ -365,8 +370,10 @@ export function MessagesPageView({
 		() => new Set(),
 	)
 	const previousParentUnreadRef = useRef<Map<number, number>>(new Map())
+	const ticketOpenedRef = useRef(false)
 	const [activeTarget, setActiveTarget] = useState<MessagingChatTarget | null>(null)
 	const [activeStaffRow, setActiveStaffRow] = useState<StaffDirectThreadRow | null>(null)
+	const [activeSupportTicketId, setActiveSupportTicketId] = useState<number | null>(null)
 	const [contactsOpen, setContactsOpen] = useState(false)
 	const [loading, setLoading] = useState(!initialSummary)
 	const [error, setError] = useState('')
@@ -401,14 +408,17 @@ export function MessagesPageView({
 			: (summary?.total_unread ?? 0) + (user.role === 'teacher' ? parentUnreadTotal : 0)
 	const staffThreads = summary?.staff_direct?.threads ?? []
 	const hasStaffDirect = staffThreads.length > 0
+	const supportTickets = summary?.support_tickets?.tickets ?? []
+	const hasSupportTickets = supportTickets.length > 0
 	const hasContacts =
 		user.role === 'parent'
-			? hasStaffDirect || parentClassroomContacts.length > 0
+			? hasStaffDirect || parentClassroomContacts.length > 0 || hasSupportTickets
 			: role === 'teacher'
 				? teacherGroups.some(group => group.students.length) ||
 						parentThreads.length > 0 ||
-						hasStaffDirect
-				: studentChats.length > 0 || hasStaffDirect
+						hasStaffDirect ||
+						hasSupportTickets
+				: studentChats.length > 0 || hasStaffDirect || hasSupportTickets
 	const teacherListTotal = useMemo(() => {
 		if (user.role !== 'teacher') return 0
 		return (
@@ -450,8 +460,17 @@ export function MessagesPageView({
 		parentClassroomContacts.length,
 		Boolean(activeTarget),
 		Boolean(activeStaffRow),
+		Boolean(activeSupportTicketId),
 		Boolean(parentChatOpen),
 	])
+
+	useEffect(() => {
+		if (ticketOpenedRef.current || !initialOpenTicketId) return
+		ticketOpenedRef.current = true
+		setActiveSupportTicketId(initialOpenTicketId)
+		setActiveStaffRow(null)
+		setActiveTarget(null)
+	}, [initialOpenTicketId])
 
 	useEffect(() => {
 		if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -676,14 +695,27 @@ export function MessagesPageView({
 	}
 
 	const selectTarget = useCallback((target: MessagingChatTarget) => {
+		setActiveSupportTicketId(null)
 		setActiveStaffRow(null)
 		setActiveTarget(target)
 		setContactsOpen(false)
 	}, [])
 
 	const selectStaffRow = useCallback((row: StaffDirectThreadRow) => {
+		setActiveSupportTicketId(null)
 		setActiveTarget(null)
 		setActiveStaffRow(row)
+		setContactsOpen(false)
+		if (user.role === 'parent') {
+			setParentActiveContactKey(null)
+			setParentChatOpen(null)
+		}
+	}, [user.role])
+
+	const selectSupportTicket = useCallback((ticketId: number) => {
+		setActiveSupportTicketId(ticketId)
+		setActiveStaffRow(null)
+		setActiveTarget(null)
 		setContactsOpen(false)
 		if (user.role === 'parent') {
 			setParentActiveContactKey(null)
@@ -1191,10 +1223,12 @@ export function MessagesPageView({
 						{hasContacts ? (
 							<span className='rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600'>
 								{role === 'teacher'
-									? teacherListTotal
+									? teacherListTotal + supportTickets.length
 									: role === 'parent'
-										? staffThreads.length + parentClassroomContacts.length
-										: studentChats.length}{' '}
+										? staffThreads.length +
+											parentClassroomContacts.length +
+											supportTickets.length
+										: studentChats.length + supportTickets.length}{' '}
 								{role === 'parent' ? 'диал.' : 'чат.'}
 							</span>
 						) : null}
@@ -1207,6 +1241,66 @@ export function MessagesPageView({
 					) : null}
 
 					<div className='mt-5 space-y-5'>
+						<section className='rounded-[24px] border border-emerald-200/90 bg-emerald-50/45 p-4'>
+							<p className='brand-eyebrow text-emerald-950'>Поддержка Progyx</p>
+							<h3 className='mt-2 text-lg font-black text-slate-900'>Обращения по анкете</h3>
+							<p className='mt-1 text-sm text-slate-600'>
+								Диалог с администрацией по вашим тикетам. Новое обращение —{' '}
+								<Link href='/support' className='font-semibold text-slate-900 underline'>
+									форма поддержки
+								</Link>
+								.
+							</p>
+							{supportTickets.length ? (
+								<ul className='mt-3 space-y-2'>
+									{supportTickets.map(row => {
+										const active = activeSupportTicketId === row.ticket_id
+										const st =
+											row.status === 'open'
+												? 'Новое'
+												: row.status === 'in_progress'
+													? 'В работе'
+													: row.status === 'resolved'
+														? 'Решено'
+														: row.status === 'closed'
+															? 'Закрыто'
+															: row.status
+										return (
+											<li key={row.ticket_id}>
+												<button
+													type='button'
+													onClick={() => selectSupportTicket(row.ticket_id)}
+													className={`flex w-full items-start justify-between gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${
+														active
+															? 'border-slate-900 bg-white shadow-sm'
+															: 'border-slate-200 bg-white/80 hover:border-slate-300'
+													}`}
+												>
+													<div className='min-w-0'>
+														<p className='font-semibold text-slate-900 line-clamp-2'>
+															{row.subject}
+														</p>
+														<p className='mt-1 text-xs text-slate-500'>
+															<Headphones size={12} className='mr-1 inline align-text-bottom' />{' '}
+															{st}
+														</p>
+													</div>
+													{row.unread_count > 0 ? (
+														<span className='messaging-unread-badge shrink-0'>
+															{row.unread_count}
+														</span>
+													) : null}
+												</button>
+											</li>
+										)
+									})}
+								</ul>
+							) : !loading ? (
+								<p className='mt-3 text-sm text-slate-600'>
+									Пока нет обращений — отправьте первое через форму в подвале сайта или по ссылке выше.
+								</p>
+							) : null}
+						</section>
 						{hasStaffDirect ? (
 							<section className='rounded-[24px] border border-indigo-200/80 bg-indigo-50/50 p-4'>
 								<p className='brand-eyebrow text-indigo-900'>Администрация</p>
@@ -1340,7 +1434,15 @@ export function MessagesPageView({
 				</aside>
 
 				<div className='messages-page__chat' data-motion-reveal>
-					{activeStaffRow ? (
+					{activeSupportTicketId ? (
+						<SupportTicketChatPanel
+							ticketId={activeSupportTicketId}
+							variant='user'
+							currentUserId={user.id}
+							onClose={() => setActiveSupportTicketId(null)}
+							onRead={() => loadSummary()}
+						/>
+					) : activeStaffRow ? (
 						<StaffDirectThreadPanel
 							threadId={activeStaffRow.thread_id}
 							peer={activeStaffRow.other}
@@ -1365,8 +1467,8 @@ export function MessagesPageView({
 								</h2>
 								<p className='mt-1 text-sm text-slate-500'>
 									{user.role === 'parent'
-										? 'Слева выберите учителя или администратора. Чат с педагогом открывается в окне поверх страницы.'
-										: 'История переписки откроется справа после выбора контакта.'}
+										? 'Слева выберите учителя, прямой чат с администрацией или обращение в поддержку.'
+										: 'История переписки откроется справа после выбора контакта или тикета поддержки.'}
 								</p>
 							</header>
 							<div className='messaging-panel__body p-5 sm:p-6'>
@@ -1377,8 +1479,8 @@ export function MessagesPageView({
 									</p>
 									<p className='mt-1 text-sm text-slate-500'>
 										{user.role === 'parent'
-											? 'Выберите контакт слева: переписка с учителем откроется здесь; с администрацией — в панели справа.'
-											: 'Сообщения с учителем ведутся в контексте класса. Ответы администрации — в блоке «Администрация».'}
+											? 'Выберите контакт слева или блок поддержки; переписка с учителем может открыться поверх страницы.'
+											: 'Выберите класс, сообщение от администрации или обращение в поддержку.'}
 									</p>
 								</div>
 							</div>

@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { AppToaster } from '@/components/app-toaster'
 import { MascotOverlay } from '@/components/mascot-overlay'
 import { SiteChrome } from '@/components/site-chrome'
+import { SiteFooter } from '@/components/site-footer'
 import { ThemeHydrator } from '@/components/theme-hydrator'
 import { getThemeInitScript } from '@/lib/theme'
 import './globals.css'
@@ -42,6 +43,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <MascotOverlay />
         <SiteChrome />
         {children}
+        <SiteFooter />
       </body>
     </html>
   )

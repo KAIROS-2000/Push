@@ -8,7 +8,6 @@ import {
 	Trophy,
 } from 'lucide-react'
 
-import { SiteFooter } from '@/components/site-footer'
 import { UserLocalTime } from '@/components/user-local-time'
 import { getTournamentData, type TournamentOfficeRow } from '@/lib/tournament-data'
 
@@ -224,7 +223,6 @@ export default async function TournamentPage() {
 				</div>
 			</section>
 
-			<SiteFooter showRegisterLink={false} />
 		</main>
 	)
 }

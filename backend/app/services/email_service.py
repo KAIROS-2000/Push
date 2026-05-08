@@ -66,6 +66,7 @@ class EmailDeliveryResult:
     accepted: bool
     message_id: str | None = None
     dry_run: bool = False
+    skipped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +551,14 @@ def send_email(
             subject,
         )
         return EmailDeliveryResult(provider=_provider_name(), accepted=True, dry_run=True)
+
+    if not current_app.config.get('SEND_MAIL', True):
+        _log.info(
+            'email_send_disabled to=%s subject=%s',
+            _mask_email(recipient),
+            subject,
+        )
+        return EmailDeliveryResult(provider='disabled', accepted=True, skipped=True)
 
     provider = _provider_name()
     if provider != 'unisender_go':

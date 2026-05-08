@@ -2,7 +2,6 @@
 
 import { useRef } from 'react'
 import Link from 'next/link'
-import { SiteFooter } from '@/components/site-footer'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 
 export default function ParentLandingPage() {
@@ -59,7 +58,6 @@ export default function ParentLandingPage() {
           </div>
         </section>
       </div>
-      <SiteFooter />
     </main>
   )
 }

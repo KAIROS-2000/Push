@@ -35,6 +35,7 @@ from .learning import (
     UserAchievement,
     UserProgress,
 )
+from .support import SupportTicket, SupportTicketMessage, SupportTicketReadState
 from .parent_cabinet import (
     ParentChildLink,
     ParentConsentSettings,
@@ -93,4 +94,7 @@ __all__ = [
     'ParentTeacherMessage',
     'ParentTeacherReadState',
     'ParentTeacherThread',
+    'SupportTicket',
+    'SupportTicketMessage',
+    'SupportTicketReadState',
 ]

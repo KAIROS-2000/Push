@@ -2,7 +2,7 @@
 the explicitly-banned negative vocabulary.
 
 This test does NOT police the entire codebase — only the parent-facing fields
-that flow into ParentSummary / signals / notifications. Teacher/student UI
+that flow into ParentSummary / notifications. Teacher/student UI
 intentionally keeps its existing wording (e.g. "ошибки" as a programming term).
 """
 from __future__ import annotations
@@ -164,26 +164,6 @@ class ParentInsightsCopyPositivityTests(unittest.TestCase):
             )
             db.session.commit()
             return student.id
-
-    def test_help_and_risk_signals_use_positive_framing(self):
-        app = self._create_app()
-        student_id = self._make_student_with_needs_revision_lesson(app)
-
-        with app.app_context():
-            from app.models.user import User
-            from app.services.parent_insights import help_and_risk_signals
-
-            student = User.query.get(student_id)
-            signals = help_and_risk_signals(student, allowed_module_slugs=None)
-
-        # Sanity: we triggered both branches (needs_revision lesson + 4+ attempts at <60 score).
-        self.assertGreaterEqual(len(signals), 1, 'expected at least one signal for the seeded scenario')
-
-        for index, signal in enumerate(signals):
-            for field in ('title', 'explanation', 'suggested_action'):
-                assert_clean_parent_text(
-                    self, signal.get(field), f'signal[{index}].{field}'
-                )
 
     def test_weekly_digest_narrative_uses_positive_framing(self):
         app = self._create_app()

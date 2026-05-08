@@ -11,7 +11,7 @@ import { queueMascotScenario } from '@/lib/mascot'
 import { setAuthenticatedSession } from '@/lib/session-store'
 import { setTheme } from '@/lib/theme'
 import { isValidRuPhone, normalizeRuPhoneInput } from '@/lib/phone'
-import { showErrorToast } from '@/lib/toast'
+import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import { AuthOptions, UserItem } from '@/types'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -159,16 +159,20 @@ export function AuthForm({
 				verification_email_sent?: boolean
 				requires_email_verification?: boolean
 				requires_login_after_verification?: boolean
+				initial_password?: string
 			}>('/auth/' + mode, {
 				method: 'POST',
 				body: JSON.stringify(payload),
 			})
-			if (mode === 'register' && result.status === 'pending') {
+		if (mode === 'register' && result.status === 'pending') {
 				setPostRegisterEmail(normalizedCredential)
 				setPostRegisterRole('teacher')
 				setNotice(
-					result.message
-						|| 'Заявка учителя отправлена администратору. Подтвердите email по ссылке из письма — без этого войти не получится даже после одобрения.',
+					result.requires_email_verification === false
+						? result.message
+							|| 'Заявка учителя отправлена. Отправка писем отключена — email уже подтверждён; дождитесь одобрения администратора.'
+						: result.message
+							|| 'Заявка учителя отправлена администратору. Подтвердите email по ссылке из письма — без этого войти не получится даже после одобрения.',
 				)
 				setForm({ ...form, password: '' })
 				return
@@ -181,12 +185,34 @@ export function AuthForm({
 				const isStudent = result.user.role === 'student'
 				const isParent = result.user.role === 'parent'
 				if (isParent) {
+					const initialPassword =
+						typeof result.initial_password === 'string' && result.initial_password
+							? result.initial_password
+							: null
+					if (initialPassword && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+						try {
+							await navigator.clipboard.writeText(initialPassword)
+							showSuccessToast('Временный пароль скопирован в буфер обмена.')
+						} catch {
+							window.prompt('Сохраните временный пароль для входа:', initialPassword)
+						}
+					} else if (initialPassword) {
+						window.prompt('Сохраните временный пароль для входа:', initialPassword)
+					}
 					// Parent: backend creates a session immediately. We still park
 					// them on the cabinet entry, but the welcome card from
 					// parent-cabinet-page will prompt them to fill profile & verify.
 					setAuthenticatedSession(result.user)
 					setTheme(result.user?.theme || form.theme)
 					window.location.href = '/parent/dashboard'
+					return
+				}
+				// Student with email already verified (SEND_MAIL=false on backend)
+				if (isStudent && result.requires_email_verification === false) {
+					queueMascotScenario('post_register_intro')
+					setAuthenticatedSession(result.user)
+					setTheme(result.user?.theme || form.theme)
+					window.location.href = '/dashboard'
 					return
 				}
 				// Student: backend deliberately does NOT create a session — the

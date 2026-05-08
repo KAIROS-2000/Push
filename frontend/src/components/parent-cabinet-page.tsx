@@ -20,7 +20,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { showErrorToast, showSuccessToast } from '@/lib/toast'
 import {
@@ -86,12 +86,6 @@ type PracticeItem = {
 }
 
 type MetricTone = 'blue' | 'green' | 'yellow' | 'rose' | 'violet'
-
-function severityRu(s: string) {
-  if (s === 'warning') return 'важно'
-  if (s === 'attention') return 'внимание'
-  return 'инфо'
-}
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -293,6 +287,153 @@ function WeekActivityChart({
   )
 }
 
+function DualWeekActivityLines({
+  currentRows,
+  previousRows,
+}: {
+  currentRows: ActivityRow[]
+  previousRows: ActivityRow[]
+}) {
+  const gradId = useId().replace(/:/g, '')
+  const cur = currentRows.map(row => row.lessons + row.assignments)
+  const prev = currentRows.map((_, i) => {
+    const row = previousRows[i]
+    return row ? row.lessons + row.assignments : 0
+  })
+  const max = Math.max(1, ...cur, ...prev)
+  const w = 100
+  const h = 44
+  const padX = 3
+  const padY = 6
+  const n = Math.max(cur.length, 1)
+  const xAt = (i: number) => (n <= 1 ? w / 2 : padX + (i / (n - 1)) * (w - 2 * padX))
+  const yAt = (v: number) => h - padY - (v / max) * (h - 2 * padY)
+  const linePoints = (vals: number[]) => vals.map((v, i) => `${xAt(i)},${yAt(v)}`).join(' ')
+
+  if (!cur.length) {
+    return (
+      <div className="parent-empty-state">
+        Линия активности появится после первых занятий на платформе.
+      </div>
+    )
+  }
+
+  const cPts = linePoints(cur)
+  const pPts = linePoints(prev)
+  const firstX = xAt(0)
+  const lastX = xAt(cur.length - 1)
+  const floorY = h - padY
+  const areaPoints = [`${firstX},${floorY}`, ...cur.map((v, i) => `${xAt(i)},${yAt(v)}`), `${lastX},${floorY}`].join(' ')
+
+  return (
+    <div className="parent-dual-line-chart">
+      <svg
+        className="parent-dual-line-chart__svg"
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        aria-hidden
+        focusable="false"
+      >
+        <defs>
+          <linearGradient id={`${gradId}-area`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--progyx-blue)" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="var(--progyx-blue)" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <line
+          x1={padX}
+          x2={w - padX}
+          y1={h / 2}
+          y2={h / 2}
+          className="parent-dual-line-chart__gridline"
+        />
+        <polygon className="parent-dual-line-chart__area" points={areaPoints} fill={`url(#${gradId}-area)`} />
+        <polyline
+          className="parent-dual-line-chart__line parent-dual-line-chart__line--prev"
+          fill="none"
+          points={pPts}
+        />
+        <polyline
+          className="parent-dual-line-chart__line parent-dual-line-chart__line--current"
+          fill="none"
+          points={cPts}
+        />
+      </svg>
+      <div className="parent-dual-line-chart__xlabels">
+        {currentRows.map(row => (
+          <span key={`${row.date}-${row.label}`}>{row.label}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function WeekMixShareBar({ lessons, assignments }: { lessons: number; assignments: number }) {
+  const total = lessons + assignments
+  if (!total) {
+    return (
+      <p className="parent-engagement-hint">
+        Как только появятся уроки или практика, здесь покажем, как они делят неделю.
+      </p>
+    )
+  }
+  const lessonPct = clampPercent((lessons / total) * 100)
+  return (
+    <div className="parent-mix-bar" aria-label="Соотношение уроков и практики за неделю">
+      <div className="parent-mix-bar__track">
+        <span className="parent-mix-bar__lessons" style={{ width: `${lessonPct}%` }} />
+        <span className="parent-mix-bar__practice" style={{ width: `${100 - lessonPct}%` }} />
+      </div>
+      <div className="parent-mix-bar__labels">
+        <span>
+          <i className="parent-mix-bar__dot parent-mix-bar__dot--lessons" aria-hidden />
+          Уроки · <strong>{lessons}</strong>
+        </span>
+        <span>
+          <i className="parent-mix-bar__dot parent-mix-bar__dot--practice" aria-hidden />
+          Практика · <strong>{assignments}</strong>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function engagementDeltaPhrase(current: number, previous: number) {
+  if (!previous && !current) return 'ждём первых шагов'
+  if (!previous && current) return 'хороший старт этой недели'
+  if (current === previous) return 'как и на прошлой неделе'
+  const d = current - previous
+  if (d > 0) return `на ${d} больше, чем на прошлой`
+  return `на ${Math.abs(d)} меньше — нормально, недели разные`
+}
+
+function EngagementCompareTiles({
+  weeklyLessons,
+  weeklyAssignments,
+  previousLessons,
+  previousAssignments,
+}: {
+  weeklyLessons: number
+  weeklyAssignments: number
+  previousLessons: number
+  previousAssignments: number
+}) {
+  return (
+    <ul className="parent-engagement-tiles" aria-label="Сравнение с прошлой неделей">
+      <li className="parent-engagement-tile">
+        <p className="parent-engagement-tile__label">Уроки</p>
+        <p className="parent-engagement-tile__value">{weeklyLessons}</p>
+        <p className="parent-engagement-tile__hint">{engagementDeltaPhrase(weeklyLessons, previousLessons)}</p>
+      </li>
+      <li className="parent-engagement-tile">
+        <p className="parent-engagement-tile__label">Практика</p>
+        <p className="parent-engagement-tile__value">{weeklyAssignments}</p>
+        <p className="parent-engagement-tile__hint">{engagementDeltaPhrase(weeklyAssignments, previousAssignments)}</p>
+      </li>
+    </ul>
+  )
+}
+
 function SkillProgressPanel({
   modules,
   overallProgress,
@@ -412,7 +553,6 @@ export function ParentCabinetPage() {
   const [digest, setDigest] = useState<Record<string, unknown> | null>(null)
   const [skills, setSkills] = useState<unknown[]>([])
   const [activity, setActivity] = useState<Record<string, unknown> | null>(null)
-  const [signals, setSignals] = useState<unknown[]>([])
   const [history, setHistory] = useState<unknown[]>([])
   const [safety, setSafety] = useState<Record<string, unknown> | null>(null)
   const [consent, setConsent] = useState<Record<string, unknown> | null>(null)
@@ -504,7 +644,7 @@ export function ParentCabinetPage() {
     async (childId: number) => {
       setLoadErr('')
       try {
-        const [di, sk, act, sig, his, sa, co, bi, th, n, ac] = await Promise.all([
+        const [di, sk, act, his, sa, co, bi, th, n, ac] = await Promise.all([
           api<Record<string, unknown>>(
             `/parent/children/${childId}/digest`,
             undefined,
@@ -517,11 +657,6 @@ export function ParentCabinetPage() {
           ),
           api<Record<string, unknown>>(
             `/parent/children/${childId}/activity`,
-            undefined,
-            'required',
-          ),
-          api<{ signals: unknown[] }>(
-            `/parent/children/${childId}/signals`,
             undefined,
             'required',
           ),
@@ -555,7 +690,6 @@ export function ParentCabinetPage() {
         setDigest(di)
         setSkills(sk.modules || [])
         setActivity(act)
-        setSignals(sig.signals || [])
         setHistory(his.items || [])
         setSafety(sa)
         setConsent(co)
@@ -808,7 +942,6 @@ export function ParentCabinetPage() {
   )
   const skillModules = useMemo(() => normalizeSkillModules(skills), [skills])
   const practiceItems = useMemo(() => normalizePracticeItems(history), [history])
-  const signalItems = useMemo(() => signals.map(toRecord), [signals])
   const achievementItems = useMemo(() => achievements.map(toRecord), [achievements])
   const noteItems = useMemo(() => notes.map(toRecord), [notes])
 
@@ -819,6 +952,8 @@ export function ParentCabinetPage() {
     (sum, row) => sum + row.lessons + row.assignments,
     0,
   )
+  const previousLessons = previousWeekActivity.reduce((sum, row) => sum + row.lessons, 0)
+  const previousAssignments = previousWeekActivity.reduce((sum, row) => sum + row.assignments, 0)
   const weeklyAverageScore = average(
     weeklyActivity.map(row => row.average_score).filter(score => score > 0),
   )
@@ -834,7 +969,6 @@ export function ParentCabinetPage() {
   const pendingPractice = practiceItems.filter(item =>
     ['pending_review', 'needs_revision', 'submitted'].includes(item.status),
   )
-  const importantSignals = signalItems.filter(signal => String(signal.severity || 'info') !== 'info')
   const unreadMessages = contactsForChild.reduce((sum, contact) => sum + contact.unread_count, 0)
   const focusModule =
     needsHelpModules[0] ||
@@ -845,11 +979,9 @@ export function ParentCabinetPage() {
     ? `Поддержать модуль «${needsHelpModules[0].title}»`
     : pendingPractice[0]
       ? `Посмотреть задание «${pendingPractice[0].assignment_title}»`
-      : importantSignals[0]
-        ? String(importantSignals[0].title || 'Проверить сигнал')
-        : focusModule
-          ? `Продолжить модуль «${focusModule.title}»`
-          : 'Сохранять спокойный темп занятий'
+      : focusModule
+        ? `Продолжить модуль «${focusModule.title}»`
+        : 'Сохранять спокойный темп занятий'
 
   const allParentMetrics = [
     {
@@ -887,9 +1019,12 @@ export function ParentCabinetPage() {
     {
       icon: TriangleAlert,
       label: 'Зоны внимания',
-      value: String(importantSignals.length + needsHelpModules.length + pendingPractice.length),
-      detail: importantSignals.length ? 'есть рекомендации для поддержки' : 'всё спокойно',
-      tone: importantSignals.length ? 'rose' as const : 'green' as const,
+      value: String(needsHelpModules.length + pendingPractice.length),
+      detail:
+        needsHelpModules.length || pendingPractice.length
+          ? 'есть модули или практика, на которые можно мягко направить внимание'
+          : 'всё спокойно',
+      tone: needsHelpModules.length || pendingPractice.length ? 'rose' as const : 'green' as const,
       simple: false,
     },
     {
@@ -1138,6 +1273,74 @@ export function ParentCabinetPage() {
             </section>
 
             {viewMode === 'extended' && (
+              <section
+                className="parent-engagement-visuals codequest-card p-5 sm:p-6"
+                data-motion-item
+                aria-label="Статистика вовлечённости ребёнка"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="brand-eyebrow">Наглядная статистика</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-900">Вовлечённость на неделе</h2>
+                    <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
+                      Спокойные графики без «технарских» слов: видно, как часто ребёнок выходит на платформу,
+                      как делятся уроки и практика и что изменилось по сравнению с прошлой неделей.
+                    </p>
+                  </div>
+                  <span className="brand-chip brand-chip--warm shrink-0">
+                    {trendText(weeklyActions, previousActions)}
+                  </span>
+                </div>
+
+                <div className="parent-engagement-visuals__grid mt-6">
+                  <div className="parent-engagement-chart-panel">
+                    <p className="parent-engagement-panel-title">Ритм по дням</p>
+                    <p className="parent-engagement-panel-caption">
+                      Сплошная линия — сколько за каждый день на этой неделе; пунктир — прошлая неделя
+                      в те же дни.
+                    </p>
+                    <DualWeekActivityLines
+                      currentRows={weeklyActivity}
+                      previousRows={previousWeekActivity}
+                    />
+                    <div className="parent-dual-line-legend">
+                      <span>
+                        <i className="parent-dual-line-legend__swatch parent-dual-line-legend__swatch--current" />
+                        Эта неделя
+                      </span>
+                      <span>
+                        <i className="parent-dual-line-legend__swatch parent-dual-line-legend__swatch--prev" />
+                        Прошлая неделя
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="parent-engagement-side-stack">
+                    <div className="parent-engagement-chart-panel">
+                      <p className="parent-engagement-panel-title">Баланс занятий</p>
+                      <p className="parent-engagement-panel-caption">
+                        Доля теории (уроки) и закрепления (практика) за семь дней.
+                      </p>
+                      <WeekMixShareBar lessons={weeklyLessons} assignments={weeklyAssignments} />
+                    </div>
+                    <div className="parent-engagement-chart-panel">
+                      <p className="parent-engagement-panel-title">Сравнение с прошлой неделей</p>
+                      <p className="parent-engagement-panel-caption">
+                        Цифры и короткие пояснения без оценочных ярлыков.
+                      </p>
+                      <EngagementCompareTiles
+                        weeklyLessons={weeklyLessons}
+                        weeklyAssignments={weeklyAssignments}
+                        previousLessons={previousLessons}
+                        previousAssignments={previousAssignments}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {viewMode === 'extended' && (
               <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
                 <section className="parent-week-summary codequest-card p-5 sm:p-6" data-motion-item>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1205,86 +1408,48 @@ export function ParentCabinetPage() {
             </section>
 
             {viewMode === 'extended' && (
-              <div className="grid gap-6 xl:grid-cols-[0.98fr_1.02fr]">
-                <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="brand-eyebrow">Практика</p>
-                      <h2 className="mt-2 text-2xl font-black text-slate-900">Баллы и статусы</h2>
-                    </div>
-                    <span className="brand-chip brand-chip--soft">
-                      Средний: {practiceAverageScore ? `${practiceAverageScore}%` : '—'}
-                    </span>
+              <section className="codequest-card p-5 sm:p-6" data-motion-item>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="brand-eyebrow">Практика</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-900">Баллы и статусы</h2>
                   </div>
-                  <div className="mt-5">
-                    <PracticeScoreChart items={practiceItems} />
-                  </div>
-                  <ul className="mt-5 space-y-2 text-sm">
-                    {practiceItems.slice(0, 6).map(item => (
-                      <li key={item.id} className="parent-practice-row">
-                        <div className="flex min-w-0 items-center gap-3">
-                          {item.assignment_image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={item.assignment_image_url}
-                              alt=""
-                              className="h-10 w-10 shrink-0 rounded-lg object-cover"
-                              loading="lazy"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-slate-900">{item.assignment_title}</p>
-                            <p className="mt-1 text-xs text-slate-500">{formatPracticeDate(item.submitted_at)}</p>
-                          </div>
+                  <span className="brand-chip brand-chip--soft">
+                    Средний: {practiceAverageScore ? `${practiceAverageScore}%` : '—'}
+                  </span>
+                </div>
+                <div className="mt-5">
+                  <PracticeScoreChart items={practiceItems} />
+                </div>
+                <ul className="mt-5 space-y-2 text-sm">
+                  {practiceItems.slice(0, 6).map(item => (
+                    <li key={item.id} className="parent-practice-row">
+                      <div className="flex min-w-0 items-center gap-3">
+                        {item.assignment_image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={item.assignment_image_url}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                            loading="lazy"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-slate-900">{item.assignment_title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{formatPracticeDate(item.submitted_at)}</p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span className={`parent-status-chip parent-status-chip--${practiceStatusTone(item.status)}`}>
-                            {practiceStatusRu(item.status)}
-                          </span>
-                          <span className="parent-score-badge">{item.score}%</span>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-
-                <section className="codequest-card p-5 sm:p-6" data-motion-item>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="brand-eyebrow">Поддержка</p>
-                      <h2 className="mt-2 text-2xl font-black text-slate-900">Сигналы для родителя</h2>
-                    </div>
-                    <span className="brand-chip brand-chip--soft">
-                      {importantSignals.length ? 'нужна реакция' : 'спокойно'}
-                    </span>
-                  </div>
-                  <ul className="mt-5 grid gap-3 sm:grid-cols-2">
-                    {signalItems.length ? (
-                      signalItems.map((sig, i) => {
-                        const severity = String(sig.severity || 'info')
-                        return (
-                          <li
-                            key={`${String(sig.title || 'signal')}-${i}`}
-                            className={`parent-signal-card parent-signal-card--${severity}`}
-                          >
-                            <p className="font-bold text-slate-900">{String(sig.title || 'Сигнал')}</p>
-                            <p className="mt-1 text-xs uppercase text-slate-500">{severityRu(severity)}</p>
-                            <p className="mt-2 text-sm leading-6 text-slate-700">{String(sig.explanation || '')}</p>
-                            <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">
-                              {String(sig.suggested_action || '')}
-                            </p>
-                          </li>
-                        )
-                      })
-                    ) : (
-                      <li className="parent-empty-state sm:col-span-2">
-                        Нет тревожных сигналов. Можно поддерживать привычный ритм и хвалить за регулярность.
-                      </li>
-                    )}
-                  </ul>
-                </section>
-              </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className={`parent-status-chip parent-status-chip--${practiceStatusTone(item.status)}`}>
+                          {practiceStatusRu(item.status)}
+                        </span>
+                        <span className="parent-score-badge">{item.score}%</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
 
             <div className={viewMode === 'simple' ? '' : 'grid gap-6 lg:grid-cols-2'}>

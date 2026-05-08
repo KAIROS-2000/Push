@@ -3,7 +3,11 @@ import { serverApi } from '@/lib/server-api'
 import { MessagingSummaryResponse, UserItem } from '@/types'
 import { redirect } from 'next/navigation'
 
-export default async function MessagesPage() {
+export default async function MessagesPage({
+	searchParams,
+}: {
+	searchParams?: Promise<{ ticket?: string }>
+}) {
 	const session = await serverApi<{ user: UserItem }>('/auth/me').catch(() => null)
 
 	if (!session?.user) {
@@ -18,6 +22,11 @@ export default async function MessagesPage() {
 		redirect('/dashboard')
 	}
 
+	const sp = searchParams ? await searchParams : {}
+	const ticketRaw = sp.ticket
+	const parsed = ticketRaw ? Number.parseInt(String(ticketRaw), 10) : NaN
+	const initialOpenTicketId = Number.isFinite(parsed) && parsed > 0 ? parsed : null
+
 	const initialSummary = await serverApi<MessagingSummaryResponse>(
 		'/messaging/summary',
 	).catch(() => null)
@@ -28,6 +37,7 @@ export default async function MessagesPage() {
 				<MessagesPageView
 					user={session.user}
 					initialSummary={initialSummary}
+					initialOpenTicketId={initialOpenTicketId}
 				/>
 			</div>
 		</main>

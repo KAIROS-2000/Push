@@ -650,6 +650,46 @@ class EmailFlowsTests(unittest.TestCase):
                 ).count()
                 self.assertEqual(inapp_count, 1)
 
+    def test_register_student_send_mail_false_skips_mail_and_logs_in(self):
+        app = self.create_app(SEND_MAIL='false')
+        client = app.test_client()
+        self._mailer.calls.clear()
+        resp = client.post(
+            '/api/auth/register',
+            json={
+                'full_name': 'Quick Student',
+                'email': 'quick-student@example.com',
+                'phone': '+7 (912) 345-67-90',
+                'password': 'StrongPass123!',
+                'role': 'student',
+                'age_group': 'middle',
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        body = resp.get_json()
+        self.assertTrue(body['user']['email_verified'])
+        self.assertFalse(body.get('requires_email_verification', True))
+        cookies = resp.headers.getlist('Set-Cookie')
+        self.assertTrue(any('codequest_access_token=' in c for c in cookies), cookies)
+        self.assertEqual(len(self._mailer.calls), 0)
+
+    def test_register_parent_send_mail_false_returns_initial_password(self):
+        app = self.create_app(SEND_MAIL='false')
+        client = app.test_client()
+        self._mailer.calls.clear()
+        resp = client.post(
+            '/api/auth/register',
+            json={'email': 'quick-parent@example.com', 'role': 'parent', 'theme': 'light'},
+        )
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        body = resp.get_json()
+        self.assertTrue(body['user']['email_verified'])
+        self.assertFalse(body.get('requires_email_verification', True))
+        self.assertIn('initial_password', body)
+        self.assertEqual(len(body['initial_password']), 14)
+        self.assertNotIn('email_verified', body['parent_profile_required_fields'])
+        self.assertEqual(len(self._mailer.calls), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

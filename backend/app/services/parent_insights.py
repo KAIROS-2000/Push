@@ -4,7 +4,6 @@ import hashlib
 import secrets
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from flask import current_app
 
@@ -281,74 +280,6 @@ def weekly_digest_narrative(student: User, allowed_module_slugs: set[str] | None
             "это нормально, можно мягко напомнить о занятиях в удобном темпе."
         )
     return " ".join(parts)
-
-
-def help_and_risk_signals(
-    student: User, allowed_module_slugs: set[str] | None
-) -> list[dict[str, Any]]:
-    signals: list[dict[str, Any]] = []
-    now = datetime.now(UTC)
-    for sub in AssignmentSubmission.query.filter_by(student_id=student.id).all():
-        if not assignment_allowed_for_parent(sub.assignment, allowed_module_slugs):
-            continue
-        st = (sub.status or "").strip().lower()
-        title = sub.assignment.title if sub.assignment else "Задание"
-        if st == "pending_review":
-            signals.append(
-                {
-                    "severity": "info",
-                    "title": "Задание на проверке",
-                    "explanation": f"«{title}» отправлено и ждёт ответа преподавателя.",
-                    "suggested_action": "Можно ненавязчиво поинтересоваться у ребёнка, спокоен ли он в ожидании.",
-                }
-            )
-        elif st == "needs_revision":
-            signals.append(
-                {
-                    "severity": "attention",
-                    "title": "Есть доработка",
-                    "explanation": f"По «{title}» учитель попросил внести правки — это шаг к улучшению.",
-                    "suggested_action": "Стоит вместе с ребёнком уточнить комментарий преподавателя.",
-                }
-            )
-    for row in UserProgress.query.filter_by(user_id=student.id).all():
-        if not lesson_allowed_for_parent(row.lesson, allowed_module_slugs):
-            continue
-        if row.status == "needs_revision":
-            lt = row.lesson.title if row.lesson else "уроке"
-            signals.append(
-                {
-                    # Parent-facing copy: positive framing per P3a.
-                    "severity": "warning",
-                    "title": "Зона для роста",
-                    "explanation": f"В уроке «{lt}» преподаватель предложил доработать решение.",
-                    "suggested_action": "Можно вместе с ребёнком уточнить комментарий преподавателя.",
-                }
-            )
-        if (row.attempts or 0) >= 4 and (row.score or 0) < 60 and row.status != "completed":
-            signals.append(
-                {
-                    "severity": "info",
-                    "title": "Стоит разобрать тему вместе",
-                    "explanation": "Несколько попыток — часть обучения; важна поддержка без давления.",
-                    "suggested_action": "Предложите вместе разобрать задание по шагам.",
-                }
-            )
-    last_activity: datetime | None = None
-    for row in UserProgress.query.filter_by(user_id=student.id).all():
-        for dt in (row.started_at, row.completed_at):
-            if dt and (last_activity is None or _ensure_aware(dt) > last_activity):
-                last_activity = _ensure_aware(dt)
-    if last_activity and (now - last_activity).days >= 5:
-        signals.append(
-            {
-                "severity": "info",
-                "title": "Долго не было учебной активности",
-                "explanation": "Несколько дней подряд без уроков и практики — бывает в загруженные недели.",
-                "suggested_action": "Можно вместе выбрать короткое спокойное окно для занятий.",
-            }
-        )
-    return signals[:12]
 
 
 def weekly_activity_prev_week(

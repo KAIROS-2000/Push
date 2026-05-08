@@ -24,7 +24,6 @@ import {
 	type LucideIcon,
 } from 'lucide-react'
 
-import { SiteFooter } from '@/components/site-footer'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { useSessionUser } from '@/lib/auth-session'
 
@@ -274,7 +273,6 @@ export function ItCareerPage() {
 		if (firstVacancy) setSelectedVacancyId(firstVacancy.id)
 	}
 
-	const showRegisterLink = sessionStatus === 'anonymous'
 	const SelectedIcon = selectedVacancy.icon
 
 	return (
@@ -533,7 +531,6 @@ export function ItCareerPage() {
 				</div>
 			</section>
 
-			<SiteFooter showRegisterLink={showRegisterLink} />
 		</main>
 	)
 }

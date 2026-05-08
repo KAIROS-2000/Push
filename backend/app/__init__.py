@@ -28,6 +28,7 @@ from .api.parent_cabinet import parent_bp
 from .api.student import student_bp
 from .api.teacher import teacher_bp
 from .api.useful import useful_bp
+from .api.support import support_bp
 from .cli import register_commands
 from .core.config import Config, resolve_jwt_signing_keys, resolve_redis_password
 from .core.db import db
@@ -348,6 +349,7 @@ def create_app() -> Flask:
     app.register_blueprint(teacher_bp, url_prefix="/api/teacher")
     app.register_blueprint(messaging_bp, url_prefix="/api/messaging")
     app.register_blueprint(staff_messaging_bp, url_prefix="/api/staff-messaging")
+    app.register_blueprint(support_bp, url_prefix="/api/support")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(useful_bp, url_prefix="/api/useful")
 

@@ -4,7 +4,6 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useRef } from 'react'
 
-import { SiteFooter } from '@/components/site-footer'
 import { useUserPageMotion } from '@/hooks/use-user-page-motion'
 import { useSessionUser } from '@/lib/auth-session'
 
@@ -156,7 +155,6 @@ export default function HomePage() {
 				</section>
 			)}
 
-			<SiteFooter showRegisterLink={showGuestActions} />
 		</main>
 	)
 }
