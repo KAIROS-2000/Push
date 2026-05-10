@@ -1,9 +1,7 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import {
 	AlertTriangle,
 	CalendarDays,
-	ExternalLink,
 	RefreshCw,
 	Trophy,
 } from 'lucide-react'
@@ -80,15 +78,6 @@ export default async function TournamentPage() {
 							<CalendarDays aria-hidden size={16} />
 							Заполнено недель: {weeksCount}
 						</span>
-						<Link
-							href={data.meta.sourceUrl}
-							target='_blank'
-							rel='noreferrer'
-							className='brand-chip tournament-source-link'
-						>
-							<ExternalLink aria-hidden size={16} />
-							Источник
-						</Link>
 					</div>
 				</div>
 
@@ -159,10 +148,6 @@ export default async function TournamentPage() {
 							<p className='brand-eyebrow'>Weeks</p>
 							<h2>Детализация баллов</h2>
 						</div>
-						<p>
-							{data.meta.fileName}
-							{data.meta.revision ? ` · rev ${data.meta.revision}` : ''}
-						</p>
 					</div>
 
 					<div className='tournament-table-wrap'>
@@ -212,15 +197,14 @@ export default async function TournamentPage() {
 						))}
 					</ul>
 				</article>
-			</section>
-
-			<section className='brand-page-shell tournament-jury'>
-				<p className='brand-eyebrow'>Jury</p>
-				<div>
-					{data.jury.map(member => (
-						<span key={member}>{member}</span>
-					))}
-				</div>
+				<aside className='tournament-jury' aria-label='Жюри'>
+					<p className='brand-eyebrow'>Jury</p>
+					<div>
+						{data.jury.map(member => (
+							<span key={member}>{member}</span>
+						))}
+					</div>
+				</aside>
 			</section>
 
 		</main>

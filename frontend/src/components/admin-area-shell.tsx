@@ -5,8 +5,10 @@ type AdminArea = 'admin' | 'superadmin'
 type AdminSection =
   | 'telemetry'
   | 'users'
+  | 'leaderboard'
   | 'messages'
   | 'support'
+  | 'bug-hunter'
   | 'teacher-requests'
   | 'admins'
   | 'lessons'
@@ -37,6 +39,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       description: 'Поиск и блокировка',
     },
     {
+      key: 'leaderboard',
+      href: '/admin/leaderboard',
+      label: 'Рейтинг',
+      description: 'Топ учеников и классы',
+    },
+    {
       key: 'messages',
       href: '/admin/messages',
       label: 'Сообщения',
@@ -47,6 +55,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/admin/support',
       label: 'Поддержка',
       description: 'Тикеты из анкеты и чаты',
+    },
+    {
+      key: 'bug-hunter',
+      href: '/admin/bug-hunter',
+      label: 'Баг-хантер',
+      description: 'Репорты и начисление XP',
     },
     {
       key: 'teacher-requests',
@@ -99,6 +113,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       description: 'Ученики и учителя',
     },
     {
+      key: 'leaderboard',
+      href: '/superadmin/leaderboard',
+      label: 'Рейтинг',
+      description: 'Топ учеников и классы',
+    },
+    {
       key: 'messages',
       href: '/superadmin/messages',
       label: 'Сообщения',
@@ -109,6 +129,12 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/superadmin/support',
       label: 'Поддержка',
       description: 'Тикеты из анкеты и чаты',
+    },
+    {
+      key: 'bug-hunter',
+      href: '/superadmin/bug-hunter',
+      label: 'Баг-хантер',
+      description: 'Репорты и начисление XP',
     },
     {
       key: 'teacher-requests',

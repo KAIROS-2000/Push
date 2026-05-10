@@ -3415,6 +3415,7 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 	--tournament-green: #2abf7a;
 	--tournament-yellow: #ffc941;
 	--tournament-border: rgba(137, 163, 202, 0.28);
+	padding-bottom: clamp(3rem, 8vw, 5.5rem);
 }
 
 .tournament-hero {
@@ -3475,15 +3476,8 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 	padding-bottom: 1rem;
 }
 
-.tournament-hero__meta .brand-chip,
-.tournament-source-link {
+.tournament-hero__meta .brand-chip {
 	gap: 0.45rem;
-	text-decoration: none;
-}
-
-.tournament-source-link:hover {
-	border-color: rgba(47, 128, 237, 0.45);
-	color: var(--tournament-blue);
 }
 
 .tournament-leader-card {
@@ -3625,8 +3619,7 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 
 .tournament-grid-section,
 .tournament-table-section,
-.tournament-details,
-.tournament-jury {
+.tournament-details {
 	margin-top: clamp(1.25rem, 3vw, 2rem);
 }
 
@@ -3758,7 +3751,8 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 
 .tournament-table-card,
 .tournament-rules-card,
-.tournament-preview-card {
+.tournament-preview-card,
+.tournament-jury {
 	overflow: hidden;
 	border-radius: 1.8rem;
 }
@@ -3824,8 +3818,9 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 
 .tournament-details {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) minmax(14rem, 22rem);
 	gap: 1rem;
+	align-items: start;
 }
 
 .tournament-rules-card {
@@ -3898,18 +3893,17 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 
 .tournament-jury {
 	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1rem;
-	border-radius: 1.6rem;
-	padding: 1rem;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.85rem;
+	padding: clamp(1rem, 3vw, 1.35rem);
 }
 
 .tournament-jury > div {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.65rem;
-	justify-content: flex-end;
+	justify-content: flex-start;
 }
 
 .tournament-jury span {
@@ -4008,18 +4002,13 @@ html[data-theme='dark'] .tournament-jury span {
 	}
 
 	.tournament-table-card__header,
-	.tournament-preview-card__header,
-	.tournament-jury {
+	.tournament-preview-card__header {
 		align-items: flex-start;
 		flex-direction: column;
 	}
 
 	.tournament-table-card__header p {
 		text-align: left;
-	}
-
-	.tournament-jury > div {
-		justify-content: flex-start;
 	}
 }
 
