@@ -205,6 +205,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./media:/media:ro
+      # Журналы выгрузок (AUDIT_LOG_ARCHIVE_DIR по умолчанию): без этой монтировки файлы только внутри контейнера.
+      - ./backend/logs/audit:/app/backend/logs/audit
     env_file:
       - .env
     secrets:

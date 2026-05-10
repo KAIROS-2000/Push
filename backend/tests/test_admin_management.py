@@ -775,6 +775,11 @@ class AdminManagementRegressionTests(unittest.TestCase):
 
         self.assertEqual(payload['load']['active_students'], 1)
         self.assertEqual(payload['load']['active_teachers'], 1)
+        self.assertEqual(payload['audience']['students_with_linked_parent'], 0)
+        self.assertEqual(payload['audience']['parent_coverage_percent'], 0.0)
+        self.assertEqual(payload['north_star']['window_days'], 7)
+        self.assertEqual(payload['north_star']['weekly_active_learners'], 2)
+        self.assertAlmostEqual(payload['north_star']['share_of_students_percent'], 66.7, places=1)
         self.assertEqual(payload['practice']['submissions'], 2)
         self.assertEqual(payload['practice']['assignments_with_submissions'], 1)
         self.assertEqual(payload['practice']['submission_rate'], 100.0)
@@ -785,6 +790,67 @@ class AdminManagementRegressionTests(unittest.TestCase):
             33.3,
             places=1,
         )
+
+    def test_admin_telemetry_parent_coverage_metric(self):
+        app = self.create_app()
+        self.create_user(
+            app,
+            full_name='Admin Example',
+            email='admin@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        parent_id = self.create_user(
+            app,
+            full_name='Parent Example',
+            email='parent@example.com',
+            password='ParentPass123!',
+            role='parent',
+            age_group='adult',
+        )
+        linked_student_id = self.create_user(
+            app,
+            full_name='Linked Child',
+            email='linked-child@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+        self.create_user(
+            app,
+            full_name='Orphan Student',
+            email='orphan@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+
+        with app.app_context():
+            from app.core.db import db
+            from app.models.parent_cabinet import ParentChildLink
+
+            db.session.add(
+                ParentChildLink(
+                    parent_user_id=parent_id,
+                    child_user_id=linked_student_id,
+                    active=True,
+                )
+            )
+            db.session.commit()
+
+        with app.test_client() as admin_client:
+            login_response = self.login(admin_client, 'admin@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+            telemetry_response = admin_client.get('/api/admin/telemetry')
+            self.assertEqual(telemetry_response.status_code, 200)
+            payload = telemetry_response.get_json()
+
+        self.assertEqual(payload['audience']['students'], 2)
+        self.assertEqual(payload['audience']['students_with_linked_parent'], 1)
+        self.assertEqual(payload['audience']['parent_coverage_percent'], 50.0)
+        self.assertEqual(payload['north_star']['weekly_active_learners'], 0)
+        self.assertEqual(payload['north_star']['share_of_students_percent'], 0.0)
 
     def test_superadmin_can_manage_admins_and_filter_audit_logs(self):
         app = self.create_app()
@@ -876,11 +942,12 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.assertEqual(list_before.get_json()['dates'], [])
 
         with app.app_context():
-            from app.services.audit_log_archive import run_audit_log_export
+            from app.services.audit_log_archive import run_daily_admin_log_exports
 
-            result = run_audit_log_export()
-            self.assertEqual(result['status'], 'ok')
-            self.assertEqual(result['row_count'], 1)
+            result = run_daily_admin_log_exports()
+            self.assertEqual(result['audit']['status'], 'ok')
+            self.assertEqual(result['audit']['row_count'], 1)
+            self.assertEqual(result['site_activity']['status'], 'skipped')
 
         with app.app_context():
             from app.models.user import AdminAuditLog
@@ -897,12 +964,210 @@ class AdminManagementRegressionTests(unittest.TestCase):
             self.login(client, 'admin@example.com', 'AdminPass123!')
             list_after = client.get('/api/admin/audit-log-archives')
             self.assertEqual(list_after.status_code, 200)
-            dates = list_after.get_json()['dates']
+            archives_json = list_after.get_json()
+            dates = archives_json['dates']
             self.assertEqual(len(dates), 1)
+            self.assertIn('site_activity_dates', archives_json)
+            self.assertEqual(archives_json.get('site_activity_dates', []), [])
             d = dates[0]
             dl = client.get(f'/api/admin/audit-log-archives/{d}')
             self.assertEqual(dl.status_code, 200)
             self.assertIn('application/json', (dl.headers.get('Content-Type') or '').lower())
+
+    def test_daily_export_site_activity_only(self):
+        import json as json_lib
+
+        app = self.create_app()
+        archive_root = Path(self._tempdirs[-1].name) / 'audit_archives_sa'
+        app.config['AUDIT_LOG_ARCHIVE_DIR'] = str(archive_root)
+
+        self.create_user(
+            app,
+            full_name='Admin Example',
+            email='admin_sa@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        student_id = self.create_user(
+            app,
+            full_name='Solo Student',
+            email='solo_sa@example.com',
+            password='StudentPass123!',
+            role='student',
+            age_group='middle',
+        )
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import AdminAuditLog, SiteActivityLog
+
+            self.assertEqual(AdminAuditLog.query.count(), 0)
+            db.session.add(
+                SiteActivityLog(
+                    user_id=student_id,
+                    user_role='student',
+                    method='POST',
+                    path='/api/hello',
+                    status_code=404,
+                    client_ip='127.0.0.2',
+                )
+            )
+            db.session.commit()
+
+        with app.app_context():
+            from app.models.user import AdminAuditLog, SiteActivityLog
+            from app.services.audit_log_archive import run_daily_admin_log_exports
+
+            result = run_daily_admin_log_exports()
+            self.assertEqual(AdminAuditLog.query.count(), 0)
+            self.assertEqual(SiteActivityLog.query.count(), 0)
+
+        self.assertEqual(result['audit']['status'], 'skipped')
+        self.assertEqual(result['site_activity']['status'], 'ok')
+        self.assertEqual(result['site_activity']['row_count'], 1)
+        date_key = result['site_activity']['date']
+
+        sa_files = list(archive_root.glob('site_activity_*.json'))
+        self.assertEqual(len(sa_files), 1)
+        dumped = json_lib.loads(sa_files[0].read_text(encoding='utf-8'))
+        self.assertEqual(dumped['items'][0]['path'], '/api/hello')
+
+        with app.test_client() as client:
+            self.login(client, 'admin_sa@example.com', 'AdminPass123!')
+            archives = client.get('/api/admin/audit-log-archives')
+            self.assertEqual(archives.status_code, 200)
+            self.assertEqual(archives.get_json()['dates'], [])
+            self.assertEqual(archives.get_json()['site_activity_dates'], [date_key])
+
+            dl = client.get(f'/api/admin/site-activity-log-archives/{date_key}')
+            self.assertEqual(dl.status_code, 200)
+
+    def test_manual_log_export_writes_timestamp_filenames(self):
+        import json as json_lib
+        import re
+
+        app = self.create_app()
+        archive_root = Path(self._tempdirs[-1].name) / 'manual_archives'
+        app.config['AUDIT_LOG_ARCHIVE_DIR'] = str(archive_root)
+
+        admin_id = self.create_user(
+            app,
+            full_name='Admin Example',
+            email='manual-export@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import AdminAuditLog, SiteActivityLog, UserRole
+
+            db.session.add_all(
+                [
+                    AdminAuditLog(
+                        actor_user_id=admin_id,
+                        actor_role=UserRole.ADMIN.value,
+                        action='manual_test',
+                        entity_type='entity',
+                        entity_id=42,
+                        entity_label='x',
+                        details_json={'k': 'v'},
+                    ),
+                    SiteActivityLog(
+                        user_id=admin_id,
+                        user_role='admin',
+                        method='GET',
+                        path='/api/x',
+                        status_code=204,
+                        client_ip='127.0.0.1',
+                    ),
+                ]
+            )
+            db.session.commit()
+
+        with app.test_client() as client:
+            login_response = self.login(client, 'manual-export@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+
+            resp = client.post(
+                '/api/admin/audit-log-archives/export-manual',
+                json={'snapshot_key': '2099-12-31_23-59-59'},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.get_json() or {}
+            self.assertEqual(body.get('export_kind'), 'manual')
+            self.assertEqual(body['snapshot_timezone'], 'browser_local')
+            self.assertEqual(body['snapshot_key'], '2099-12-31_23-59-59')
+            self.assertRegex(
+                body['snapshot_key'],
+                re.compile(r'^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$'),
+            )
+            self.assertEqual(body['audit']['status'], 'ok')
+            self.assertEqual(body['audit']['row_count'], 1)
+            self.assertEqual(body['site_activity']['status'], 'ok')
+            self.assertEqual(body['site_activity']['row_count'], 1)
+
+        with app.app_context():
+            from app.models.user import AdminAuditLog, SiteActivityLog
+
+            self.assertEqual(AdminAuditLog.query.count(), 0)
+            self.assertEqual(SiteActivityLog.query.count(), 0)
+
+        files_a = sorted(archive_root.glob('admin_audit_manual_*.json'))
+        files_s = sorted(archive_root.glob('site_activity_manual_*.json'))
+        self.assertEqual(len(files_a), 1)
+        self.assertEqual(len(files_s), 1)
+
+        jd = json_lib.loads(files_a[0].read_text(encoding='utf-8'))
+        self.assertEqual(jd.get('export_kind'), 'manual')
+        self.assertEqual(jd.get('snapshot_timezone'), 'browser_local')
+        self.assertEqual(jd['items'][0]['action'], 'manual_test')
+
+    def test_manual_export_invalid_snapshot_key_falls_back_to_server_utc(self):
+        app = self.create_app()
+        archive_root = Path(self._tempdirs[-1].name) / 'manual_archives_fallback'
+        app.config['AUDIT_LOG_ARCHIVE_DIR'] = str(archive_root)
+
+        admin_id = self.create_user(
+            app,
+            full_name='Admin Fallback',
+            email='fallback-manual@example.com',
+            password='AdminPass123!',
+            role='admin',
+            age_group='adult',
+        )
+        with app.app_context():
+            from app.core.db import db
+            from app.models.user import AdminAuditLog, UserRole
+
+            db.session.add(
+                AdminAuditLog(
+                    actor_user_id=admin_id,
+                    actor_role=UserRole.ADMIN.value,
+                    action='junk_key_test',
+                    entity_type='entity',
+                    entity_id=1,
+                    entity_label='x',
+                    details_json={},
+                )
+            )
+            db.session.commit()
+
+        with app.test_client() as client:
+            login_response = self.login(client, 'fallback-manual@example.com', 'AdminPass123!')
+            self.assertEqual(login_response.status_code, 200)
+            resp = client.post(
+                '/api/admin/audit-log-archives/export-manual',
+                json={'snapshot_key': '2099-13-01_01-02-03'},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.get_json() or {}
+            self.assertEqual(body.get('snapshot_timezone'), 'server_utc')
+
+        with app.app_context():
+            from app.models.user import AdminAuditLog
+
+            self.assertEqual(AdminAuditLog.query.count(), 0)
 
     def test_site_activity_logs_and_audit_sorting(self):
         app = self.create_app()

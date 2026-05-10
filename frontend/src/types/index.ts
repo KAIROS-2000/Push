@@ -101,6 +101,11 @@ export interface AdminTelemetryLessonCompletionItem {
 
 export interface AdminTelemetryData {
   generated_at: string
+  north_star: {
+    weekly_active_learners: number
+    window_days: number
+    share_of_students_percent: number
+  }
   load: {
     active_users: number
     active_students: number
@@ -126,6 +131,8 @@ export interface AdminTelemetryData {
     active_teachers: number
     blocked_users: number
     teacher_requests_pending: number
+    students_with_linked_parent: number
+    parent_coverage_percent: number
     role_distribution: AdminTelemetryDistributionItem[]
     active_session_distribution: AdminTelemetryDistributionItem[]
   }
@@ -270,7 +277,26 @@ export interface SiteActivityLogResponse {
 
 export interface AdminAuditLogArchivesResponse {
   dates: string[]
+  /** Dates with `site_activity_YYYY-MM-DD.json` snapshots (daily export). */
+  site_activity_dates?: string[]
   export_hour_utc: number
+}
+
+export interface AdminManualLogExportSlice {
+  status: string
+  row_count?: number
+  path?: string
+  filename?: string
+  reason?: string
+}
+
+export interface AdminManualLogExportResponse {
+  export_kind: 'manual'
+  snapshot_key: string
+  snapshot_timezone: 'browser_local' | 'server_utc'
+  exported_at: string
+  audit: AdminManualLogExportSlice
+  site_activity: AdminManualLogExportSlice
 }
 
 export interface LessonSummary {

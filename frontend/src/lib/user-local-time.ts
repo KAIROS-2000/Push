@@ -56,3 +56,19 @@ export function formatApiCalendarDayLabelRu(
 	if (Number.isNaN(fromIso.getTime())) return ymd
 	return new Intl.DateTimeFormat(RU_LOCALE, options).format(fromIso)
 }
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * Local browser calendar + clock (same TZ as {@link UserLocalTime}).
+ * Stem for filenames: `YYYY-MM-DD_HH-MM-SS`.
+ */
+export function formatLocalInstantForFilenameStem(date: Date = new Date()): string {
+	const y = date.getFullYear()
+	const m = pad(date.getMonth() + 1)
+	const d = pad(date.getDate())
+	const h = pad(date.getHours())
+	const min = pad(date.getMinutes())
+	const s = pad(date.getSeconds())
+	return `${y}-${m}-${d}_${h}-${min}-${s}`
+}

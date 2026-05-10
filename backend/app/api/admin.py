@@ -33,7 +33,7 @@ from ..models.learning import (
     normalize_task_validation,
 )
 from ..models.messaging import Conversation, ConversationReadState, Message
-from ..models.parent_cabinet import ParentLinkCode
+from ..models.parent_cabinet import ParentChildLink, ParentLinkCode
 from ..models.user import (
     TEACHER_APPROVAL_APPROVED,
     TEACHER_APPROVAL_PENDING,
@@ -570,6 +570,28 @@ def telemetry(current_user: User):
     active_by_role = {item['label']: item['value'] for item in active_session_distribution}
 
     students_count = User.query.filter_by(role=UserRole.STUDENT).count()
+    students_with_linked_parent = _scalar_int(
+        db.session.query(func.count(func.distinct(User.id)))
+        .join(
+            ParentChildLink,
+            (ParentChildLink.child_user_id == User.id)
+            & (ParentChildLink.active.is_(True))
+            & (ParentChildLink.revoked_at.is_(None)),
+        )
+        .filter(User.role == UserRole.STUDENT)
+    )
+    parent_coverage_percent = _percent(students_with_linked_parent, students_count)
+    north_star_weekly_active = _scalar_int(
+        db.session.query(func.count(func.distinct(UserProgress.user_id)))
+        .join(User, User.id == UserProgress.user_id)
+        .filter(
+            User.role == UserRole.STUDENT,
+            UserProgress.status == 'completed',
+            UserProgress.completed_at.isnot(None),
+            UserProgress.completed_at >= week_ago,
+        )
+    )
+    north_star_share_of_students = _percent(north_star_weekly_active, students_count)
     teachers_count = User.query.filter_by(
         role=UserRole.TEACHER,
         teacher_approval_status=TEACHER_APPROVAL_APPROVED,
@@ -616,6 +638,11 @@ def telemetry(current_user: User):
 
     return {
         'generated_at': now.isoformat(),
+        'north_star': {
+            'weekly_active_learners': north_star_weekly_active,
+            'window_days': 7,
+            'share_of_students_percent': north_star_share_of_students,
+        },
         'load': {
             'active_users': sum(active_by_role.values()),
             'active_students': active_by_role.get(UserRole.STUDENT.value, 0),
@@ -653,6 +680,8 @@ def telemetry(current_user: User):
             'active_teachers': active_teachers,
             'blocked_users': blocked_users,
             'teacher_requests_pending': pending_teacher_requests,
+            'students_with_linked_parent': students_with_linked_parent,
+            'parent_coverage_percent': parent_coverage_percent,
             'role_distribution': _distribution(
                 db.session.query(User.role, func.count(User.id))
                 .group_by(User.role)
@@ -1383,13 +1412,42 @@ def attach_assignment_image(current_user: User, assignment_id: int):
 @admin_bp.get('/audit-log-archives')
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def list_audit_log_archives(current_user: User):
-    from ..services.audit_log_archive import get_archive_dir, list_archive_dates
+    from ..services.audit_log_archive import (
+        get_archive_dir,
+        list_archive_dates,
+        list_site_activity_archive_dates,
+    )
 
     archive_dir = get_archive_dir()
     return {
         'dates': list_archive_dates(archive_dir),
+        'site_activity_dates': list_site_activity_archive_dates(archive_dir),
         'export_hour_utc': current_app.config.get('AUDIT_LOG_DAILY_EXPORT_HOUR_UTC', 3),
     }
+
+
+@admin_bp.post('/audit-log-archives/export-manual')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def export_manual_audit_log_archives(current_user: User):
+    from ..services.audit_log_archive import run_manual_admin_log_exports
+
+    body = request.get_json(silent=True) or {}
+    raw_key = body.get('snapshot_key')
+    client_key = raw_key.strip() if isinstance(raw_key, str) else None
+
+    try:
+        return run_manual_admin_log_exports(client_snapshot_key=client_key or None)
+    except OSError as err:
+        current_app.logger.exception('manual audit export failed: filesystem (%s)', err)
+        return {
+            'message': (
+                'Не удалось записать файлы архива. Проверьте права на каталог AUDIT_LOG_ARCHIVE_DIR '
+                'и место на диске.'
+            ),
+        }, 500
+    except Exception:  # noqa: BLE001
+        current_app.logger.exception('manual audit export failed')
+        return {'message': 'Не удалось выполнить выгрузку журналов. См. логи сервера.'}, 500
 
 
 @admin_bp.get('/audit-log-archives/<string:date_key>')
@@ -1400,6 +1458,22 @@ def download_audit_log_archive(current_user: User, date_key: str):
     path = resolve_archive_file(get_archive_dir(), date_key)
     if not path or not path.is_file():
         return {'message': 'Архив за эту дату не найден.'}, 404
+    return send_file(
+        str(path),
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=path.name,
+    )
+
+
+@admin_bp.get('/site-activity-log-archives/<string:date_key>')
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
+def download_site_activity_log_archive(current_user: User, date_key: str):
+    from ..services.audit_log_archive import get_archive_dir, resolve_site_activity_archive_file
+
+    path = resolve_site_activity_archive_file(get_archive_dir(), date_key)
+    if not path or not path.is_file():
+        return {'message': 'Архив активности за эту дату не найден.'}, 404
     return send_file(
         str(path),
         mimetype='application/json',

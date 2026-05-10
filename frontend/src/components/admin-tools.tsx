@@ -7,6 +7,7 @@ import { UserLocalTime } from '@/components/user-local-time'
 
 import { AdminLessonBuilder } from '@/components/admin-lesson-builder'
 import { api } from '@/lib/api'
+import { formatLocalInstantForFilenameStem } from '@/lib/user-local-time'
 import { PUBLIC_API_URL } from '@/lib/public-env'
 import { showErrorToast, showInfoToast, showSuccessToast } from '@/lib/toast'
 import type {
@@ -14,6 +15,7 @@ import type {
   AdminAuditLogItem,
   AdminAuditLogArchivesResponse,
   AdminAuditLogResponse,
+  AdminManualLogExportResponse,
   AdminOverviewData,
   AdminTeacherRequestsResponse,
   AdminUserDirectoryResponse,
@@ -1355,6 +1357,7 @@ export function AdminAuditLogPanel({
   const [archiveDate, setArchiveDate] = useState('')
   const [archivesLoading, setArchivesLoading] = useState(true)
   const [archiveDownloadBusy, setArchiveDownloadBusy] = useState(false)
+  const [manualExportBusy, setManualExportBusy] = useState(false)
   const skipInitialLoad = useRef(Boolean(initialData))
 
   const [siteResponse, setSiteResponse] = useState<SiteActivityLogResponse | null>(null)
@@ -1539,6 +1542,59 @@ export function AdminAuditLogPanel({
     }
   }
 
+  async function manualExportLogs() {
+    setManualExportBusy(true)
+    try {
+      const snapshotKey = formatLocalInstantForFilenameStem()
+      const data = await api<AdminManualLogExportResponse>(
+        '/admin/audit-log-archives/export-manual',
+        {
+          method: 'POST',
+          body: JSON.stringify({ snapshot_key: snapshotKey }),
+        },
+        'required',
+      )
+      const a = data.audit
+      const s = data.site_activity
+      const parts: string[] = []
+      if (a.status === 'ok' && a.filename) {
+        let line = `аудит: ${a.filename} (${a.row_count ?? 0})`
+        if (a.path) line += ` — ${a.path}`
+        parts.push(line)
+      } else if (a.status === 'skipped') parts.push('аудит: не было записей для выгрузки')
+      if (s.status === 'ok' && s.filename) {
+        let line = `API-журнал: ${s.filename} (${s.row_count ?? 0})`
+        if (s.path) line += ` — ${s.path}`
+        parts.push(line)
+      } else if (s.status === 'skipped' && s.reason === 'site_activity_logging_disabled')
+        parts.push('API-журнал: сбор отключён')
+      else if (s.status === 'skipped') parts.push('API-журнал: не было записей для выгрузки')
+      const tzHint =
+        data.snapshot_timezone === 'browser_local'
+          ? 'ваше локальное время'
+          : 'время сервера (UTC)'
+      showSuccessToast(`Снимок ${data.snapshot_key} (${tzHint}): ${parts.join('; ')}`)
+      setPage(1)
+      void load({
+        action,
+        actorRole,
+        actorLogin,
+        target,
+        page: 1,
+        sort: auditSort,
+        order: auditOrder,
+      })
+      if (logTab === 'site') {
+        setSitePage(1)
+        void loadSite({ page: 1 })
+      }
+    } catch (error) {
+      showErrorToast(describeError(error, 'Не удалось выполнить досрочную выгрузку.'))
+    } finally {
+      setManualExportBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <section className="codequest-card p-6 sm:p-7">
@@ -1546,7 +1602,12 @@ export function AdminAuditLogPanel({
           <p className="brand-eyebrow">Архив</p>
           <h2 className="text-2xl font-black text-slate-900">Выгрузки по дням</h2>
           <p className="text-sm leading-7 text-slate-500">
-            По расписанию (по UTC) накопленные с прошлой выгрузки записи пишутся в JSON-файл в каталоге <code className="text-slate-600">backend/logs/audit</code> на сервере, затем «горячая» таблица очищается. Ниже можно скачать файл по дате в его имени.
+          По расписанию (по UTC) накопленные с прошлой выгрузки записи пишутся в JSON-файл по календарной дате в каталоге архива на сервере
+            (по умолчанию <code className="text-slate-600">/app/backend/logs/audit</code> в Docker; на вашем компьютере при стандартном{' '}
+            <code className="text-slate-600">docker-compose</code> это папка проекта{' '}
+            <code className="text-slate-600">backend/logs/audit</code>),
+            затем «горячая» таблица очищается. Ниже можно скачать файл по дате в имени. Досрочная выгрузка сохраняет
+            отдельные файлы по метке времени в вашей таймзоне браузера; ночное расписание не отменяется.
             {archives && typeof archives.export_hour_utc === 'number' ? (
               <span> Плановый час (UTC) для встроенного планировщика: {archives.export_hour_utc}:00.</span>
             ) : null}
@@ -1582,6 +1643,23 @@ export function AdminAuditLogPanel({
           >
             {archiveDownloadBusy ? 'Скачивание…' : 'Скачать JSON'}
           </button>
+        </div>
+        <div className="mt-8 flex flex-col gap-4 border-t border-slate-200 pt-6 sm:flex-row sm:flex-wrap sm:items-center">
+          <button
+            type="button"
+            className="brand-button-secondary inline-flex min-h-[3.15rem] items-center justify-center px-6 text-sm font-bold"
+            onClick={() => void manualExportLogs()}
+            disabled={manualExportBusy || archivesLoading}
+          >
+            {manualExportBusy ? 'Сохранение…' : 'Сохранить в файлы сейчас'}
+          </button>
+          <p className="max-w-xl text-sm leading-7 text-slate-500">
+            Текущие записи журнала админ-действий и журнала API сохраняются в два файла вида{' '}
+            <code className="text-slate-600">admin_audit_manual_YYYY-MM-DD_HH-MM-SS.json</code> и{' '}
+            <code className="text-slate-600">site_activity_manual_YYYY-MM-DD_HH-MM-SS.json</code> по{' '}
+            <strong className="text-slate-700">локальному времени браузера</strong> (как в подписях времени рядом с
+            записями), затем они удаляются из базы.
+          </p>
         </div>
       </section>
 

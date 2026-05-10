@@ -55,9 +55,9 @@ def register_commands(app: Flask) -> None:
     @app.cli.command("export-audit-logs")
     @with_appcontext
     def export_audit_logs_command() -> None:
-        from .services.audit_log_archive import run_audit_log_export
+        from .services.audit_log_archive import run_daily_admin_log_exports
 
-        result = run_audit_log_export()
+        result = run_daily_admin_log_exports()
         click.echo(str(result))
 
     @app.cli.command("backfill-assignment-images")

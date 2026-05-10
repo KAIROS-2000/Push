@@ -487,12 +487,12 @@ def _start_audit_log_export_thread(app: Flask) -> None:
                 sleep_s = (target - now).total_seconds()
                 time.sleep(sleep_s)
                 with app.app_context():
-                    from .services.audit_log_archive import run_audit_log_export
+                    from .services.audit_log_archive import run_daily_admin_log_exports
 
-                    result = run_audit_log_export()
-                    app.logger.info("audit_log_export %s", result)
+                    result = run_daily_admin_log_exports()
+                    app.logger.info("daily_admin_log_export %s", result)
             except Exception:  # noqa: BLE001
-                app.logger.exception("audit_log_export loop failed")
+                app.logger.exception("daily_admin_log_export loop failed")
                 time.sleep(60.0)
 
     threading.Thread(target=run_loop, name="audit-log-export", daemon=True).start()

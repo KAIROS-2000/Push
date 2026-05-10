@@ -224,6 +224,6 @@ class Config:
     AUDIT_LOG_DAILY_EXPORT_HOUR_UTC = int(_env('AUDIT_LOG_DAILY_EXPORT_HOUR_UTC') or '3')
     ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD = _as_bool(
         os.getenv('ENABLE_AUDIT_LOG_DAILY_EXPORT_THREAD'),
-        default=False,
+        default=True,
     )
     ENABLE_SITE_ACTIVITY_LOG = _as_bool(os.getenv('ENABLE_SITE_ACTIVITY_LOG'), default=True)
