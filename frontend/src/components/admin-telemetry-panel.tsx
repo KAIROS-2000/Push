@@ -71,22 +71,22 @@ function MetricCard({
   tone?: 'default' | 'sky' | 'emerald' | 'amber' | 'rose'
   detail?: string
 }) {
-  const toneClass =
+  const toneMod =
     tone === 'sky'
-      ? 'border-sky-200 bg-sky-50/80 text-sky-900'
+      ? 'admin-telemetry-metric--sky'
       : tone === 'emerald'
-        ? 'border-emerald-200 bg-emerald-50/80 text-emerald-900'
+        ? 'admin-telemetry-metric--emerald'
         : tone === 'amber'
-          ? 'border-amber-200 bg-amber-50/80 text-amber-900'
+          ? 'admin-telemetry-metric--amber'
           : tone === 'rose'
-            ? 'border-rose-200 bg-rose-50/80 text-rose-900'
-            : 'border-slate-200 bg-white/80 text-slate-900'
+            ? 'admin-telemetry-metric--rose'
+            : 'admin-telemetry-metric--default'
 
   return (
-    <article className={`rounded-[1.75rem] border p-5 shadow-[0_18px_38px_rgba(17,40,93,0.06)] ${toneClass}`}>
-      <p className="text-xs font-bold uppercase text-slate-500">{label}</p>
-      <p className="mt-3 text-3xl font-black">{value}</p>
-      {detail ? <p className="mt-2 text-sm font-semibold text-slate-500">{detail}</p> : null}
+    <article className={`admin-telemetry-metric ${toneMod}`}>
+      <p className="admin-telemetry-metric__label">{label}</p>
+      <p className="admin-telemetry-metric__value">{value}</p>
+      {detail ? <p className="admin-telemetry-metric__detail">{detail}</p> : null}
     </article>
   )
 }
@@ -300,6 +300,32 @@ export function AdminTelemetryPanel({ telemetry }: { telemetry: AdminTelemetryDa
         </div>
       </section>
 
+      <section className="admin-telemetry-north-star codequest-card p-6 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="admin-telemetry-north-star__intro min-w-0 max-w-2xl space-y-2">
+            <p className="brand-eyebrow">North Star</p>
+            <h2 className="admin-telemetry-north-star__title text-2xl font-black sm:text-3xl">
+              Полярная звезда
+            </h2>
+            <p className="admin-telemetry-north-star__body text-sm leading-7">
+              Ключевая метрика вовлечённости: число учеников, завершивших хотя бы один урок за последние{' '}
+              {telemetry.north_star.window_days} дней (не входы и не регистрации, а факт обучения).
+            </p>
+          </div>
+          <div className="admin-telemetry-north-star__stats w-full shrink-0 text-left sm:w-auto sm:text-right">
+            <p className="admin-telemetry-north-star__kicker text-xs font-bold uppercase tracking-[0.18em]">
+              Активные ученики
+            </p>
+            <p className="admin-telemetry-north-star__stat-value mt-2 text-4xl font-black tabular-nums sm:text-5xl">
+              {formatNumber(telemetry.north_star.weekly_active_learners)}
+            </p>
+            <p className="admin-telemetry-north-star__stat-detail mt-2 text-sm font-semibold">
+              {formatPercent(clampPercent(telemetry.north_star.share_of_students_percent))} от всех учеников
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="На сайте"
@@ -327,10 +353,16 @@ export function AdminTelemetryPanel({ telemetry }: { telemetry: AdminTelemetryDa
         />
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="Всего пользователей" value={formatNumber(telemetry.audience.total_users)} />
         <MetricCard label="Ученики" value={formatNumber(telemetry.audience.students)} />
         <MetricCard label="Учителя" value={formatNumber(telemetry.audience.teachers)} />
+        <MetricCard
+          label="Охват родителей"
+          value={formatPercent(clampPercent(telemetry.audience.parent_coverage_percent))}
+          detail={`${formatNumber(telemetry.audience.students_with_linked_parent)} из ${formatNumber(telemetry.audience.students)} учеников с привязанным родителем`}
+          tone="emerald"
+        />
         <MetricCard
           label="Риски очередей"
           value={formatNumber(

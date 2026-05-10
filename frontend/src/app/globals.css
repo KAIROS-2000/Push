@@ -335,6 +335,151 @@ html[data-theme='dark'] .codequest-card {
 	box-shadow: 0 18px 60px rgba(1, 4, 9, 0.45);
 }
 
+/* Admin telemetry: metric cards + North Star (explicit colors; avoids low-contrast Tailwind + dark overrides) */
+.admin-telemetry-metric {
+	border-radius: 1.75rem;
+	padding: 1.25rem;
+	border: 1px solid #e2e8f0;
+	box-shadow: 0 18px 38px rgba(17, 40, 93, 0.06);
+}
+.admin-telemetry-metric__label {
+	margin: 0;
+	font-size: 0.75rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	color: #64748b;
+}
+.admin-telemetry-metric__value {
+	margin: 0.75rem 0 0;
+	font-size: 1.875rem;
+	line-height: 2.25rem;
+	font-weight: 900;
+	color: #0f172a;
+}
+.admin-telemetry-metric__detail {
+	margin: 0.5rem 0 0;
+	font-size: 0.875rem;
+	font-weight: 600;
+	line-height: 1.5rem;
+	color: #64748b;
+}
+.admin-telemetry-metric--default {
+	border-color: #e2e8f0;
+	background: rgba(255, 255, 255, 0.8);
+}
+.admin-telemetry-metric--sky {
+	border-color: #bae6fd;
+	background: rgba(224, 242, 254, 0.85);
+}
+.admin-telemetry-metric--sky .admin-telemetry-metric__value {
+	color: #0c4a6e;
+}
+.admin-telemetry-metric--emerald {
+	border-color: #a7f3d0;
+	background: rgba(209, 250, 229, 0.85);
+}
+.admin-telemetry-metric--emerald .admin-telemetry-metric__value {
+	color: #064e3b;
+}
+.admin-telemetry-metric--amber {
+	border-color: #fcd34d;
+	background: rgba(254, 243, 199, 0.9);
+}
+.admin-telemetry-metric--amber .admin-telemetry-metric__value {
+	color: #78350f;
+}
+.admin-telemetry-metric--rose {
+	border-color: #fecdd3;
+	background: rgba(255, 228, 230, 0.9);
+}
+.admin-telemetry-metric--rose .admin-telemetry-metric__value {
+	color: #881337;
+}
+
+html[data-theme='dark'] .admin-telemetry-metric {
+	border-color: var(--border-default);
+	box-shadow: 0 18px 38px rgba(1, 4, 9, 0.45);
+}
+html[data-theme='dark'] .admin-telemetry-metric__label,
+html[data-theme='dark'] .admin-telemetry-metric__detail {
+	color: #c9d1d9 !important;
+}
+html[data-theme='dark'] .admin-telemetry-metric--default {
+	background: rgba(22, 27, 34, 0.92);
+}
+html[data-theme='dark'] .admin-telemetry-metric--default .admin-telemetry-metric__value {
+	color: #e6edf3 !important;
+}
+html[data-theme='dark'] .admin-telemetry-metric--sky {
+	border-color: rgba(56, 139, 253, 0.45);
+	background: linear-gradient(155deg, rgba(56, 139, 253, 0.14), rgba(22, 27, 34, 0.96));
+}
+html[data-theme='dark'] .admin-telemetry-metric--sky .admin-telemetry-metric__value {
+	color: #79c0ff !important;
+}
+html[data-theme='dark'] .admin-telemetry-metric--emerald {
+	border-color: rgba(63, 185, 80, 0.42);
+	background: linear-gradient(155deg, rgba(63, 185, 80, 0.14), rgba(22, 27, 34, 0.96));
+}
+html[data-theme='dark'] .admin-telemetry-metric--emerald .admin-telemetry-metric__value {
+	color: #56d364 !important;
+}
+html[data-theme='dark'] .admin-telemetry-metric--amber {
+	border-color: rgba(210, 153, 34, 0.45);
+	background: linear-gradient(155deg, rgba(210, 153, 34, 0.16), rgba(22, 27, 34, 0.96));
+}
+html[data-theme='dark'] .admin-telemetry-metric--amber .admin-telemetry-metric__value {
+	color: #e3b341 !important;
+}
+html[data-theme='dark'] .admin-telemetry-metric--rose {
+	border-color: rgba(248, 81, 73, 0.4);
+	background: linear-gradient(155deg, rgba(248, 81, 73, 0.12), rgba(22, 27, 34, 0.96));
+}
+html[data-theme='dark'] .admin-telemetry-metric--rose .admin-telemetry-metric__value {
+	color: #ff7b72 !important;
+}
+
+.admin-telemetry-north-star {
+	border-color: rgba(16, 185, 129, 0.35) !important;
+	background: linear-gradient(145deg, rgba(209, 250, 229, 0.75), rgba(255, 255, 255, 0.92)) !important;
+	box-shadow: 0 20px 46px rgba(16, 100, 80, 0.07);
+}
+.admin-telemetry-north-star__title {
+	color: #0f172a;
+}
+.admin-telemetry-north-star__body {
+	color: #475569;
+}
+.admin-telemetry-north-star__kicker {
+	color: #047857;
+}
+.admin-telemetry-north-star__stat-value {
+	color: #064e3b;
+}
+.admin-telemetry-north-star__stat-detail {
+	color: #475569;
+}
+
+html[data-theme='dark'] .admin-telemetry-north-star {
+	border-color: rgba(63, 185, 80, 0.4) !important;
+	background: linear-gradient(155deg, rgba(63, 185, 80, 0.12), rgba(22, 27, 34, 0.96)) !important;
+	box-shadow: 0 20px 48px rgba(1, 4, 9, 0.42);
+}
+html[data-theme='dark'] .admin-telemetry-north-star__title {
+	color: #e6edf3 !important;
+}
+html[data-theme='dark'] .admin-telemetry-north-star__body,
+html[data-theme='dark'] .admin-telemetry-north-star__stat-detail {
+	color: #c9d1d9 !important;
+}
+html[data-theme='dark'] .admin-telemetry-north-star__kicker {
+	color: #8b949e !important;
+}
+html[data-theme='dark'] .admin-telemetry-north-star__stat-value {
+	color: #56d364 !important;
+}
+
 .roadmap-gradient {
 	background: linear-gradient(180deg, #4a90d9 0%, #2ecc71 50%, #f39c12 100%);
 }
@@ -3950,7 +4095,7 @@ html[data-theme='dark'] .tournament-jury span {
 }
 
 .site-footer {
-	margin-top: clamp(2.5rem, 5vw, 4rem);
+	padding-top: clamp(2.5rem, 5vw, 4rem);
 	border-top: 1px solid var(--progyx-border);
 	background: rgba(255, 255, 255, 0.88);
 }
