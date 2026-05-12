@@ -48,7 +48,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
             'METRICS_DEBUG': 'false',
@@ -84,7 +83,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             SESSION_COOKIE_SECURE='true',
             CLIENT_URL='https://frontend.example',
             SECRET_KEY='a1' * 32,
-            GIGACHAT_VERIFY_SSL='true',
             **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])
@@ -97,7 +95,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SAMESITE='Lax',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 **_PROD_REDIS_ENV,
             )
 
@@ -110,7 +107,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SECRET_KEY='a1' * 32,
                 JWT_SIGNING_KEY_ID='current',
                 JWT_SIGNING_KEYS='previous=' + ('b2' * 32),
-                GIGACHAT_VERIFY_SSL='true',
                 **_PROD_REDIS_ENV,
             )
 
@@ -122,7 +118,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             SECRET_KEY='a1' * 32,
             JWT_SIGNING_KEY_ID='current',
             JWT_SIGNING_KEYS='current=' + ('c3' * 32) + ',previous=' + ('d4' * 32),
-            GIGACHAT_VERIFY_SSL='true',
             **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])
@@ -165,17 +160,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         )
         self.assertFalse(app.config['IS_PRODUCTION'])
 
-    def test_production_rejects_disabled_gigachat_ssl_verification(self):
-        with self.assertRaisesRegex(RuntimeError, 'GIGACHAT_VERIFY_SSL'):
-            self.create_app(
-                APP_ENV='production',
-                SESSION_COOKIE_SECURE='true',
-                CLIENT_URL='https://frontend.example',
-                SECRET_KEY='Abcdef1234567890!Abcdef1234567890!Abcdef',
-                GIGACHAT_VERIFY_SSL='false',
-                **_PROD_REDIS_ENV,
-            )
-
     def test_production_requires_redis_url(self):
         with self.assertRaisesRegex(RuntimeError, 'REDIS_URL'):
             self.create_app(
@@ -183,7 +167,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 REDIS_URL='',
                 REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
             )
@@ -195,7 +178,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 REDIS_URL='redis://127.0.0.1:6379/0',
                 REDIS_PASSWORD='short',
             )
@@ -207,7 +189,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 REDIS_URL='redis://placeholder-host:6379/0',
                 REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
             )
@@ -219,7 +200,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 REDIS_URL='rediss://127.0.0.1:6379/0',
                 REDIS_PASSWORD='UnitTestRedisPassword0123456789ABC!',
             )
@@ -231,7 +211,6 @@ class RuntimeConfigValidationTests(unittest.TestCase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 REDIS_URL='redis://127.0.0.1:6379/0',
                 REDIS_PASSWORD='prefix-change-me-suffix-123456789012',
             )

@@ -9,23 +9,23 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@gsap/react": "latest",
-    "@monaco-editor/react": "latest",
-    "clsx": "latest",
+    "@gsap/react": "^2.1.2",
+    "@monaco-editor/react": "^4.7.0",
+    "clsx": "^2.1.1",
     "gsap": "3.14.2",
-    "lucide-react": "latest",
+    "lucide-react": "^0.460.0",
     "next": "16.2.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-hot-toast": "^2.6.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "tailwindcss": "latest",
-    "typescript": "latest"
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5.7.2"
   },
   "overrides": {
     "dompurify": "^3.3.2"

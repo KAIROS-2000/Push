@@ -40,7 +40,6 @@ class CosmeticsTests(unittest.TestCase):
             "ENABLE_DEMO_DATA": "false",
             "SUPERADMIN_BOOTSTRAP": "false",
             "SESSION_COOKIE_SECURE": "false",
-            "GIGACHAT_VERIFY_SSL": "true",
             "CODE_JUDGE_RUNNER_URL": "",
             "CODE_JUDGE_RUNNER_TOKEN": "",
             "METRICS_DEBUG": "false",

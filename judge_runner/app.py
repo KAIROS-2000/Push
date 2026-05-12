@@ -24,6 +24,11 @@ from shared.judge import JudgeExecutionRequest, async_execute_stdio_submission, 
 HOST = os.getenv('JUDGE_RUNNER_HOST', '0.0.0.0')
 PORT = int(os.getenv('JUDGE_RUNNER_PORT', '8090'))
 MAX_REQUEST_BYTES = int(os.getenv('JUDGE_RUNNER_MAX_REQUEST_BYTES', '1048576'))
+# Independent of the JSON envelope cap, also bound the executed source size so a
+# pathological payload cannot stall the language toolchain at parse time.
+MAX_CODE_BYTES = int(os.getenv('JUDGE_RUNNER_MAX_CODE_BYTES', '262144'))  # 256 KB
+# Aggregate stdin across all tests in a single submission cannot exceed this.
+MAX_STDIN_BYTES_TOTAL = int(os.getenv('JUDGE_RUNNER_MAX_STDIN_BYTES_TOTAL', '1048576'))  # 1 MB
 DEFAULT_TIME_LIMIT_MS = int(os.getenv('JUDGE_RUNNER_DEFAULT_TIME_LIMIT_MS', '2000'))
 DEFAULT_MEMORY_LIMIT_MB = int(os.getenv('JUDGE_RUNNER_DEFAULT_MEMORY_LIMIT_MB', '128'))
 MAX_OUTPUT_CHARS = int(os.getenv('JUDGE_RUNNER_MAX_OUTPUT_CHARS', '4000'))
@@ -32,7 +37,28 @@ MAX_TEST_CONCURRENCY = max(1, int(os.getenv('JUDGE_RUNNER_MAX_TEST_CONCURRENCY',
 PYTHON_BIN = os.getenv('JUDGE_RUNNER_PYTHON_BIN', 'python')
 NODE_BIN = os.getenv('JUDGE_RUNNER_NODE_BIN', 'node')
 AUTH_TOKEN = (os.getenv('JUDGE_RUNNER_AUTH_TOKEN') or '').strip()
-ALLOW_UNAUTHENTICATED = (os.getenv('JUDGE_RUNNER_ALLOW_UNAUTHENTICATED') or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+APP_ENV = (os.getenv('APP_ENV') or '').strip().lower()
+_RAW_ALLOW_UNAUTH = (os.getenv('JUDGE_RUNNER_ALLOW_UNAUTHENTICATED') or '').strip().lower()
+ALLOW_UNAUTHENTICATED = _RAW_ALLOW_UNAUTH in {'1', 'true', 'yes', 'on'}
+# Production fail-fast: never let an unauthenticated runner boot in production
+# regardless of how JUDGE_RUNNER_ALLOW_UNAUTHENTICATED was supplied.
+if APP_ENV == 'production' and ALLOW_UNAUTHENTICATED:
+    raise RuntimeError(
+        'JUDGE_RUNNER_ALLOW_UNAUTHENTICATED must be false in production. '
+        'Set JUDGE_RUNNER_AUTH_TOKEN to a strong shared secret instead.'
+    )
+# Defense in depth: even outside production, refuse to boot if both the token
+# is missing and unauth mode is off — that combination accepts no requests anyway
+# and is almost always a misconfiguration.
+if not ALLOW_UNAUTHENTICATED and not AUTH_TOKEN:
+    raise RuntimeError(
+        'JUDGE_RUNNER_AUTH_TOKEN must be set (32+ random chars) when '
+        'JUDGE_RUNNER_ALLOW_UNAUTHENTICATED is disabled.'
+    )
+if APP_ENV == 'production' and len(AUTH_TOKEN) < 32:
+    raise RuntimeError(
+        'JUDGE_RUNNER_AUTH_TOKEN must be at least 32 characters in production.'
+    )
 SUPPORTED_LANGUAGES = {'python', 'javascript'}
 RUNNER_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENCY)
 
@@ -104,6 +130,28 @@ def _preexec_resource_limits(memory_limit_mb: int, time_limit_ms: int, language:
             resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
         if hasattr(resource, 'RLIMIT_CORE'):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # Cap per-process thread/process count to defang fork-bombs even when
+        # the container-wide pids_limit (set by docker-compose) is shared across
+        # concurrent submissions.
+        if hasattr(resource, 'RLIMIT_NPROC'):
+            try:
+                resource.setrlimit(resource.RLIMIT_NPROC, (32, 64))
+            except (ValueError, OSError):
+                pass
+        # Defense in depth: prevent the student program from writing files
+        # larger than memory cap to the tmpfs.
+        if hasattr(resource, 'RLIMIT_FSIZE'):
+            try:
+                resource.setrlimit(resource.RLIMIT_FSIZE, (memory_limit_bytes, memory_limit_bytes))
+            except (ValueError, OSError):
+                pass
+        # Restrictive umask so any file the child writes to the shared tmpfs
+        # cannot be read or modified by another submission running as the same
+        # UID (defense in depth on top of per-submission temp dirs).
+        try:
+            os.umask(0o077)
+        except OSError:
+            pass
 
     return apply_limits
 
@@ -137,10 +185,21 @@ async def execute_submission_payload_async(payload: dict) -> dict:
     code = str(payload.get('code') or '')
     if not code.strip():
         raise ValueError('Код не передан.')
+    if len(code.encode('utf-8')) > MAX_CODE_BYTES:
+        raise ValueError(
+            f'Размер кода превышает лимит {MAX_CODE_BYTES} байт. '
+            'Разбейте решение на более компактные части.'
+        )
 
     tests = coerce_test_cases(payload.get('tests'))
     if not tests:
         raise ValueError('Для запуска нужны тесты.')
+    stdin_total = sum(len((test.input or '').encode('utf-8')) for test in tests)
+    if stdin_total > MAX_STDIN_BYTES_TOTAL:
+        raise ValueError(
+            f'Суммарный размер тестовых входных данных превышает лимит '
+            f'{MAX_STDIN_BYTES_TOTAL} байт.'
+        )
 
     request = JudgeExecutionRequest(
         language=language,

@@ -49,7 +49,6 @@ class SecurityRegressionTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
             'METRICS_DEBUG': 'false',
@@ -367,7 +366,6 @@ class SecurityRegressionTests(unittest.TestCase):
                 SUPERADMIN_BOOTSTRAP='true',
                 SUPERADMIN_EMAIL='',
                 SUPERADMIN_PASSWORD='',
-                GIGACHAT_VERIFY_SSL='true',
                 **_PROD_REDIS_ENV,
             )
 
@@ -376,7 +374,6 @@ class SecurityRegressionTests(unittest.TestCase):
             APP_ENV='production',
             SESSION_COOKIE_SECURE='true',
             SUPERADMIN_BOOTSTRAP='false',
-            GIGACHAT_VERIFY_SSL='true',
             CODE_JUDGE_ALLOW_LOCAL_FALLBACK='true',
             **_PROD_REDIS_ENV,
         )
@@ -397,7 +394,6 @@ class SecurityRegressionTests(unittest.TestCase):
             APP_ENV='production',
             SESSION_COOKIE_SECURE='true',
             SUPERADMIN_BOOTSTRAP='false',
-            GIGACHAT_VERIFY_SSL='true',
             **_PROD_REDIS_ENV,
         )
         self.create_user(app)

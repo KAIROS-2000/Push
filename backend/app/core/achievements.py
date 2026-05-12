@@ -274,6 +274,7 @@ def sync_achievements_for_user(user: User, *, award_xp: bool = True) -> list[Ach
 
     earned_ids = {row.achievement_id for row in UserAchievement.query.filter_by(user_id=user.id).all()}
     newly_earned: list[Achievement] = []
+    awarded_xp = False
     for achievement in achievements:
         if achievement.id in earned_ids:
             continue
@@ -282,11 +283,19 @@ def sync_achievements_for_user(user: User, *, award_xp: bool = True) -> list[Ach
             db.session.add(UserAchievement(user_id=user.id, achievement_id=achievement.id))
             if award_xp:
                 user.add_xp(achievement.xp_reward)
+                awarded_xp = True
             earned_ids.add(achievement.id)
             newly_earned.append(achievement)
 
     if newly_earned:
         db.session.flush()
+        if awarded_xp:
+            # XP-changing achievement events must invalidate the leaderboard
+            # cache; otherwise the global Redis snapshot can stay stale for up
+            # to GLOBAL_LEADERBOARD_REFRESH_INTERVAL.
+            from ..api.student import invalidate_leaderboard_cache
+
+            invalidate_leaderboard_cache(user.age_group)
         from ..services import parent_event_notifications
 
         parent_event_notifications.notify_achievements_earned(user, newly_earned)

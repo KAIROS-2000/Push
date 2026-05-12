@@ -41,7 +41,6 @@ class CsrfProtectionTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'METRICS_DEBUG': 'false',
         }
 

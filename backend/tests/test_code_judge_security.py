@@ -51,7 +51,6 @@ class CodeJudgeSecurityTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': 'http://judge-runner:8090/execute',
             'CODE_JUDGE_RUNNER_TOKEN': 'unit-test-runner-token',
             'CODE_JUDGE_ALLOW_LOCAL_FALLBACK': 'false',
@@ -133,7 +132,6 @@ class CodeJudgeSecurityTests(unittest.TestCase):
             CODE_JUDGE_RUNNER_URL='http://judge-runner:8090/execute',
             CODE_JUDGE_RUNNER_TOKEN='r' * 32,
             SUPERADMIN_BOOTSTRAP='false',
-            GIGACHAT_VERIFY_SSL='true',
             **_PROD_REDIS_ENV,
         )
         self.assertTrue(app.config['IS_PRODUCTION'])

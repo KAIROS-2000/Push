@@ -191,8 +191,11 @@ def _register_student_or_teacher(email: str, role: str, data: dict, ip: str):
     auto_verify_email = not send_mail
     requested_theme = data.get('theme') if data.get('theme') in {'light', 'dark'} else 'light'
     now = datetime.now(UTC)
+    # full_name truncated to the DB column limit (User.full_name = String(120))
+    # to prevent a silent DataError on PostgreSQL when a long display name is
+    # submitted. Audit M-12.
     user = User(
-        full_name=data.get('full_name') or '',
+        full_name=str(data.get('full_name') or '').strip()[:120],
         email=email,
         phone=phone,
         password_hash=hash_password(password),

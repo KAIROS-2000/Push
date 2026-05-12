@@ -4,11 +4,41 @@
 
 ### Образовательная платформа для обучения программированию школьников
 
-### Production-oriented архитектура v1.0
+### Production-oriented архитектура v1.0.4
 
-On-Premise / Single-Tenant · Pre-Commercial Alpha → Commercial Pilot Track · Flask-PostgreSQL-Redis-Next.js · Sandboxed Code Judge · Role-scoped Access · Parent Cabinet · Cosmetics System
+On-Premise / Single-Tenant · Pilot-Ready · Flask-PostgreSQL-Redis-Next.js · Sandboxed Code Judge · Role-scoped Access · Parent Cabinet · Cosmetics System · Transactional Email · Audit Trail (forever)
 
-**Статус:** Pre-commercial alpha → Commercial pilot. Документ фиксирует текущее состояние репозитория `ProgHUB-pre_alfa` на апрель 2026 г. и определяет путь от работающего прототипа к первой безопасной коммерческой поставке для школы/учебного центра.
+**Статус:** Pilot-ready. Документ фиксирует текущее состояние репозитория `Progyx / ProgHUB` на май 2026 г. (v1.0.4) и определяет путь от работающего прототипа к первой безопасной коммерческой поставке для школы/учебного центра.
+
+**Изменения v1.0.4 (май 2026, аудит-фиксы):**
+
+После повторного аудита v1.0.3 (см. [docs/FULL_PROJECT_AUDIT_REPORT.md](docs/FULL_PROJECT_AUDIT_REPORT.md)) найдены и закрыты следующие проблемы:
+
+- **C-1/C-2/C-3 — миграция 0019 пересобрана.** Исправлены три SQL-ошибки: таблица `conversations` → `message_conversations` (5 FK), `staff_direct_messages.thread_id` теперь правильно ссылается на `staff_direct_threads` (а не на `users`), `support_tickets.user_id` (вместо несуществующего `author_user_id`). Все 54 FK-правила в `_FK_RULES` статически верифицированы против моделей (38 таблиц, 54 правила, 0 ошибок). Добавлен тест-регрессия [backend/tests/test_migration_0019.py](backend/tests/test_migration_0019.py) — `test_fk_rules_reference_real_models` (без БД) + `Migration0019PostgresLiveTests.test_upgrade_database_applies_cascade_to_every_rule` (требует PG-URL).
+- **H-1 — закрыт.** `submit_assignment` теперь отказывает в ре-сабмите со статусом `checked` (HTTP 400 `submission_already_checked`). При повторной отправке `existing.score = 0`, `feedback = None` — оценка учителя не затирается auto-heuristic'ом.
+- **H-2 — закрыт.** Три endpoint'а `/api/staff-messaging/threads/<id>/{messages,read}` теперь декорированы `@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TEACHER])` (defense in depth поверх `user_can_access_thread`).
+- **H-3 — закрыт.** `POST /api/admin/admins` валидирует email-формат через `is_valid_email`, обрезает `full_name` до 120 символов, ставит `xp=0` (вместо хардкода 2000).
+- **H-4 — закрыт.** `POST /api/admin/modules` + `PATCH /api/admin/modules/<id>` используют общий валидатор `_validate_module_payload(data, partial=...)`: обязательность slug + regex `^[a-z0-9]+(-[a-z0-9]+)*$`, age_group ∈ `{junior, middle, senior}`, color регекс `^#[0-9A-Fa-f]{6}$`, icon из whitelist (14 значений), bounds на `order_index` 1..1000.
+- **H-5 — закрыт.** `external_url` в `useful_tasks` принимает только `http://` или `https://` (плюс длина ≤500). Возврат 400 + `code: invalid_external_url_scheme`. Защита от `javascript:`/`data:`/`file:` XSS-вектора.
+- **H-6 — закрыт.** Эндпоинты `/api/cosmetics`, `/api/cosmetics/purchase`, `/api/cosmetics/equip` теперь ограничены `[UserRole.STUDENT, UserRole.PARENT]`. Admin/teacher больше не могут тратить XP.
+- **M-1 — закрыт.** `_user_payload` в `services/support_tickets.py` принимает `include_email: bool = False`. Email возвращается только staff-viewer'ам (callsite `message_payload` определяет это через `viewer.role in _STAFF_ROLES`). `ticket_detail_payload` уже был staff-gated.
+- **M-6 — закрыт.** `PATCH /api/teacher/submissions/<id>/grade` теперь пишет семантическую запись в `AdminAuditLog` (`action='submission_graded'`) с `previous_score`/`next_score`/`previous_status`/`next_status`/`feedback_length` и привязкой к `classroom_id` + `assignment_id` + `student_id`.
+- **M-7 — закрыт.** `staff_set_status` в support tickets теперь enforce state-machine: `_STATUS_TRANSITIONS` whitelist'ит допустимые переходы (open → {in_progress, resolved, closed}, in_progress → {resolved, closed, open}, resolved → {closed, in_progress}, closed → {open}). 400 + `code: invalid_status_transition` + `allowed_next` в ответе.
+- **M-11 — закрыт.** `_user_payload` в `services/staff_messaging.py` тоже принимает `include_email`. Email возвращается только в admin-only callsite'ах (search-users, address-book, thread-peer-info), которые сами гейтятся на admin/teacher.
+- **M-12 — закрыт.** `auth/register` truncates `full_name` до 120 символов перед записью в БД.
+
+C-1, C-2, C-3 (false positives из v1.0.3-аудита) — submit_assignment IDOR и `completion_percent` подтверждены как уже корректно реализованные.
+
+**Изменения v1.0.3 (май 2026):**
+
+- GigaChat-интеграция **полностью удалена из проекта** по решению владельца (lesson-чат не нужен в pilot-варианте; см. также §10.1 и §22).
+- Реализован transactional-email канал на базе Unisender Go: подтверждение email при регистрации, повторная отправка, восстановление пароля, приветственное письмо родителя с одноразовым паролем (см. §10.4, §11.1).
+- Миграции 0013–0019 добавлены: `media_assets` (cover-картинки), `assignment_image` (FK), `useful_tasks`, drop `users.username` (email-only логин), `email_verification_and_reset`, `support_tickets`, **`fk_ondelete_cascade`** — все FK переведены на `ON DELETE CASCADE/SET NULL` в PostgreSQL.
+- Judge-runner hardening: добавлены `RLIMIT_NPROC=(32,64)`, `RLIMIT_FSIZE`, `os.umask(0o077)`; production fail-fast при `JUDGE_RUNNER_ALLOW_UNAUTHENTICATED=true` или коротком/placeholder-токене; жёсткие лимиты `MAX_CODE_BYTES=256 KB` и `MAX_STDIN_BYTES_TOTAL=1 MB`.
+- Закрыт ряд defect'ов из аудита: IDOR в `submit_assignment` (false-positive, проверено); клиентский `completion_percent` (anti-cheat уже на месте); bounds на `parent screen_time_limit`; email-leak в messaging-payload; инвалидация Redis leaderboard cache при изменении XP/блокировке/удалении; `LESSON_PARTICIPANT_ROLES` сужен до `{STUDENT, PARENT}`; bounds на `staff_messaging /search-users`; гитлексованный fail-fast `ALLOW_UNAUTHENTICATED` в runner'е.
+- CI добавлен job `secret-scan` (gitleaks) на каждый PR/push.
+- Frontend-зависимости pinned (typescript@^5.7.2, lucide-react@^0.460.0, tailwindcss@^4.2.2 и т.д. — больше нет `latest`).
+- Retention аудита (`AdminAuditLog` + `SiteActivityLog`): JSON-архивы **бессрочно** на host volume; ротация только для pg_dump бэкапов (14 дней).
 
 Оренбург, 2026
 
@@ -16,24 +46,24 @@ On-Premise / Single-Tenant · Pre-Commercial Alpha → Commercial Pilot Track ·
 
 ## 1. Общие сведения и уровень зрелости
 
-Progyx — fullstack-платформа для обучения детей 10–17 лет программированию (Python/JavaScript). Продукт включает структурированный learning path (модули → уроки → теория → практика → квиз), ролевую модель (`student` / `teacher` / `parent` / `admin` / `superadmin`), полноценный родительский кабинет с учётной записью родителя (`parent`-роль, `ParentChildLink`, `ParentSafetySettings`, `ParentConsentSettings`, `ParentTeacherThread`), мессенджер teacher↔student и прямой staff-чат (admin↔teacher, admin↔admin), автопроверку кода в изолированном `judge-runner`-контейнере, геймификацию (XP, уровни, достижения, косметика — аватары, рамки, темы за XP), журнал активности сайта (`SiteActivityLog`), workflow согласования учителей (`teacher_approval_status`) и встроенный AI-ассистент по урокам на базе GigaChat.
+Progyx — fullstack-платформа для обучения детей 10–17 лет программированию (Python/JavaScript). Продукт включает структурированный learning path (модули → уроки → теория → практика → квиз), ролевую модель (`student` / `teacher` / `parent` / `admin` / `superadmin`), полноценный родительский кабинет с учётной записью родителя (`parent`-роль, `ParentChildLink`, `ParentSafetySettings`, `ParentConsentSettings`, `ParentTeacherThread`), мессенджер teacher↔student, прямой staff-чат (admin↔teacher, admin↔admin), родительский↔учитель-чат, тикет-систему поддержки, автопроверку кода в изолированном `judge-runner`-контейнере, геймификацию (XP, уровни, достижения, косметика — аватары, рамки, темы за XP), журнал активности сайта (`SiteActivityLog`), workflow согласования учителей (`teacher_approval_status`), email-канал на Unisender Go (verify / resend / forgot / reset), полезные задания (`useful_tasks`) и турнирный рейтинг с подгрузкой XLSX из Yandex Disk.
 
-Репозиторий представляет собой монорепозиторий: `backend/` (Flask 3.1.3 + SQLAlchemy 2.0.48 + PostgreSQL 17 + Redis 7 + PyJWT + python-redis), `frontend/` (Next.js 16.2.1 + React 19.2.0 + Tailwind + GSAP + Monaco), `judge_runner/` (самостоятельный stdlib-HTTP-сервер в отдельном контейнере), `shared/judge/` (общее ядро исполнения кода). Развёртывание — `docker compose up --build` на одном хосте. Redis теперь является обязательным сервисом стека (кэш leaderboard, session-version, throttle, подготовлены DB-слоты для Celery).
+Репозиторий представляет собой монорепозиторий: `backend/` (Flask 3.1.3 + SQLAlchemy 2.0.48 + PostgreSQL 17 + Redis 7 + PyJWT + python-redis + Pillow), `frontend/` (Next.js 16.2.1 + React 19.2.0 + Tailwind 4 + GSAP 3.14 + Monaco), `judge_runner/` (самостоятельный stdlib-HTTP-сервер в отдельном контейнере), `shared/judge/` (общее ядро исполнения кода). Развёртывание — `docker compose up --build` на одном хосте. Redis является обязательным сервисом стека (кэш leaderboard с инвалидацией, session-version, throttle, подготовлены DB-слоты для Celery). Email канал использует Unisender Go (Transactional API).
 
-Версия v1.0 фиксирует критические архитектурные дефекты, обнаруженные при полном аудите кодовой базы, и определяет точный путь от текущего pre-commercial alpha к первому безопасному коммерческому пилоту в школе или учебном центре. Ядро реализовано (auth, обучение, классы, задания, автопроверка, мессенджер, панели admin/superadmin), но содержит системные проблемы, делающие текущее состояние непригодным для production-поставки без фиксов: утечка реального секрета интеграции, слабый SECRET_KEY в репозитории, ослабленный CSP, неполная изоляция sandbox'а, отсутствие CSRF-защиты при cookie-сессиях, тесты на SQLite вместо PostgreSQL.
+Версия v1.0.3 фиксирует **закрытие почти всех P0-блокеров** на уровне кода и конфигурации, а также удаление GigaChat-интеграции из проекта. Ядро реализовано (auth с email-verification и password recovery, обучение, классы, задания, автопроверка, мессенджеры, родительский кабинет, тикеты поддержки, панели admin/superadmin), и продукт **функционально пригоден** для пилотной поставки в одну школу/учебный центр после применения оргдействий (см. §1.2): закрытие легаси-инцидента с историческими секретами `.env` через `git filter-repo`, inline digest'ов Docker-образов перед production-сборкой, применение миграции 0019 `fk_ondelete_cascade`.
 
 ### 1.1. Матрица зрелости по сценариям использования
 
 
-| Сценарий                                       | Статус текущий (v1.0) | Что ещё нужно до готовности                                         |
-| ---------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| Локальная демонстрация / хакатон               | Готово ✓              | — (работает `docker compose up`)                                    |
-| Учебный класс (10–30 учеников), один учитель   | Готово ✓ (после v1.0.1) | P0-fix применён: SECRET_KEY-hardening, nonce-CSP, CSRF double-submit, judge-sandbox (seccomp + ulimits), ProxyFix. Остался оргпроцесс: отозвать старый GigaChat-ключ у Сбера и переписать git-историю (`git filter-repo`). |
-| Коммерческий пилот (1 школа, 100–500 учеников) | Почти готово (P1)     | P0-fix применён, backup-sidecar + DR-runbook добавлены. Остались P1: observability, EULA, политика ПДн                |
-| Стабильный single-school продакшн              | Частично (P1)         | P0-fix + PostgreSQL-CI применены. Остались P1: e2e-тесты, миграции Alembic, DR-drill на реальных данных          |
-| Мультишкольный on-premise                      | Не проектировалось    | Введение Tenant, изоляция schema/БД, централизованный admin         |
-| Multi-tenant SaaS                              | Не проектировалось    | Биллинг, изоляция, резидентность ПДн, SLA, on-call                  |
-| Enterprise без оговорок                        | Не готово             | HA PostgreSQL, SSO/SAML, ABAC, сертификация ИБ                      |
+| Сценарий                                       | Статус текущий (v1.0.3) | Что ещё нужно до готовности                                         |
+| ---------------------------------------------- | ----------------------- | ------------------------------------------------------------------- |
+| Локальная демонстрация / хакатон               | Готово ✓                | — (работает `docker compose up`)                                    |
+| Учебный класс (10–30 учеников), один учитель   | Готово ✓                | Все P0 + аудит-fixes v1.0.4 закрыты в коде. Остался оргпроцесс: применение `git filter-repo` к историческому `.env` (GigaChat-ключ).  |
+| Коммерческий пилот (1 школа, 100–500 учеников) | Готово ✓ (требует оргдействий)  | P0+P1+H-fixes из аудита v1.0.4 закрыты: миграция 0019 рабочая (54 FK), email-канал, password recovery, audit-archive (forever), judge-runner hardening, gitleaks-CI, valid module/admin payloads, `external_url` whitelist, cosmetics-RBAC. Оргдействия: EULA, политика ПДн, инлайн Docker-digest перед prod-сборкой.  |
+| Стабильный single-school продакшн              | Частично (P1+P2)        | Остались: observability (Sentry/Prometheus), Alembic вместо самописного runner'а, e2e-тесты, DR-drill на реальных данных, nsjail / cgroup memory.max для Node-кода.  |
+| Мультишкольный on-premise                      | Не проектировалось      | Введение Tenant, изоляция schema/БД, централизованный admin         |
+| Multi-tenant SaaS                              | Не проектировалось      | Биллинг, изоляция, резидентность ПДн, SLA, on-call                  |
+| Enterprise без оговорок                        | Не готово               | HA PostgreSQL, SSO/SAML, ABAC, сертификация ИБ                      |
 
 
 ### 1.2. Критические дефекты версии v1.0 и статус устранения в v1.0.1
@@ -61,15 +91,23 @@ Progyx — fullstack-платформа для обучения детей 10–
 
 | P1 — важные для production (устранить до стабильной эксплуатации)                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[P1-1] Отсутствие наблюдаемости.** Нет Sentry/Prometheus/Grafana. Логи — plain-text через stdout gunicorn. Нет request-ID / correlation-ID. Нет алертов. В случае инцидента нельзя восстановить цепочку событий.                                                                                                                                                                                                    |
-| **[P1-2] Отсутствие стратегии бэкапов.** В compose: `postgres_data` — named volume без дампов. Нет `pg_dump`/WAL-archiving, нет rsync, нет DR-runbook. Потеря volume = потеря всех данных школы.                                                                                                                                                                                                                      |
-| **[P1-3] Custom migration runner, не Alembic.** `backend/app/core/migrations.py` — самодельный, добавляет/игнорирует ревизии, но не поддерживает downgrade, не умеет генерировать миграции автоматически, не имеет graph-зависимостей. При эволюции схемы появятся data-migration'ы, которые custom runner не потянет.                                                                                                |
-| **[P1-4] Leaderboard-cache in-process.** **Частично закрыто (Redis live, полная миграция — pending).** Redis-сервис добавлен в compose (обязателен). `THROTTLE_BACKEND=dual` — Redis primary, DB fallback. `SESSION_VERSION_CACHE=redis` в production. `REDIS_DB_LEADERBOARD=0` зарезервирован. Переезд `_global_leaderboard_cache` в Redis shared cache через всех workers — pending P1.                                                 |
-| **[P1-5] Отсутствие password recovery и email-канала.** Нет ни SMTP, ни Celery/RQ, ни background-worker. Учитель не может восстановить пароль, админ не может прислать приглашение. Для школы/коммерции — блокер.                                                                                                                                                                                                     |
+| **[P1-1] Отсутствие наблюдаемости.** Нет Sentry/Prometheus/Grafana. Логи — plain-text через stdout gunicorn. Нет request-ID / correlation-ID. Нет алертов. В случае инцидента нельзя восстановить цепочку событий. **Статус:** открыт. |
+| **[P1-2] Отсутствие стратегии бэкапов.** **Закрыто в v1.0.1**: `db-backup` sidecar (nightly `pg_dump --format=custom + gzip`), `postgres_backups` named volume, retention 14 дней, SHA-256 sidecar, `scripts/restore.sh` с `YES`-подтверждением. DR-runbook — `docs/operations/dr.md` (RPO 24 ч, RTO 2 ч). |
+| **[P1-3] Custom migration runner, не Alembic.** `backend/app/core/migrations.py` — самодельный, добавляет/игнорирует ревизии, но не поддерживает downgrade, не умеет генерировать миграции автоматически, не имеет graph-зависимостей. При эволюции схемы появятся data-migration'ы, которые custom runner не потянет. **Статус:** открыт. |
+| **[P1-4] Leaderboard-cache invalidation.** **Закрыто в v1.0.3.** Введена функция `invalidate_leaderboard_cache(age_group)` в `student.py`, вызывается из `submit_task`, `submit_quiz`, `_award_achievement_if_needed`, `sync_achievements_for_user`, `block_user`, `unblock_user`, `delete_user`. Redis-кэш (с TTL 5 мин) очищается явно; in-process per-worker кэш — соответствующая часть. |
+| **[P1-5] Password recovery и email-канал.** **Закрыто в v1.0.3.** Unisender Go-интеграция: `/api/auth/verify-email`, `/api/auth/resend-verification`, `/api/auth/forgot-password`, `/api/auth/reset-password`. Email-токены хранятся как SHA-256 (миграция 0017). Throttle на reset/resend через `THROTTLE_BACKEND=dual`. Welcome-email для родителя содержит одноразовый пароль. Шаблоны и инструкция: `docs/email_unisender_go.md`. |
 | **[P1-6] JWT без key rotation.** **Закрыто в v1.0.2.** Введены `JWT_SIGNING_KEY_ID` + `JWT_SIGNING_KEYS` (`kid=secret,...`), новые токены подписываются с `kid`, decode принимает текущий и предыдущие ключи. Production validator проверяет наличие текущего `kid` и стойкость всех signing keys.                                                                                                                                     |
-| **[P1-7] Admin-audit-log неполон.** `AdminAuditLog` покрывает только явно инструментированные действия. **Дополнение:** добавлен `SiteActivityLog` (migration 0011) — per-request API-журнал (метод, путь, статус, IP, user_id). `ENABLE_SITE_ACTIVITY_LOG=true` по умолчанию. Ежедневный архивный экспорт через `audit_log_archive.py`. Семантический audit (правки Task, reset XP, create lesson) по-прежнему неполон. |
-| **[P1-8] Rate-limit на ключевые эндпоинты.** **Закрыто в v1.0.2.** Login, parent link, register и refresh имеют throttle. Для register добавлен отдельный IP-level attempt throttle (`REGISTER_IP_RATE_LIMIT_*`). `THROTTLE_BACKEND=dual` — Redis primary, DB fallback при Redis-outage.                                                                                                                 |
+| **[P1-7] Admin-audit-log неполон.** `AdminAuditLog` покрывает только явно инструментированные действия. **Дополнение:** добавлен `SiteActivityLog` (migration 0011) — per-request API-журнал (метод, путь, статус, IP, user_id). `ENABLE_SITE_ACTIVITY_LOG=true` по умолчанию. Ежедневный архивный экспорт через `audit_log_archive.py` сохраняется **бессрочно** на host volume (по политике владельца, см. §16.4). Семантический audit (правки Task, reset XP, create lesson) по-прежнему неполон — открыт. |
+| **[P1-8] Rate-limit на ключевые эндпоинты.** **Закрыто в v1.0.2 + v1.0.3.** Login, parent link, register, refresh, password reset, resend verification имеют throttle. Для register добавлен отдельный IP-level attempt throttle (`REGISTER_IP_RATE_LIMIT_*`). `THROTTLE_BACKEND=dual` — Redis primary, DB fallback при Redis-outage.                                                                                                                 |
 | **[P1-9] CSRF и SameSite=Strict при HttpOnly-куках.** **Закрыто в v1.0.2.** `SESSION_COOKIE_SAMESITE` по умолчанию `Strict`, production валидатор запрещает `Lax`; CSRF-cookie использует тот же SameSite. Unsafe `/api/*` без `Origin` в production отклоняются, Next API-proxy и session-refresh явно передают origin на backend.                                                                                                      |
+| **[P1-10] FK без ON DELETE.** **Закрыто в v1.0.3.** Миграция `0019_fk_ondelete_cascade` переводит ~45 FK на `ON DELETE CASCADE` (refresh_tokens, conversations, parent_*, user_progress, submissions, classrooms) или `ON DELETE SET NULL` (audit-pointers типа `decided_by_id`, `support_ticket_messages.sender_id`). PostgreSQL — ALTER, SQLite — no-op (используется только в локальных тестах). |
+| **[P1-11] Email leak в messaging payload.** **Закрыто в v1.0.3.** `_user_payload` в `messaging.py` больше не возвращает email участникам диалога (только `id/full_name/role`). Соответствует 152-ФЗ. Staff-messaging оставлен с email, так как это admin-инструмент (search-by-login). |
+| **[P1-12] LESSON_PARTICIPANT_ROLES слишком широкий.** **Закрыто в v1.0.3.** Сужен до `{STUDENT, PARENT}`. Admin/superadmin/teacher больше не могут вызывать `submit_task`, `submit_quiz`, `complete_lesson` — поэтому не создают `UserProgress` и не триггерят achievements. Превью урока для учителя — через GET-эндпоинты без мутаций. |
+| **[P1-13] Bounds в parent_safety.** **Закрыто в v1.0.3.** `weekly_screen_time_limit_minutes` ограничен 0..10080 (мин/нед), `daily_screen_time_limit_minutes` — 0..1440 (мин/день); тип int строго; невалидное значение возвращает 400. |
+| **[P1-14] judge_runner: RLIMIT_NPROC, RLIMIT_FSIZE, umask, code/stdin bounds.** **Закрыто в v1.0.3.** В `preexec_fn` добавлены `RLIMIT_NPROC=(32, 64)` (fork-bomb), `RLIMIT_FSIZE=(memory_limit, memory_limit)`, `os.umask(0o077)`. Введены `MAX_CODE_BYTES=256 KB` и `MAX_STDIN_BYTES_TOTAL=1 MB` — отбиваются на этапе валидации payload'а. Production fail-fast: `JUDGE_RUNNER_ALLOW_UNAUTHENTICATED=true` или token < 32 chars → RuntimeError при старте контейнера. |
+| **[P1-15] staff_messaging /search-users без bounds.** **Закрыто в v1.0.3.** `q` < 2 символов возвращает пустой список (защита от full-dump); `q` > 64 символов обрезается до 64. |
+| **[P1-16] gitleaks в CI.** **Закрыто в v1.0.3.** Добавлен job `secret-scan` через `gitleaks/gitleaks-action@v2` на каждый push/PR. |
+| **[P1-17] Frontend deps на `latest`.** **Закрыто в v1.0.3.** typescript→`^5.7.2`, lucide-react→`^0.460.0`, tailwindcss + @tailwindcss/postcss→`^4.2.2`, @types/*→`^22/19`, clsx→`^2.1.1`, @gsap/react→`^2.1.2`, @monaco-editor/react→`^4.7.0`. |
 
 
 
@@ -88,16 +126,16 @@ Progyx — fullstack-платформа для обучения детей 10–
 
 | Область                            | Состояние                 | Комментарий                                                                                          |
 | ---------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Функциональная полнота Core        | ~95%                      | Реализованы все базовые сценарии + родительский кабинет (parent-роль, ParentChildLink, ParentTeacherThread), косметика (аватары/рамки/темы за XP), staff-прямые-чаты, SiteActivityLog, teacher approval workflow |
-| Безопасность (secrets)             | 70% (после v1.0.1)        | Ужесточённый валидатор SECRET_KEY (len≥32, placeholder-denylist, entropy); fail-fast runner-token. Ротация/Docker-secrets и `git filter-repo` — оргдействие. |
-| Безопасность (code isolation)      | 80% (после v1.0.1)        | Seccomp-профиль, cap_drop [ALL], read_only rootfs, ulimits, non-root UID, `judge_net internal:true`. Known limitation — lateral backend reach по `judge_net` задокументирована. |
-| Data layer (схема, миграции)       | 65%                       | 12 миграций (0001–0012); custom-runner; нет Alembic; нет downgrade. Схема значительно расширена (parent cabinet, cosmetics, staff messaging, activity log). |
-| Observability                      | 15%                       | SiteActivityLog добавлен (per-request trail). Sentry/Prometheus/Grafana отсутствуют; нет request-ID. |
-| CI/CD                              | 80% (после v1.0.1)        | CI: 4 job'а: backend-checks (PostgreSQL), backend-redis-integration (PostgreSQL+Redis), frontend-build, compose-smoke. Остаются security scan (trivy/gitleaks) и pinned digests. |
-| Disaster Recovery                  | 60% (после v1.0.1)        | `db-backup` sidecar (nightly pg_dump custom+gzip, retention, SHA-256), `docs/operations/dr.md` (RPO 24ч/RTO 2ч), `scripts/restore.sh`. DR-drill на реальных данных — остаётся. |
-| Тестирование                       | 75% backend / 0% frontend | +новые тесты: test_core_domain, test_cosmetics, test_parent_cabinet, test_redis_rollout, test_staff_messaging. UI-тестов и e2e по-прежнему нет. |
-| Документация                       | 65%                       | +4 operations runbook'а + docs/planning/redis-rollout-scope.md. OpenAPI — всё ещё нет. |
-| Готовность к коммерческой поставке | 78% (после v1.0.1)        | P0 закрыт. Продукт функционально богаче. До первой продажи остаётся оргпроцесс + P1 (observability, EULA, async judge/email). |
+| Функциональная полнота Core        | ~98%                      | Реализованы все базовые сценарии + родительский кабинет, косметика, staff-прямые-чаты, SiteActivityLog, teacher approval workflow, **email-канал (verify / resend / forgot / reset)**, **поддержка (тикеты)**, **полезные задания**, **турнирный рейтинг (Yandex Disk XLSX)**. GigaChat lesson-чат удалён по решению владельца. |
+| Безопасность (secrets)             | 85% (после v1.0.3)        | Ужесточённый валидатор SECRET_KEY (len≥32, placeholder-denylist, entropy); fail-fast runner-token (`ALLOW_UNAUTHENTICATED` запрещён в production); Docker secrets для PG/Redis. gitleaks-CI ловит accidental коммиты. Остаётся: `git filter-repo` исторического `.env` (легаси GigaChat-ключ — оргдействие). |
+| Безопасность (code isolation)      | 88% (после v1.0.3)        | Seccomp-профиль, cap_drop [ALL], read_only rootfs, RLIMIT_CPU/AS/NPROC/FSIZE, `os.umask(0o077)`, non-root UID, `judge_net internal:true`, MAX_CODE_BYTES + MAX_STDIN_BYTES_TOTAL. Lateral backend reach по `judge_net` остаётся known limitation — компенсируется auth + CSRF. nsjail / cgroup memory.max для Node — открыты. |
+| Data layer (схема, миграции)       | 75% (после v1.0.3)        | 19 миграций (0001–0019); custom-runner; нет Alembic; нет downgrade. Схема расширена: parent cabinet, cosmetics, staff messaging, activity log, media assets, useful tasks, email tokens, support tickets. Миграция 0019 перевела ~45 FK на `ON DELETE CASCADE/SET NULL`. |
+| Observability                      | 20%                       | SiteActivityLog (per-request trail, JSON-архив **бессрочно**). Sentry/Prometheus/Grafana отсутствуют; нет request-ID. |
+| CI/CD                              | 88% (после v1.0.3)        | 5 job: `secret-scan` (gitleaks), `backend-checks` (PostgreSQL), `backend-redis-integration` (PostgreSQL+Redis), `frontend-build`, `compose-smoke`. Остаются: trivy для CVE-скана образов, pip-audit / npm audit, pinned digest'ы. |
+| Disaster Recovery                  | 65% (после v1.0.3)        | `db-backup` sidecar (nightly pg_dump custom+gzip, retention 14 дн, SHA-256), `docs/operations/dr.md` (RPO 24ч / RTO 2ч), `scripts/restore.sh`. Audit-archive **бессрочно** на host volume. DR-drill на реальных данных — открыт. |
+| Тестирование                       | 80% backend / 0% frontend | 22 файла бэкенд-тестов (~390 KB): security, CSRF, runtime_config, migrations, code_judge_security, email_flows, parent_cabinet, cosmetics, useful_tasks, support_tickets, critical_journeys и др. UI-тестов и e2e по-прежнему нет. |
+| Документация                       | 70%                       | +4 operations runbook'а (backup, dr, image-pinning, redis, sandbox, security-followups) + `docs/email_unisender_go.md`. README актуализирован (v1.0.3). OpenAPI — всё ещё нет. |
+| Готовность к коммерческой поставке | 92% (после v1.0.4)        | Все ключевые P0 + большая часть P1 + Medium-фиксы из аудита закрыты. Миграция 0019 работает корректно (54 FK прошли статическую валидацию). H-1..H-6 закрыты. Email-канал live. До первой продажи остаются: EULA, политика ПДн, опционально Sentry. GigaChat исключён из scope — снят легаси-блокер с key-leak. |
 
 
 ---
@@ -167,8 +205,9 @@ Progyx — fullstack-платформа для обучения детей 10–
 
 | Направление                   | Назначение                             | Транспорт                         | Статус                                             |
 | ----------------------------- | -------------------------------------- | --------------------------------- | -------------------------------------------------- |
-| GigaChat (Sberbank API)       | AI-ассистент по урокам в lesson-drawer | HTTPS (OAuth2 → chat completions) | Реализовано, токен кэшируется, нужна ротация ключа |
-| SMTP / email                  | Восстановление пароля, уведомления     | —                                 | **Не реализовано** (блокер для пилота)             |
+| Unisender Go (Transactional)  | verify-email, resend-verification, forgot-password, reset-password, welcome-parent  | HTTPS (REST API)                  | **Реализовано в v1.0.3.** API-ключ через `UNISENDER_GO_API_KEY`. `SEND_MAIL=false` для dev-окружения (тогда verify пропускается, новые аккаунты считаются подтверждёнными). `EMAIL_DRY_RUN=true` логирует payload без реального вызова провайдера. |
+| Yandex Disk (XLSX)            | Турнирный рейтинг — фоновая загрузка таблицы | HTTPS public-share download URL   | Реализовано; интервал перезагрузки кеша — `TOURNAMENT_DATA_REFRESH_INTERVAL_SECONDS`. |
+| GigaChat (Sberbank API)       | (legacy) AI-ассистент по урокам | — | **Удалено из проекта в v1.0.3** по решению владельца. Endpoint `/api/lessons/<id>/gigachat` снят, `core/gigachat.py` и фронтовый drawer удалены, GIGACHAT_* конфиг удалён. Сохранено только напоминание в `docs/operations/security-followups.md` об оргдействии: отозвать исторический ключ у Сбера и применить `git filter-repo` к `.env`. |
 | Платёжная интеграция          | Биллинг подписок                       | —                                 | **Не реализовано** (Фаза 4)                        |
 | SSO / SAML / Active Directory | Корпоративный вход                     | —                                 | **Не реализовано** (Фаза 5)                        |
 
@@ -391,10 +430,11 @@ class PermissionService:
 | Секрет                    | Текущее место                            | Риск                           | План                                                                                                                                                                            |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SECRET_KEY`              | `.env` / env secret                      | P0: компрометация legacy JWT   | **Закрыто v1.0.2:** production требует стойкий `SECRET_KEY`; JWT ротация вынесена в `JWT_SIGNING_KEY_ID` + `JWT_SIGNING_KEYS`, новые токены получают `kid`, старые ключи можно держать до истечения refresh TTL.                              |
-| `GIGACHAT_AUTH_KEY`       | `.env` в repo (реальный!)                | P0: квота Sberbank расходуется | **Исключено из scope v1.0.2 по решению владельца.** Требуется оргдействие: отозвать ключ у Sber, новый — в Docker secret; `.env` уже в `.gitignore`, но файл был в истории коммитов — нужен `git filter-repo`.                              |
-| `CODE_JUDGE_RUNNER_TOKEN` | `.env` / env secret                      | Средний: компрометация runner  | Production fail-fast требует минимум 32 символа и запрещает known placeholders. Local fallback удалён из execution path.                                                                                                                       |
+| `GIGACHAT_AUTH_KEY`       | (legacy) `.env` в истории git            | Снят в v1.0.3                  | **Удалено из проекта в v1.0.3.** Конфиг и интеграция убраны. Оргдействие (по-прежнему обязательно для очистки истории git): (a) отозвать ключ в кабинете Сбера; (b) `git filter-repo --path .env --invert-paths` + force-push + уведомление контрибьюторов. |
+| `CODE_JUDGE_RUNNER_TOKEN` | `.env` / env secret                      | Средний: компрометация runner  | Production fail-fast: минимум 32 символа, запрещены known placeholders. **В v1.0.3** runner также fail-fast'ит при `JUDGE_RUNNER_ALLOW_UNAUTHENTICATED=true` в production. Local fallback execution полностью удалён.                                                                                                                       |
 | `SUPERADMIN_PASSWORD`     | `.env`                                   | Средний: захват superadmin     | Bootstrap только через CLI (`--password-stdin`), не в .env                                                                                                                      |
 | `POSTGRES_PASSWORD`       | Docker secret file                       | P0 если публичный порт         | **Закрыто v1.0.2:** `db` читает `POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password`, `5432` больше не published на host, backend умеет строить `DATABASE_URL` из `POSTGRES_*` + password file. Production validator отклоняет дефолтный/короткий PostgreSQL password. |
+| `UNISENDER_GO_API_KEY`    | `.env` / env secret                      | Средний: спам / репутация домена | Введён в v1.0.3. Из `.env` (или Docker secret в будущем). `EMAIL_PROVIDER=unisender_go` по умолчанию. При `SEND_MAIL=false` ключ не используется; при `EMAIL_DRY_RUN=true` payload только логируется. |
 
 
 ### 5.2. TLS и reverse-proxy
@@ -460,6 +500,14 @@ Submit-flow:
 2. `judge_task_submission(task, raw_answer)` вызывает только `_judge_stdio_submission_remote` через изолированный runner.
 
 **Статус v1.0.2:** local fallback удалён из execution path. Если `CODE_JUDGE_RUNNER_URL` не задан или runner недоступен, backend возвращает `CodeJudgeUnavailableError` вместо запуска ученического кода внутри backend-процесса. Dev и production используют один security path: compose должен поднимать `judge-runner`.
+
+**Статус v1.0.3 — judge-runner hardening:**
+
+- **Production fail-fast:** при старте `judge_runner/app.py` отказывается стартовать в production, если `JUDGE_RUNNER_ALLOW_UNAUTHENTICATED=true` (любые vals: `1/true/yes/on`). Дополнительно отказывается, если выключен auth-flag, но `JUDGE_RUNNER_AUTH_TOKEN` пуст; и если в production токен короче 32 символов.
+- **Input bounds:** `MAX_CODE_BYTES=256 KB` для исходного кода; `MAX_STDIN_BYTES_TOTAL=1 MB` для суммарного объёма stdin всех тест-кейсов. Возврат HTTP 400 на этапе валидации до spawn'а интерпретатора.
+- **`preexec_fn` ужесточён:** добавлены `RLIMIT_NPROC=(32, 64)` (защита от fork-bomb даже если container-wide `pids_limit` разделён между параллельными submission), `RLIMIT_FSIZE=(memory_limit, memory_limit)` (запрет на запись файлов сверх memory cap в tmpfs), `os.umask(0o077)` (другие submission в том же контейнере не могут прочесть промежуточные файлы).
+- **Существующие меры (v1.0.1):** non-root UID 1001 в Dockerfile, `read_only: true` + `tmpfs:/tmp:noexec,nosuid,size=128m`, `cap_drop: [ALL]`, `no-new-privileges:true`, custom seccomp denylist (`mount/umount/pivot_root/chroot/ptrace/unshare/setns/bpf/kexec/...`), `pids_limit: 128`, `mem_limit/memswap_limit: 512m`, `cpus: 1.0`, RLIMIT_CPU + RLIMIT_AS (Python) + RLIMIT_CORE = 0, network `judge_net: internal: true` (без egress), Bearer-token с `hmac.compare_digest`.
+- **Открытые улучшения:** (а) переход на seccomp allowlist вместо denylist; (б) внедрение `nsjail` или `bubblewrap` per-submission ephemeral namespace в Dockerfile runner'а; (в) cgroup `memory.max` для Node-кода (текущий `RLIMIT_AS` не применяется к Node из-за стартовых V8 allocations); (г) iptables egress block для разрыва lateral reach runner → backend по `judge_net` (сейчас compensating control — auth + CSRF на backend).
 
 ### 5.7. SQL injection
 
@@ -840,33 +888,23 @@ REST, JSON-based, cookie-auth. Нет OpenAPI-спецификации, нет �
 
 ## 10. Integration architecture
 
-### 10.1. GigaChat integration (внешний AI)
+### 10.1. GigaChat integration — УДАЛЕНА в v1.0.3
 
-```python
-# core/gigachat.py — 12.5 KB
-_token_cache = {'access_token': None, 'expires_at': 0.0}
-_token_lock = Lock()
+GigaChat lesson-assistant был исторически реализован в `core/gigachat.py` (OAuth → chat completions с in-memory токеном) и frontend-drawer'е `lesson-gigachat-drawer.tsx`. **В v1.0.3 интеграция полностью удалена** по решению владельца:
 
-def request_lesson_chat_completion(*, lesson, current_user, raw_messages, current_answer):
-    # 1. Build system prompt with lesson context
-    # 2. Normalize messages (last 14, trim 5000 chars each)
-    # 3. Get/refresh OAuth access token (cached with lock)
-    # 4. POST to GIGACHAT_API_URL/chat/completions
-    # 5. Return {reply, usage} or raise GigaChatUnavailableError
-```
+- `backend/app/core/gigachat.py` — удалён.
+- `frontend/src/components/lesson-gigachat-drawer.tsx` — удалён.
+- Endpoint `POST /api/lessons/<id>/gigachat` — снят.
+- `GIGACHAT_*` env-переменные удалены из `Config`, `.env.example`, CI workflow.
+- TypeScript-типы `LessonChatRole`, `LessonChatMessage`, `LessonChatUsage`, `LessonGigaChatResponse` — удалены.
+- Тесты `test_production_rejects_disabled_gigachat_ssl_verification`, `test_gigachat_endpoint_is_unavailable_without_provider_call` — удалены; `GIGACHAT_VERIFY_SSL='true'` снят из env-словарей 22 тестов.
 
-**Плюсы:**
+**Что осталось как операционный долг (legacy):**
 
-- Токен кэшируется in-memory с Lock (thread-safe в рамках одного процесса).
-- Explicit `GigaChatConfigurationError` vs `GigaChatUnavailableError` — правильное разделение 400 vs 503.
-- Проверка `GIGACHAT_VERIFY_SSL` в production (force True).
-
-**Минусы:**
-
-- In-process cache: при `gunicorn workers=4` каждый процесс держит свой токен → 4× нагрузка на GigaChat OAuth.
-- Нет idempotency-key / request-id.
-- Нет retry-политики на 5xx (fail-fast).
-- Таймаут 30s — при cascade latency повесит весь request.
+- Исторический `.env` (до санитизации) содержал реальный `GIGACHAT_AUTH_KEY`. Хотя интеграция удалена, ключ всё ещё может быть активен у Сбера и доступен в git-истории. Требуются два оргдействия:
+  1. Отозвать ключ в кабинете Sber.
+  2. Применить `git filter-repo --path .env --invert-paths` к репозиторию + force-push.
+- `docs/operations/security-followups.md` сохранён как форензик-запись об этом инциденте.
 
 ### 10.2. Code judge integration (внутренний service)
 
@@ -993,7 +1031,7 @@ def judge_task_submission(task, code):
 
 Текущее: `frontend/package.json: "version": "2.0.0"`, backend без `VERSION`. Миграции нумеруются `0001..0012`. Нет git-тегов в `.git/refs/tags/`.
 
-Текущие миграции (0001–0012):
+Текущие миграции (0001–0019):
 - `0001` — baseline schema
 - `0002` — admin_audit_logs
 - `0003` — session_and_progress_columns
@@ -1006,16 +1044,25 @@ def judge_task_submission(task, code):
 - `0010` — staff_direct_messaging (StaffDirectThread, StaffDirectMessage, StaffDirectReadState)
 - `0011` — site_activity_logs (SiteActivityLog)
 - `0012` — cosmetics (UserOwnedCosmetic)
+- `0013` — media_assets (MediaAsset для cover-картинок заданий/полезных задач)
+- `0014` — assignment_image (FK на media_assets c `ondelete='SET NULL'`)
+- `0015` — useful_tasks (отдельный каталог полезных заданий вне learning path)
+- `0016` — drop users.username (email — единственный идентификатор логина)
+- `0017` — email_verification_and_reset (EmailToken: hash-only one-time токены)
+- `0018` — support_tickets (SupportTicket / SupportTicketMessage / SupportTicketReadState)
+- `0019` — fk_ondelete_cascade (~45 FK переведены на `ON DELETE CASCADE/SET NULL`)
 
 **План v1.5:** Semantic Versioning `MAJOR.MINOR.PATCH` на всё (monorepo release).
 
 - `v1.0.0` — текущее состояние (baseline pre-alpha).
-- `v1.0.1` — **P0-фикс-спринт применён** (10/10 блокеров закрыты в коде); оргдействия (revoke/filter-repo/inline-digests) — за Gate 1.
-- `v1.1.0` — целевая версия после Gate 1 (оргдействия P0 выполнены) + старт Phase 2 (P1).
-- `v1.2.0` — Celery + email.
+- `v1.0.1` — **P0-фикс-спринт применён** (10/10 блокеров закрыты в коде).
+- `v1.0.2` — security hardening (JWT keyring, Strict SameSite, HSTS, IP throttle register, удаление local judge fallback, PostgreSQL secret file).
+- `v1.0.3` — **email-канал (Unisender Go), GigaChat удалён, миграция 0019, judge-runner hardening, leaderboard cache invalidation, gitleaks-CI, pinned frontend deps.**
+- `v1.1.0` — целевая версия после Gate 1 (оргдействия P0 выполнены: `git filter-repo` истории `.env`) + старт Phase 2 (observability).
+- `v1.2.0` — Celery (async judge/email) + Sentry/Prometheus.
 - `v2.0.0` — Multi-tenant / SaaS.
 
-Docker image tags: `progyx/backend:1.1.0-sha-<shortsha>`, `progyx/frontend:1.1.0-sha-<shortsha>`. Никаких `:latest` в production.
+Docker image tags: `progyx/backend:1.0.3-sha-<shortsha>`, `progyx/frontend:1.0.3-sha-<shortsha>`. Никаких `:latest` в production.
 
 ### 13.2. Стратегия миграций БД
 
@@ -1058,23 +1105,24 @@ docker compose up -d --no-deps frontend
 
 ### 14.1. Текущий CI (`.github/workflows/ci.yml`)
 
-Четыре job:
+Пять job:
 
-1. **backend-checks**: Python 3.12, `pip install -r requirements.txt + requirements-dev.txt`, `python -m compileall backend`, smoke миграций на **PostgreSQL 17** (сервис в CI), `unittest discover backend/tests`. `SECRET_KEY=UnitTestSecretKey123!...` (проходит validator).
-2. **backend-redis-integration**: Python 3.12, PostgreSQL 17 + Redis 7 в CI services. `THROTTLE_BACKEND=dual`, `SESSION_VERSION_CACHE=redis`, `REDIS_URL=redis://localhost:6379/0`. Запускает все backend-тесты с Redis.
-3. **frontend-build**: Node 22, `npm ci`, `npm run typecheck`, `npm run build` (production).
-4. **compose-smoke**: зависит от job 1+2+3, запускает `docker compose up -d --build db redis judge-runner backend-init backend frontend`, ждёт health всех сервисов.
+1. **secret-scan**: `gitleaks/gitleaks-action@v2` на весь репозиторий (история). Ловит accidental коммиты API-ключей, JWT signing keys, PostgreSQL/Redis паролей.
+2. **backend-checks**: Python 3.12, `pip install -r requirements.txt + requirements-dev.txt`, `python -m compileall backend`, smoke миграций на **PostgreSQL 17** (сервис в CI), `unittest discover backend/tests`. `SECRET_KEY=UnitTestSecretKey123!...` (проходит validator).
+3. **backend-redis-integration**: Python 3.12, PostgreSQL 17 + Redis 7 в CI services. `THROTTLE_BACKEND=dual`, `SESSION_VERSION_CACHE=redis`, `REDIS_URL=redis://localhost:6379/0`. Запускает все backend-тесты с Redis.
+4. **frontend-build**: Node 22, `npm ci`, `npm run typecheck`, `npm run build` (production).
+5. **compose-smoke**: зависит от job 2+3+4, запускает `docker compose up -d --build db redis judge-runner backend-init backend frontend`, ждёт health всех сервисов.
 
 ### 14.2. Дефекты текущего CI
 
 
 | Дефект                                         | P   | Влияние                                                        |
 | ---------------------------------------------- | --- | -------------------------------------------------------------- |
-| SQLite в тестах                                | **P0 — закрыто** | CI теперь на PostgreSQL 17 + Redis (backend-checks + backend-redis-integration) |
+| SQLite в тестах                                | **P0 — закрыто** | CI на PostgreSQL 17 + Redis (backend-checks + backend-redis-integration) |
 | Нет security scan (trivy)                      | P1  | CVE в образах попадают в production                            |
 | Нет dependency-audit (pip-audit, npm audit)    | P1  | Уязвимые библиотеки                                            |
 | Нет coverage threshold                         | P1  | Покрытие неизвестно, регрессии незаметны                       |
-| Нет секрет-скана (gitleaks, detect-secrets)    | P0  | Утечка `.env` уже произошла                                    |
+| Нет секрет-скана (gitleaks)                    | **P0 — закрыто в v1.0.3** | Job `secret-scan` через `gitleaks/gitleaks-action@v2` на каждый PR/push    |
 | Нет lint'а (ruff, mypy, eslint)                | P2  | Style-drift, type-bugs                                         |
 | Нет Playwright/Cypress                         | P2  | UI-регрессии                                                   |
 | Нет pinned image digests в compose-smoke       | P1  | Non-reproducible builds                                        |
@@ -1139,16 +1187,22 @@ jobs:
 
 | Уровень             | Файл                                   | Что тестирует                                                                         |
 | ------------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
-| Security            | `test_security.py` (12.5 KB)           | HttpOnly-cookies, session_version revocation, throttle, origin-check, password policy |
-| Admin ops           | `test_admin_management.py` (9.4 KB)    | create admin, block, delete, audit log                                                |
-| Admin queries       | `test_admin_queries.py` (10.6 KB)      | user listing, pagination, filters                                                     |
-| Teacher queries     | `test_teacher_queries.py` (23 KB)      | classrooms, students, submissions aggregation                                         |
-| Critical journeys   | `test_critical_journeys.py` (9.7 KB)   | register → lesson → submit → complete                                                 |
-| API contracts       | `test_api_contracts.py` (11.5 KB)      | payload shape smoke (select endpoints)                                                |
-| Code judge security | `test_code_judge_security.py` (5.1 KB) | runner bearer, timeout, rejection                                                     |
-| Migrations          | `test_migrations.py` (2.7 KB)          | schema_migrations recording                                                           |
-| Messaging           | `test_messaging.py` (28.7 KB)          | conversations, read receipts, authorization                                           |
-| CSRF                | `test_csrf.py`                         | double-submit cookie, OPTIONS-preflight, hmac compare                                 |
+| Security            | `test_security.py` (19 KB)             | HttpOnly-cookies, session_version revocation, throttle, origin-check, password policy |
+| Security P0 fixes   | `test_security_p0_fixes.py` (19 KB)    | целевые регрессы для всех P0-фиксов (SECRET_KEY, JWT keyring, CSRF, runner-token, ...) |
+| Admin ops           | `test_admin_management.py` (51 KB)     | create admin, block, delete, audit log, teacher approval flow                          |
+| Admin queries       | `test_admin_queries.py` (11 KB)        | user listing, pagination, filters                                                     |
+| Teacher queries     | `test_teacher_queries.py` (27 KB)      | classrooms, students, submissions aggregation                                         |
+| Critical journeys   | `test_critical_journeys.py` (13 KB)    | register → lesson → submit → complete, teacher grading                                |
+| API contracts       | `test_api_contracts.py` (23 KB)        | payload shape smoke (select endpoints)                                                |
+| Code judge security | `test_code_judge_security.py` (12 KB)  | runner bearer fail-fast, timeout, rejection, code-length bound                         |
+| Migrations          | `test_migrations.py` (3 KB)            | schema_migrations recording, idempotency                                              |
+| Messaging           | `test_messaging.py` (29 KB)            | conversations, read receipts, authorization                                           |
+| CSRF                | `test_csrf.py` (8 KB)                  | double-submit cookie, OPTIONS-preflight, hmac compare                                 |
+| Email flows         | `test_email_flows.py` (30 KB)          | verify / resend / forgot / reset; throttle, neutral responses, token consumption       |
+| Assignment images   | `test_assignment_images.py` (15 KB)    | MediaAsset CRUD, FK, extension whitelist                                              |
+| Useful tasks        | `test_useful_tasks.py` (11 KB)         | public listing, admin CRUD, age_group filter                                          |
+| Parent copy tone    | `test_parent_copy_positivity.py` (7 KB)| гарантия позитивной тональности уведомлений родителю                                   |
+| Support tickets     | `test_support_tickets.py` (5 KB)       | open, reply, read-state, ownership                                                    |
 | Runtime config      | `test_runtime_config.py`               | SECRET_KEY validation, placeholder denylist, entropy guard (8 кейсов)                |
 | Core domain         | `test_core_domain.py`                  | gamification, achievements, XP logic                                                  |
 | Cosmetics           | `test_cosmetics.py`                    | buy/equip items, XP spend, catalog validation                                         |
@@ -1157,7 +1211,7 @@ jobs:
 | Staff messaging     | `test_staff_messaging.py`              | StaffDirectThread, messages, read states, authorization                               |
 
 
-**ИТОГО:** ~150+ KB backend-тестов, преимущественно unit + integration (API-level).
+**ИТОГО:** 22 файла, ~390 KB backend-тестов, преимущественно unit + integration (API-level).
 
 ### 15.2. Что отсутствует
 
@@ -1482,31 +1536,53 @@ secrets:
 
 | Код   | Долг                                                                                   | Impact      | Effort | P   |
 | ----- | -------------------------------------------------------------------------------------- | ----------- | ------ | --- |
-| TD-01 | `.env` с секретом закоммичена — нужен `git filter-repo`, revoke ключа, rewrite history | Критический | S      | **P0 — код закрыт в v1.0.1, оргдействие остаётся**  |
+| TD-01 | `.env` с секретом закоммичен — нужен `git filter-repo`, revoke ключа, rewrite history  | Критический | S      | **P0 — код закрыт в v1.0.1 + v1.0.3 (GigaChat удалён), оргдействие (filter-repo + revoke у Сбера) остаётся**  |
 | TD-02 | SQLite CI → PostgreSQL CI                                                              | Высокий     | S      | **P0 — закрыто в v1.0.1** (postgres:17 service)     |
 | TD-03 | CSP `unsafe-inline`, `unsafe-eval`                                                     | Высокий     | M      | **P0 — закрыто в v1.0.1** (nonce + strict-dynamic)  |
 | TD-04 | Нет CSRF-token                                                                         | Высокий     | M      | **P0 — закрыто в v1.0.1** (double-submit cookie)    |
 | TD-05 | Pinned image digests                                                                   | Средний     | S      | **P0 — playbook+скрипт готовы, inline оператором**  |
 | TD-06 | Нет бэкапов PG                                                                         | Критический | S      | **P0 — закрыто в v1.0.1** (db-backup sidecar + DR)  |
-| TD-07 | Нет Celery/email                                                                       | Высокий     | L      | P1 (Redis live, Celery — следующий шаг) |
-| TD-08 | Самописный migration runner → Alembic                                                  | Средний     | M      | P1  |
-| TD-09 | Leaderboard in-process cache → Redis                                                   | Средний     | S      | P1 (Redis live, кэш pending) |
-| TD-10 | Oversized frontend components (5 файлов > 20 KB)                                       | Средний     | L      | P1  |
-| TD-11 | Oversized backend blueprints (student.py 43 KB)                                        | Средний     | L      | P1  |
-| TD-12 | OpenAPI / type-safe контракт                                                           | Средний     | M      | P1  |
-| TD-13 | Нет frontend-тестов                                                                    | Средний     | L      | P2  |
-| TD-14 | Nsjail / seccomp для judge                                                             | Высокий     | M      | P1  |
-| TD-15 | Admin audit log неполон (семантически)                                                 | Средний     | M      | P1 (SiteActivityLog добавлен как сырой trail) |
-| TD-16 | UUID PK для multi-tenant                                                               | Низкий      | L      | P2  |
-| TD-17 | `Module.is_custom_classroom_module` через slug-prefix → FK                             | Низкий      | M      | P2  |
-| TD-18 | `Assignment.description` meta через префикс → отдельные колонки                        | Низкий      | M      | P2  |
-| TD-19 | Username min 5 симв — коллизии в школе 500+                                            | Средний     | S      | P1  |
-| TD-20 | Mascot PNG 12 MB в backend-образе                                                      | Низкий      | S      | P2  |
-| TD-21 | `ParentInvite` legacy-механизм → вытеснить `ParentChildLink`                           | Средний     | M      | P2  |
-| TD-22 | Throttle dual-mode только для login/register; parent_cabinet использует DB-fallback    | Средний     | S      | P1  |
+| TD-07 | Нет Celery                                                                             | Высокий     | L      | P1 (Redis live, Celery — следующий шаг)             |
+| TD-07b | Email-канал и password recovery                                                       | Критический | M      | **P1 — закрыто в v1.0.3** (Unisender Go: verify / resend / forgot / reset; welcome-email родителя; hash-only EmailToken) |
+| TD-08 | Самописный migration runner → Alembic                                                  | Средний     | M      | P1                                                  |
+| TD-09 | Leaderboard cache invalidation                                                         | Средний     | S      | **P1 — закрыто в v1.0.3** (`invalidate_leaderboard_cache` на каждый XP/block/delete event)         |
+| TD-10 | Oversized frontend components (5 файлов > 20 KB)                                       | Средний     | L      | P1                                                  |
+| TD-11 | Oversized backend blueprints (student.py 52 KB)                                        | Средний     | L      | P1                                                  |
+| TD-12 | OpenAPI / type-safe контракт                                                           | Средний     | M      | P1                                                  |
+| TD-13 | Нет frontend-тестов                                                                    | Средний     | L      | P2                                                  |
+| TD-14 | Nsjail для judge (defense in depth поверх Docker)                                      | Высокий     | M      | P1 (cap_drop+seccomp+RLIMIT-набор уже на месте, nsjail добавит per-submission namespace) |
+| TD-15 | Admin audit log неполон (семантически)                                                 | Средний     | M      | P1 (SiteActivityLog как сырой trail добавлен)       |
+| TD-16 | UUID PK для multi-tenant                                                               | Низкий      | L      | P2                                                  |
+| TD-17 | `Module.is_custom_classroom_module` через slug-prefix → FK                             | Низкий      | M      | P2                                                  |
+| TD-18 | `Assignment.description` meta через префикс → отдельные колонки                        | Низкий      | M      | P2                                                  |
+| TD-19 | Username min 5 симв — коллизии                                                         | Средний     | S      | **Закрыто в v1.0.3 (миграция 0016)** — `users.username` удалена, email — единственный идентификатор |
+| TD-20 | Mascot PNG 12 MB в backend-образе                                                      | Низкий      | S      | P2                                                  |
+| TD-21 | `ParentInvite` legacy-механизм → вытеснить `ParentChildLink`                           | Средний     | M      | P2                                                  |
+| TD-22 | Throttle dual-mode только для login/register; parent_cabinet использует DB-fallback    | Средний     | S      | P1                                                  |
+| TD-23 | FK без ON DELETE                                                                        | Критический | S      | **P0 — закрыто в v1.0.3 (миграция 0019_fk_ondelete_cascade)** — ~45 FK переведены на CASCADE/SET NULL |
+| TD-24 | Frontend deps на `latest`                                                              | Средний     | S      | **Закрыто в v1.0.3** — typescript, lucide-react, tailwindcss, @tailwindcss/postcss, @types/*, clsx, @gsap/react, @monaco-editor/react pinned         |
+| TD-25 | Нет gitleaks/secret-scan в CI                                                          | Высокий     | S      | **Закрыто в v1.0.3** (`secret-scan` job через `gitleaks-action@v2`) |
+| TD-26 | judge_runner: code length / RLIMIT_NPROC / umask                                       | Высокий     | S      | **Закрыто в v1.0.3** — MAX_CODE_BYTES=256 KB, MAX_STDIN_BYTES_TOTAL=1 MB, RLIMIT_NPROC=(32,64), RLIMIT_FSIZE, `os.umask(0o077)`, fail-fast `ALLOW_UNAUTHENTICATED` |
+| TD-27 | Email leak в messaging payload                                                         | Высокий     | S      | **Закрыто в v1.0.3** — `_user_payload` больше не возвращает email участникам диалога   |
+| TD-28 | `LESSON_PARTICIPANT_ROLES` слишком широк                                               | Средний     | S      | **Закрыто в v1.0.3** — сужен до `{STUDENT, PARENT}`                                    |
+| TD-29 | parent_safety без bounds                                                               | Средний     | S      | **Закрыто в v1.0.3** — 0..10080 / 0..1440                                              |
 
 
-Total: **22 крупных пунктов tech debt**. P0 × 6 закрыты, P1 × 10, P2 × 6.
+| TD-30 | Migration 0019: ссылки на несуществующие таблицы/колонки                                | Критический | S      | **Закрыто в v1.0.4.** Все 54 FK-правила статически верифицированы против моделей. Регрессионный тест `backend/tests/test_migration_0019.py`. |
+| TD-31 | `submit_assignment`: ре-сабмит после checked стирает оценку учителя                     | Высокий     | S      | **Закрыто в v1.0.4.** Возврат 400 + `code: submission_already_checked`. |
+| TD-32 | `staff_messaging /threads/<id>/*` decorator без role-list (defense-in-depth)            | Высокий     | S      | **Закрыто в v1.0.4.** `@auth_required([ADMIN, SUPERADMIN, TEACHER])` на 3 эндпоинтах. |
+| TD-33 | `POST /admin/admins`: нет email-валидации, full_name без bound, `xp=2000`               | Высокий     | S      | **Закрыто в v1.0.4.** `is_valid_email`, `[:120]`, `xp=0`. |
+| TD-34 | `POST/PATCH /admin/modules`: slug-None IntegrityError, age_group без enum                | Высокий     | S      | **Закрыто в v1.0.4.** Общий `_validate_module_payload(partial=...)` (regex slug, enum age_group, color, icon whitelist, bounds order_index). |
+| TD-35 | `external_url` в useful_tasks принимал любую схему (XSS-вектор)                          | Высокий     | S      | **Закрыто в v1.0.4.** `_validate_external_url` ограничивает `http(s)://` + длина ≤ 500. |
+| TD-36 | Cosmetics доступны admin/teacher (XP-экономика «протекает»)                              | Высокий     | S      | **Закрыто в v1.0.4.** `_COSMETICS_ALLOWED_ROLES = [STUDENT, PARENT]`. |
+| TD-37 | Email leak в support tickets payload (не-staff видит admin email)                        | Средний     | S      | **Закрыто в v1.0.4.** `_user_payload(include_email=...)`; staff-only callsite. |
+| TD-38 | Email leak в staff_messaging service (defense-in-depth)                                   | Средний     | S      | **Закрыто в v1.0.4.** Аналогично support tickets. |
+| TD-39 | Teacher `grade_submission` не пишет семантический audit log                               | Средний     | S      | **Закрыто в v1.0.4.** `AdminAuditLog action='submission_graded'` с дельтой полей. |
+| TD-40 | Support tickets `staff_set_status` без state-machine                                     | Средний     | S      | **Закрыто в v1.0.4.** `_STATUS_TRANSITIONS` whitelist. |
+| TD-41 | `register`: `full_name` без `[:120]` truncate (PG DataError)                              | Средний     | S      | **Закрыто в v1.0.4.** `str(...)[:120]`. |
+
+
+Total: **41 крупных пунктов tech debt**. Закрыто на v1.0.3 + v1.0.4: 27. Остаётся: P1 × ~7, P2 × 6, P3 × 1.
 
 ---
 
@@ -1540,23 +1616,22 @@ Total: **22 крупных пунктов tech debt**. P0 × 6 закрыты, P
 | Node.js 22              | MIT + OpenSSL                                  | ✓                                   | ✓                 | Нет                                      |
 
 
-### 22.2. Критический риск: GSAP
+### 22.2. GSAP — снято (Webflow-acquisition 2024)
 
-GSAP использует кастомную лицензию **GreenSock Standard License**:
+Исторически GSAP использовал кастомную лицензию **GreenSock Standard License** с платными бонусными плагинами для коммерции. **С лета 2024**, после приобретения GreenSock компанией Webflow, **все плагины GSAP стали бесплатными для всех способов использования**, включая коммерческое. Версия в проекте `gsap@3.14.2` — уже под новой свободной лицензией.
 
-- Бесплатно для non-commercial и до $100M revenue для большинства плагинов.
-- Core (Tween, Timeline) — бесплатен.
-- **Бонусные плагины** (ScrollTrigger, SplitText, DrawSVG, MorphSVG) требуют «GSAP Plus» подписки ($99–$199/год) для коммерческого использования.
+**Аудит использования GSAP в текущем коде:**
 
-**Рекомендация:** провести аудит `frontend/src/components/*.tsx` на использование **плагинов GSAP**. Если используются только core + базовые easings — бесплатно. Если ScrollTrigger / SplitText / Draggable — **обязательна платная подписка** для коммерции.
+- `gsap` core (`set`, `to`, `fromTo`, `timeline`, `context`, `utils.toArray`) — `use-user-page-motion.ts`, `roadmap-punsons.tsx` — всегда было бесплатно.
+- `ScrollTrigger` — `use-user-page-motion.ts`, `roadmap-punsons.tsx` — было бесплатно ещё до acquisition; сейчас тем более.
+- `useGSAP` из `@gsap/react` — MIT.
+- **Платные «бонусные» плагины (SplitText, MorphSVG, DrawSVG, MotionPath, Inertia, ScrollSmoother, Physics2D, Draggable, Flip, Observer, ScrollToPlugin, TextPlugin) не используются ни в одном файле.**
 
-**Альтернатива (v1.5):** замена GSAP на Framer Motion (MIT) + CSS Animations — меньше bundle size, нет license cost, достаточно для learning-path анимации.
+**Вывод:** подписка GSAP Plus **не требуется**. Риск снят.
 
-### 22.3. Риск: GigaChat API
+### 22.3. (legacy) GigaChat API — снят в v1.0.3
 
-- SLA: неизвестен (Sberbank не публикует).
-- Ценообразование: per-token, ~1₽ за 1k токенов (данные на 2026).
-- Альтернативы для fail-over: YandexGPT, локальная модель (Llama 3.1-8B через Ollama) — Apache 2.0.
+GigaChat lesson-чат удалён из проекта по решению владельца. См. §10.1. Связанные риски (SLA Sber, ценообразование, ротация ключа) теперь не применяются. Альтернативы (YandexGPT, локальная Llama / Qwen через Ollama) остаются открытыми вариантами на случай возврата к AI-ассистенту в будущей фазе.
 
 ### 22.4. Риск: educational контент
 
@@ -1805,30 +1880,55 @@ GSAP использует кастомную лицензию **GreenSock Standa
 
 ## 27. Итоговая production-ready стратегия
 
-Платформа Progyx (ProgHUB) в текущей версии **v1.0 / v1.0.2 (pre-alpha)** представляет собой функционально богатый прототип: реализованы все основные сценарии ученика, учителя, администратора, **полноценный родительский кабинет** (parent-роль, ParentChildLink, безопасность, согласия, parent↔teacher-чат), **system косметики** (аватары/рамки/темы за XP с механикой покупки), **staff-прямые-чаты** (admin↔teacher), **SiteActivityLog** (per-request API trail), **teacher approval workflow**, **Redis в стеке** (throttle dual-mode, session_version cache), расширенный CI с Redis-интеграцией. Работает автопроверка кода в изолированном контейнере, мессенджер, AI-ассистент, описаны 12 миграций, работает CI из 4 job'ов.
+Платформа Progyx (ProgHUB) в текущей версии **v1.0.4 (pilot-ready)** представляет собой функционально полный продукт: реализованы все основные сценарии ученика, учителя, администратора, **полноценный родительский кабинет** (parent-роль, ParentChildLink, безопасность, согласия, parent↔teacher-чат), **система косметики** (аватары/рамки/темы за XP с механикой покупки), **staff-прямые-чаты** (admin↔teacher), **SiteActivityLog** (per-request API trail, JSON-архив **бессрочно**), **teacher approval workflow**, **email-канал** (Unisender Go: verify / resend / forgot / reset), **тикет-система поддержки**, **полезные задания**, **турнирный рейтинг** (XLSX из Yandex Disk), **Redis в стеке** (throttle dual-mode, session_version cache, leaderboard cache с явной инвалидацией). Работает автопроверка кода в изолированном контейнере, мессенджеры, описаны 19 миграций, работает CI из 5 job'ов (включая secret-scan).
 
-**Апдейт v1.0.1 (P0-фикс-спринт):** все **десять P0-блокеров** закрыты на уровне кода, конфигурации, тестов и документации — SECRET_KEY-hardening, nonce-based CSP, CSRF double-submit, seccomp + ulimits + non-root для judge-runner, PostgreSQL-CI, image-pinning playbook, runner-token denylist, pg_dump backup-sidecar + DR-runbook, ProxyFix middleware, access-cookie session revoke.
+**Апдейт v1.0.1 (P0-фикс-спринт):** все десять P0-блокеров закрыты на уровне кода, конфигурации, тестов и документации — SECRET_KEY-hardening, nonce-based CSP, CSRF double-submit, seccomp + ulimits + non-root для judge-runner, PostgreSQL-CI, image-pinning playbook, runner-token denylist, pg_dump backup-sidecar + DR-runbook, ProxyFix middleware, access-cookie session revoke.
 
-**Апдейт v1.0.2 (security hardening, GigaChat excluded):** закрыты оставшиеся code/config уязвимости: JWT key rotation (`kid` + keyring), Strict SameSite + production fail-fast, HSTS/X-Permitted-Cross-Domain-Policies, production reject unsafe requests without `Origin`, Next proxy origin-forwarding, IP-level register throttle, удаление local judge fallback, PostgreSQL Docker secret + закрытый host port `5432`.
+**Апдейт v1.0.2 (security hardening):** закрыты оставшиеся code/config уязвимости: JWT key rotation (`kid` + keyring), Strict SameSite + production fail-fast, HSTS/X-Permitted-Cross-Domain-Policies, production reject unsafe requests without `Origin`, Next proxy origin-forwarding, IP-level register throttle, удаление local judge fallback, PostgreSQL Docker secret + закрытый host port `5432`.
 
-**Функциональное расширение (post v1.0.2):** добавлены parent cabinet (migration 0009), staff direct messaging (0010), site activity log (0011), cosmetics system (0012), teacher approval workflow (0007-0008), phone field (0006). Стек расширен Redis 7 (обязательный сервис). CI расширен job'ом `backend-redis-integration`. Тест-покрытие: 16 файлов, ~150+ KB.
+**Апдейт v1.0.3 (текущая версия) — pilot-ready release:**
 
-Остаются **оргдействия** (GigaChat-ключ намеренно исключён из scope, `git filter-repo`, inline digest'ов, host-level iptables для runner-egress) и **P1/P2 reliability/product debt** (observability, Alembic, leaderboard Redis-cache, Celery/email, audit-log completeness, e2e/frontend tests). Оценочный объём оставшихся работ — **одна фаза 2 (6–8 недель)** для P1 до уровня **Gate 2 — первая коммерческая поставка**.
+- **GigaChat lesson-чат удалён из проекта** по решению владельца (`core/gigachat.py`, frontend drawer, endpoint, env-переменные, типы и тесты — всё вычищено).
+- **Email-канал live:** Unisender Go transactional API + EmailToken (hash-only one-time токены, миграция 0017): verify-email, resend-verification, forgot-password, reset-password, parent welcome-email с одноразовым паролем.
+- **Миграция 0019 `fk_ondelete_cascade`:** ~45 FK переведены на `ON DELETE CASCADE / SET NULL` — orphan rows на raw SQL `DELETE FROM users` больше невозможны.
+- **judge-runner ужесточён:** `RLIMIT_NPROC=(32,64)`, `RLIMIT_FSIZE`, `os.umask(0o077)`, `MAX_CODE_BYTES=256 KB`, `MAX_STDIN_BYTES_TOTAL=1 MB`. Production fail-fast при `ALLOW_UNAUTHENTICATED=true` или коротком/placeholder-токене.
+- **Закрыты defect'ы из аудита:** bounds на parent screen-time; email-leak в messaging-payload убран; инвалидация Redis leaderboard cache на каждый XP/block/delete event; `LESSON_PARTICIPANT_ROLES` сужен до `{STUDENT, PARENT}`; bounds на `staff_messaging /search-users` (анти-enumeration).
+- **CI расширен:** добавлен job `secret-scan` через `gitleaks-action@v2`.
+- **Frontend deps pinned:** typescript@^5.7.2, lucide-react@^0.460.0, tailwindcss + @tailwindcss/postcss@^4.2.2, @types/*@^22/19, clsx@^2.1.1, @gsap/react@^2.1.2, @monaco-editor/react@^4.7.0.
+- **Retention аудита:** `AdminAuditLog` и `SiteActivityLog` ежедневно выгружаются в JSON-файлы и сохраняются **бессрочно** (политика владельца, май 2026).
+- **GSAP-лицензия:** аудит показал использование только бесплатных core + ScrollTrigger; после Webflow-acquisition (2024) **все плагины GSAP бесплатны** для коммерции. Подписка GSAP Plus не требуется.
 
-После Gate 2 продукт готов к пилотным поставкам в частные школы и центры доп. образования с тарифами 30–90 тыс. ₽/школа/год. Прибыльность для соло-разработчика реалистична на горизонте 2.5–3 года при фокусе на сегмент Pro/Pro+ (частные школы, EdTech-онлайн-школы).
+**Функциональное покрытие (миграции 0001–0019):**
+- 0001–0012 — описано ранее (baseline, admin audit, session/progress, teacher↔student messaging, class join, user phone, teacher approval status/expiration, parent cabinet, staff direct messaging, site activity, cosmetics).
+- 0013 `media_assets` — cover-картинки для заданий и полезных задач.
+- 0014 `assignment_image` — FK c `ondelete='SET NULL'`.
+- 0015 `useful_tasks` — каталог практик вне learning path.
+- 0016 `drop_users_username` — email становится единственным идентификатором логина.
+- 0017 `email_verification_and_reset` — EmailToken (hash-only).
+- 0018 `support_tickets` — тикет-система поддержки.
+- 0019 `fk_ondelete_cascade` — массовое перевешивание FK constraint'ов.
+
+**Тестовое покрытие:** 22 файла бэкенд-тестов, ~390 KB. Покрыты security (включая P0-фиксы), CSRF, runtime_config, migrations, code_judge_security, email_flows, admin/teacher/parent queries, critical journeys, messaging, cosmetics, useful tasks, support tickets, assignment images, parent copy tone.
+
+Остаются **оргдействия** и **P1/P2 reliability/product debt**:
+
+- Оргдействия: `git filter-repo --path .env --invert-paths` (удаление исторического GigaChat-ключа из git-истории) + revoke ключа у Сбера; inline digest'ов Docker-образов через `scripts/pin-images.sh` перед production-сборкой; применение миграции `0019_fk_ondelete_cascade` (`flask upgrade-db`); опционально host-level iptables DROP для runner-egress.
+- P1 (до Gate 3): observability (Sentry/Glitchtip + Prometheus + Grafana), Alembic вместо самописного runner'а, Celery + Redis-broker для асинхронной автопроверки и отправки писем, OpenAPI + автогенерация TypeScript-типов, nsjail / cgroup memory.max для defense-in-depth, e2e Playwright + frontend Vitest, EULA + политика ПДн.
+- P2 (плановые): UUID PK, ABAC, декомпозиция крупных файлов, перенос mascot в frontend public, materialized leaderboard view, CDN.
+
+После применения оргдействий и закрытия P1 (~3–5 недель команды из 2–3 чел.) продукт готов к **первой коммерческой пилотной поставке** в частные школы и центры доп. образования с тарифами 30–90 тыс. ₽/школа/год. Прибыльность для соло-разработчика реалистична на горизонте 2.5–3 года при фокусе на сегмент Pro/Pro+ (частные школы, EdTech-онлайн-школы).
 
 Ключевые архитектурные риски, за которые платформа должна отвечать до первой продажи:
 
-1. **Безопасность кода ученика.** Defense-in-depth (nsjail + seccomp + egress-block + RLIMIT + read_only + cap_drop + namespace) обязателен, каждый слой тестируется отдельно.
-2. **Сохранность данных.** `pg_dump` + rsync + weekly drill — минимум, без которого лицензионное соглашение не должно подписываться.
-3. **Стабильность инфраструктуры.** Observability + health-checks + on-call контакт + blue/green deploy — уровень, соответствующий ожиданиям школы.
-4. **Юридическая чистота.** EULA, политика ПДн, договор processor'а с оператором, явная резидентность данных.
-5. **Лицензионная чистота third-party.** Аудит GSAP-плагинов обязателен. GigaChat-риски намеренно исключены из v1.0.2 scope; план B — замена на локальную модель.
+1. **Безопасность кода ученика.** Defense-in-depth (Docker isolation + cap_drop + seccomp + read_only + tmpfs:noexec + RLIMIT_CPU/AS/NPROC/FSIZE + umask + non-root + judge_net internal + bearer-auth + input bounds) уже на месте; nsjail и iptables — улучшения P1.
+2. **Сохранность данных.** `pg_dump`-sidecar (14 дней retention) + weekly test-restore drill — drill автоматизировать; audit-архив бессрочно на host volume.
+3. **Стабильность инфраструктуры.** Observability (Sentry + Grafana) + health-checks (уже есть) + on-call контакт + blue/green deploy — open P1.
+4. **Юридическая чистота.** EULA, политика ПДн, договор processor'а с оператором, явная резидентность данных (для on-prem гарантирована).
 
-**Финальная рекомендация:** переход в статус commercial pilot возможен за 9–13 недель целенаправленной работы (Фазы 1.5 + 2) при условии соло-разработчика, или за 5–7 недель при команде из 2–3 человек. Продукт существенно богаче относительно исходного v1.0 за счёт новых систем (parent cabinet, cosmetics, staff messaging, activity log). Все изменения описаны конкретно, с предложенными code-патчами, и не требуют переписывания архитектуры — только её достройки до production-grade уровня.
+**Финальная рекомендация:** проект **функционально готов к пилоту в одной школе уже сейчас** после применения оргдействий (filter-repo + миграция 0019 + pin digest'ов). После v1.0.4 закрыты все Critical и High из последнего аудита — миграция 0019 рабочая (54 FK statically verified), ре-сабмит после checked заблокирован, admin/module payloads валидируются, `external_url` ограничен `http(s)://`, cosmetics только для учеников/родителей, audit log для grading. До «стабильного single-school продакшна» остаются P1-задачи на 3–5 недель командной работы или 6–8 недель соло-разработки. Все изменения описаны конкретно, с предложенными code-патчами, и не требуют переписывания архитектуры — только её достройки до production-grade уровня.
 
 *Конец документа*
 
 ---
 
-*Архитектурный документ подготовлен как результат полного аудита репозитория `ProgHUB-pre_alfa`. Последнее обновление: апрель 2026 (отражает фактическое состояние кодовой базы: 12 миграций, Redis в стеке, 5 ролей, parent cabinet, cosmetics, staff direct messaging, SiteActivityLog, teacher approval, 16 тест-файлов, 4 CI job'а). Документ предназначен для CTO-review, инвестора, технической защиты проекта, а также для подготовки к первой коммерческой поставке.*
+*Архитектурный документ подготовлен как результат полного аудита репозитория `Progyx / ProgHUB`. Последнее обновление: май 2026, версия v1.0.4 (отражает фактическое состояние кодовой базы: 19 миграций со статически верифицированной 0019_fk_ondelete_cascade (54 FK CASCADE/SET NULL), Redis в стеке, 5 ролей, parent cabinet, cosmetics (учеников/родителей), staff direct messaging, SiteActivityLog (forever retention), teacher approval, email-канал на Unisender Go, тикеты поддержки с state-machine, полезные задания с `external_url` whitelist, турнирный рейтинг, 23 тест-файла (новый `test_migration_0019.py`), 5 CI job'ов включая gitleaks, judge-runner с RLIMIT_NPROC/FSIZE/umask + code-length bounds, audit log для grading, GSAP — бесплатно после Webflow-acquisition, GigaChat — удалён). Документ предназначен для CTO-review, инвестора, технической защиты проекта, а также для подготовки к первой коммерческой поставке.*

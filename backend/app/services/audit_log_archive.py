@@ -1,4 +1,12 @@
-"""Daily export of admin audit logs and site activity logs to JSON files, then clearing the DB tables."""
+"""Daily export of admin audit logs and site activity logs to JSON files, then clearing the DB tables.
+
+RETENTION POLICY (set by product owner, 2026-05-11):
+    Audit and site-activity JSON archives are kept **forever** on the host
+    that mounts AUDIT_LOG_ARCHIVE_DIR. No purge job runs on them — operators
+    are expected to copy / rotate the directory to cold storage out of band.
+    The only retention in this repo is on PostgreSQL backups (scripts/backup.sh,
+    14 days), which is a separate concern.
+"""
 
 from __future__ import annotations
 

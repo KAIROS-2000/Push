@@ -27,6 +27,16 @@ VALID_CATEGORIES = frozenset(
 )
 VALID_STATUSES = frozenset({"open", "in_progress", "resolved", "closed"})
 
+# Allowed status transitions enforced by `staff_set_status`. Identity
+# transitions (e.g. open -> open) are also allowed implicitly so admin
+# re-applying the same status doesn't 400.
+_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "open": frozenset({"open", "in_progress", "resolved", "closed"}),
+    "in_progress": frozenset({"in_progress", "open", "resolved", "closed"}),
+    "resolved": frozenset({"resolved", "in_progress", "closed"}),
+    "closed": frozenset({"closed", "open"}),
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -40,15 +50,23 @@ def iso_timestamp(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat()
 
 
-def _user_payload(user: User | None) -> dict | None:
+def _user_payload(user: User | None, *, include_email: bool = False) -> dict | None:
+    """Identity payload for support-ticket participants.
+
+    SECURITY (audit M-1): `email` is PII and must not leak from staff to
+    ticket creators. We expose it only when ``include_email=True``, which
+    callers set based on whether the *viewer* is staff (admin/superadmin).
+    """
     if user is None:
         return None
-    return {
+    payload: dict = {
         "id": user.id,
-        "email": user.email,
         "full_name": user.full_name,
         "role": user.role.value,
     }
+    if include_email:
+        payload["email"] = user.email
+    return payload
 
 
 def _preview(message: SupportTicketMessage | None) -> str | None:
@@ -153,17 +171,20 @@ def ticket_detail_payload(user: User, ticket: SupportTicket) -> dict:
         "updated_at": iso_timestamp(ticket.updated_at),
     }
     if user.role in _STAFF_ROLES:
-        base["user"] = _user_payload(owner)
+        base["user"] = _user_payload(owner, include_email=True)
     return {"ticket": base}
 
 
 def message_payload(message: SupportTicketMessage, viewer: User) -> dict:
     sender = message.sender
+    # Only staff viewers see counterparty emails. A learner opening their own
+    # ticket must not learn the admin's address (audit M-1).
+    expose_email = viewer.role in _STAFF_ROLES
     return {
         "id": message.id,
         "ticket_id": message.ticket_id,
         "sender_id": message.sender_id,
-        "sender": _user_payload(sender),
+        "sender": _user_payload(sender, include_email=expose_email),
         "sender_name": sender.full_name if sender else None,
         "sender_role": sender.role.value if sender else None,
         "body": message.body,
@@ -313,6 +334,17 @@ def staff_set_status(
             {"message": "Некорректный статус.", "valid": sorted(VALID_STATUSES)},
             400,
         )
+    current = (ticket.status or "open").strip().lower()
+    allowed = _STATUS_TRANSITIONS.get(current, frozenset())
+    if status not in allowed:
+        return None, (
+            {
+                "message": f"Недопустимый переход статуса {current} → {status}.",
+                "code": "invalid_status_transition",
+                "allowed_next": sorted(allowed),
+            },
+            400,
+        )
     ticket.status = status
     ticket.updated_at = _utcnow()
     return ticket, None
@@ -347,7 +379,9 @@ def staff_ticket_rows(viewer: User, *, status_filter: str | None = None) -> list
                 "status": t.status,
                 "created_at": iso_timestamp(t.created_at),
                 "updated_at": iso_timestamp(t.updated_at),
-                "user": _user_payload(owner),
+                # staff_ticket_rows is staff-only (called from /staff/tickets)
+                # so the email is acceptable here as part of the address-book.
+                "user": _user_payload(owner, include_email=True),
                 "unread_count": unread_for_ticket(t, viewer.id),
                 "latest_message_at": iso_timestamp(latest.created_at) if latest else None,
                 "latest_message_preview": _preview(latest),

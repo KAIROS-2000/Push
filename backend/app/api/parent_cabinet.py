@@ -405,12 +405,40 @@ def patch_safety(user: User, child_id: int):
         row = ParentSafetySettings.query.filter_by(
             parent_user_id=user.id, child_user_id=child_id
         ).first()
+    # Bounds: a week has 7*24*60 = 10080 minutes, a day has 24*60 = 1440 minutes.
+    # Negative / out-of-range values must not enter the DB — they corrupt every
+    # downstream "minutes remaining" computation. None is a valid value
+    # (meaning "no limit configured by the parent").
+    _WEEK_MIN_LIMIT = 7 * 24 * 60
+    _DAY_MIN_LIMIT = 24 * 60
     if "weekly_screen_time_limit_minutes" in data:
         v = data["weekly_screen_time_limit_minutes"]
-        row.weekly_screen_time_limit_minutes = int(v) if v is not None else None
+        if v is None:
+            row.weekly_screen_time_limit_minutes = None
+        else:
+            try:
+                parsed = int(v)
+            except (TypeError, ValueError):
+                return {"message": "weekly_screen_time_limit_minutes должен быть целым числом."}, 400
+            if parsed < 0 or parsed > _WEEK_MIN_LIMIT:
+                return {
+                    "message": f"weekly_screen_time_limit_minutes должен быть в диапазоне 0..{_WEEK_MIN_LIMIT}."
+                }, 400
+            row.weekly_screen_time_limit_minutes = parsed
     if "daily_screen_time_limit_minutes" in data:
         v = data["daily_screen_time_limit_minutes"]
-        row.daily_screen_time_limit_minutes = int(v) if v is not None else None
+        if v is None:
+            row.daily_screen_time_limit_minutes = None
+        else:
+            try:
+                parsed = int(v)
+            except (TypeError, ValueError):
+                return {"message": "daily_screen_time_limit_minutes должен быть целым числом."}, 400
+            if parsed < 0 or parsed > _DAY_MIN_LIMIT:
+                return {
+                    "message": f"daily_screen_time_limit_minutes должен быть в диапазоне 0..{_DAY_MIN_LIMIT}."
+                }, 400
+            row.daily_screen_time_limit_minutes = parsed
     if "hide_child_public_profile" in data:
         row.hide_child_public_profile = bool(data["hide_child_public_profile"])
     if "allow_achievement_sharing" in data:

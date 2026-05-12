@@ -45,7 +45,6 @@ class ApiContractTests(unittest.TestCase):
             'ENABLE_DEMO_DATA': 'false',
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': 'http://judge-runner:8090/execute',
             'CODE_JUDGE_RUNNER_TOKEN': 'unit-test-runner-token',
             'METRICS_DEBUG': 'false',

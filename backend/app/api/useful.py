@@ -81,6 +81,35 @@ def _validate_image(image_id) -> tuple[int | None, tuple[dict, int] | None]:
     return parsed, None
 
 
+_EXTERNAL_URL_MAX_LENGTH = 500
+
+
+def _validate_external_url(value) -> tuple[str | None, tuple[dict, int] | None]:
+    """Reject everything except http:// and https:// to prevent javascript:,
+    data: and file: schemes from being rendered as clickable links to learners.
+    """
+    raw = str(value or '').strip()
+    if not raw:
+        return None, None
+    lowered = raw.lower()
+    if not (lowered.startswith('http://') or lowered.startswith('https://')):
+        return None, (
+            {
+                'message': 'external_url должен начинаться с http:// или https://.',
+                'code': 'invalid_external_url_scheme',
+            },
+            400,
+        )
+    if len(raw) > _EXTERNAL_URL_MAX_LENGTH:
+        return None, (
+            {
+                'message': f'external_url не длиннее {_EXTERNAL_URL_MAX_LENGTH} символов.',
+            },
+            400,
+        )
+    return raw, None
+
+
 def _filter_age_group(query, raw_value: str | None):
     if not raw_value:
         return query
@@ -197,6 +226,9 @@ def admin_create_useful(current_user: User):
     image_id, image_error = _validate_image(data.get('image_id'))
     if image_error:
         return image_error
+    external_url, url_error = _validate_external_url(data.get('external_url'))
+    if url_error:
+        return url_error
 
     slug = _ensure_unique_slug(str(data.get('slug') or title))
     task = UsefulTask(
@@ -204,7 +236,7 @@ def admin_create_useful(current_user: User):
         title=title[:160],
         summary=str(data.get('summary') or '')[:2000],
         body=str(data.get('body') or '')[:20000],
-        external_url=(str(data.get('external_url') or '').strip() or None),
+        external_url=external_url,
         age_groups=normalize_age_groups(data.get('age_groups')),
         topic=(str(data.get('topic') or '').strip().lower() or None),
         difficulty=normalize_useful_difficulty(data.get('difficulty')),
@@ -236,8 +268,10 @@ def admin_update_useful(current_user: User, task_id: int):
     if 'body' in data:
         task.body = str(data.get('body') or '')[:20000]
     if 'external_url' in data:
-        url = str(data.get('external_url') or '').strip()
-        task.external_url = url or None
+        external_url, url_error = _validate_external_url(data.get('external_url'))
+        if url_error:
+            return url_error
+        task.external_url = external_url
     if 'age_groups' in data:
         task.age_groups = normalize_age_groups(data.get('age_groups'))
     if 'topic' in data:

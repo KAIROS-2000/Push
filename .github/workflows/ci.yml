@@ -11,6 +11,19 @@ on:
   pull_request:
 
 jobs:
+  secret-scan:
+    # Surface accidental commits of secrets (API keys, JWT signing keys,
+    # database passwords) before they ship.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks detect
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   backend-checks:
     runs-on: ubuntu-latest
     env:
@@ -21,7 +34,6 @@ jobs:
       ENABLE_DEMO_DATA: "false"
       SUPERADMIN_BOOTSTRAP: "false"
       SESSION_COOKIE_SECURE: "false"
-      GIGACHAT_VERIFY_SSL: "true"
       METRICS_DEBUG: "false"
     services:
       postgres:
@@ -64,7 +76,6 @@ jobs:
       ENABLE_DEMO_DATA: "false"
       SUPERADMIN_BOOTSTRAP: "false"
       SESSION_COOKIE_SECURE: "false"
-      GIGACHAT_VERIFY_SSL: "true"
       METRICS_DEBUG: "false"
       REDIS_URL: redis://localhost:6379/0
       THROTTLE_BACKEND: dual

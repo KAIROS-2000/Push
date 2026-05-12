@@ -429,25 +429,6 @@ export interface LessonDetail extends LessonSummary {
   quizzes: QuizItem[]
 }
 
-export type LessonChatRole = 'user' | 'assistant'
-
-export interface LessonChatMessage {
-  role: LessonChatRole
-  content: string
-}
-
-export interface LessonChatUsage {
-  prompt_tokens?: number
-  completion_tokens?: number
-  total_tokens?: number
-}
-
-export interface LessonGigaChatResponse {
-  message: LessonChatMessage
-  model?: string | null
-  usage?: LessonChatUsage | null
-}
-
 export interface DashboardData {
   user: UserItem
   summary: {
