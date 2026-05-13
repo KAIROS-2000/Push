@@ -53,7 +53,6 @@ class P0FixesBase(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
             'METRICS_DEBUG': 'false',
@@ -486,7 +485,6 @@ class PostgresPasswordPlaceholderRejectionTests(P0FixesBase):
                 SESSION_COOKIE_SECURE='true',
                 CLIENT_URL='https://frontend.example',
                 SECRET_KEY='a1' * 32,
-                GIGACHAT_VERIFY_SSL='true',
                 DATABASE_URL='postgresql+psycopg://codequest:DevPostgresLocalPassphrase000000001@db:5432/codequest',
                 **_PROD_REDIS_ENV,
             )

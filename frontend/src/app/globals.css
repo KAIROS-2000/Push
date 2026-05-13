@@ -2209,16 +2209,16 @@ html[data-theme='dark'] .auth-switch-button:hover {
 .progyx-header__brand-tag {
 	display: inline-flex;
 	font-family: var(--progyx-font-code);
-	font-size: 0.7rem;
+	font-size: 0.62rem;
 	font-weight: 800;
-	letter-spacing: 0.22em;
+	letter-spacing: 0.2em;
 	text-transform: uppercase;
 	color: var(--progyx-blue);
 }
 
 .progyx-header__brand-title {
 	font-family: var(--progyx-font-heading);
-	font-size: 1.02rem;
+	font-size: 0.9rem;
 	font-weight: 900;
 	color: var(--progyx-ink);
 	line-height: 1.1;
@@ -2249,11 +2249,12 @@ html[data-theme='dark'] .auth-switch-button:hover {
 .progyx-header__link {
 	display: inline-flex;
 	flex: 0 0 auto;
-	min-height: 2.6rem;
+	min-height: 2.35rem;
 	align-items: center;
 	justify-content: center;
 	border-radius: 999px;
-	padding: 0.58rem 0.8rem;
+	padding: 0.45rem 0.68rem;
+	font-size: 0.82rem;
 	font-weight: 700;
 	color: var(--progyx-muted);
 	white-space: nowrap;
@@ -2872,7 +2873,7 @@ html[data-theme='dark'] .progyx-header__sidebar-link--active {
 
 	.progyx-header--mobile-drawer .progyx-header__nav--compact .progyx-header__link {
 		padding: 0.5rem 0.62rem;
-		font-size: 0.86rem;
+		font-size: 0.78rem;
 	}
 
 	/* Одна строка: лого + заголовок | меню + тема; вторая — Кабинет / Уроки */
@@ -6532,7 +6533,7 @@ html[data-theme='dark'] .home-code-panel {
 	}
 
 	.progyx-header__brand-title {
-		font-size: 0.95rem;
+		font-size: 0.84rem;
 		line-height: 1.15;
 	}
 

@@ -7,9 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from ..core.db import db
 from ..core.security import auth_required
 from ..models.cosmetics import CATALOG, CATALOG_BY_KEY, UserOwnedCosmetic
-from ..models.user import User
+from ..models.user import User, UserRole
 
 cosmetics_bp = Blueprint("cosmetics", __name__)
+
+# XP economy is for learners only. Admins/superadmins/teachers must NOT spend
+# or accumulate XP via the cosmetics shop — keeps the in-game currency loop
+# isolated from staff accounts (see audit H-6).
+_COSMETICS_ALLOWED_ROLES = [UserRole.STUDENT, UserRole.PARENT]
 
 
 def _owned_keys(user_id: int) -> set[str]:
@@ -18,7 +23,7 @@ def _owned_keys(user_id: int) -> set[str]:
 
 
 @cosmetics_bp.get("/cosmetics")
-@auth_required()
+@auth_required(_COSMETICS_ALLOWED_ROLES)
 def list_cosmetics(user: User):
     owned = _owned_keys(user.id)
     # Themes light and dark are always owned
@@ -31,7 +36,7 @@ def list_cosmetics(user: User):
 
 
 @cosmetics_bp.post("/cosmetics/purchase")
-@auth_required()
+@auth_required(_COSMETICS_ALLOWED_ROLES)
 def purchase_cosmetic(user: User):
     body = request.get_json(silent=True) or {}
     item_key = str(body.get("item_key", "")).strip()
@@ -78,7 +83,7 @@ def purchase_cosmetic(user: User):
 
 
 @cosmetics_bp.post("/cosmetics/equip")
-@auth_required()
+@auth_required(_COSMETICS_ALLOWED_ROLES)
 def equip_cosmetic(user: User):
     body = request.get_json(silent=True) or {}
     item_key = str(body.get("item_key", "")).strip()

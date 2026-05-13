@@ -88,7 +88,6 @@ class ParentInsightsCopyPositivityTests(unittest.TestCase):
             'SUPERADMIN_BOOTSTRAP': 'false',
             'SESSION_COOKIE_SECURE': 'false',
             'SESSION_COOKIE_SAMESITE': 'Strict',
-            'GIGACHAT_VERIFY_SSL': 'true',
             'CODE_JUDGE_RUNNER_URL': '',
             'CODE_JUDGE_RUNNER_TOKEN': '',
             'METRICS_DEBUG': 'false',

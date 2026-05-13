@@ -139,14 +139,6 @@ class Config:
     CODE_JUDGE_ALLOW_LOCAL_FALLBACK = False
     METRICS_DEBUG = _as_bool(os.getenv('METRICS_DEBUG'), default=not IS_PRODUCTION)
 
-    GIGACHAT_AUTH_KEY = _env('GIGACHAT_AUTH_KEY')
-    GIGACHAT_SCOPE = _env('GIGACHAT_SCOPE') or 'GIGACHAT_API_PERS'
-    GIGACHAT_MODEL = _env('GIGACHAT_MODEL') or 'GigaChat'
-    GIGACHAT_AUTH_URL = _env('GIGACHAT_AUTH_URL') or 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
-    GIGACHAT_API_URL = (_env('GIGACHAT_API_URL') or 'https://gigachat.devices.sberbank.ru/api/v1').rstrip('/')
-    GIGACHAT_TIMEOUT_MS = int(_env('GIGACHAT_TIMEOUT_MS') or '30000')
-    GIGACHAT_VERIFY_SSL = _as_bool(os.getenv('GIGACHAT_VERIFY_SSL'), default=True)
-    GIGACHAT_CA_BUNDLE = _env('GIGACHAT_CA_BUNDLE')
     LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(_env('LOGIN_RATE_LIMIT_WINDOW_SECONDS') or '900')
     LOGIN_RATE_LIMIT_MAX_FAILURES = int(_env('LOGIN_RATE_LIMIT_MAX_FAILURES') or '8')
     LOGIN_RATE_LIMIT_BLOCK_SECONDS = int(_env('LOGIN_RATE_LIMIT_BLOCK_SECONDS') or '900')

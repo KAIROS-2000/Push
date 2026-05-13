@@ -201,8 +201,6 @@ def _validate_runtime_config(app: Flask) -> None:
         raise RuntimeError("SESSION_COOKIE_SECURE must stay enabled in production mode.")
     if app.config["IS_PRODUCTION"] and str(app.config.get("SESSION_COOKIE_SAMESITE") or "").lower() != "strict":
         raise RuntimeError("SESSION_COOKIE_SAMESITE must be Strict in production mode.")
-    if app.config["IS_PRODUCTION"] and not app.config.get("GIGACHAT_VERIFY_SSL", True):
-        raise RuntimeError("GIGACHAT_VERIFY_SSL cannot be disabled in production mode.")
     if app.config["IS_PRODUCTION"] and not (app.config.get("CLIENT_URL") or "").strip():
         raise RuntimeError("Set CLIENT_URL in production mode.")
     if app.config["IS_PRODUCTION"] and (app.config.get("CODE_JUDGE_RUNNER_URL") or "").strip():

@@ -32,7 +32,9 @@ def _message_dict(message: StaffDirectMessage, current: User) -> dict:
         "id": message.id,
         "thread_id": message.thread_id,
         "sender_id": message.sender_id,
-        "sender": sm._user_payload(sender) if sender else None,
+        # Staff-thread message endpoints are gated to admin/superadmin/teacher
+        # (audit H-2), so the sender email is safe to expose in this scope.
+        "sender": sm._user_payload(sender, include_email=True) if sender else None,
         "sender_name": sender.full_name if sender else None,
         "sender_role": sender.role.value if sender else None,
         "body": message.body,
@@ -50,9 +52,18 @@ def staff_summary(user: User):
 @staff_messaging_bp.get("/search-users")
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def search_users(user: User):
-    q = str(request.args.get("q") or "")
+    q = str(request.args.get("q") or "").strip()
+    # Require a meaningful query so admins cannot dump the entire directory by
+    # issuing /search-users?q= and bound the upper length so the SQL `ILIKE`
+    # parameter stays well within reason. The service itself caps SEARCH_RESULTS_LIMIT.
+    if len(q) < 2:
+        return {"users": []}
+    if len(q) > 64:
+        q = q[:64]
     found = sm.search_users_by_login(user, q)
-    return {"users": [sm._user_payload(u) for u in found]}
+    # Search results are an admin-only address-book; emails are intentionally
+    # exposed so admins can disambiguate users.
+    return {"users": [sm._user_payload(u, include_email=True) for u in found]}
 
 
 @staff_messaging_bp.post("/threads")
@@ -87,7 +98,7 @@ def start_thread(user: User):
 
 
 @staff_messaging_bp.get("/threads/<int:thread_id>/messages")
-@auth_required()
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TEACHER])
 def list_thread_messages(user: User, thread_id: int):
     thread = sm.get_thread_by_id(thread_id)
     if thread is None:
@@ -111,7 +122,7 @@ def list_thread_messages(user: User, thread_id: int):
 
 
 @staff_messaging_bp.post("/threads/<int:thread_id>/messages")
-@auth_required()
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TEACHER])
 def post_thread_message(user: User, thread_id: int):
     thread = sm.get_thread_by_id(thread_id)
     if thread is None:
@@ -136,7 +147,7 @@ def post_thread_message(user: User, thread_id: int):
 
 
 @staff_messaging_bp.post("/threads/<int:thread_id>/read")
-@auth_required()
+@auth_required([UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TEACHER])
 def mark_thread_read(user: User, thread_id: int):
     thread = sm.get_thread_by_id(thread_id)
     if thread is None:

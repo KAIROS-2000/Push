@@ -40,7 +40,6 @@ class StaffMessagingTests(unittest.TestCase):
             "ENABLE_DEMO_DATA": "false",
             "SUPERADMIN_BOOTSTRAP": "false",
             "SESSION_COOKIE_SECURE": "false",
-            "GIGACHAT_VERIFY_SSL": "true",
             "METRICS_DEBUG": "false",
         }
         with patch.dict(os.environ, env, clear=False):

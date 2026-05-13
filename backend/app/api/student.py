@@ -80,12 +80,14 @@ DEFAULT_THEMES = {"light", "dark"}
 # Parent accounts can browse and complete catalog lessons themselves; forced lesson order
 # applies to students only (see FORCED_SEQUENCE_ROLES).
 FORCED_SEQUENCE_ROLES = {UserRole.STUDENT}
+# Only "learner" roles may submit answers / mark lessons completed.
+# Admin/superadmin/teacher have read access to the catalog through their own
+# panels and intentionally are NOT allowed to mutate UserProgress: that path
+# triggers achievements and writes per-user history rows that should stay
+# limited to actual learners (see security audit, defect #B-15 / arch §6.3).
 LESSON_PARTICIPANT_ROLES: list[UserRole] = [
     UserRole.STUDENT,
     UserRole.PARENT,
-    UserRole.TEACHER,
-    UserRole.ADMIN,
-    UserRole.SUPERADMIN,
 ]
 _AGE_GROUP_RANK = {"junior": 0, "middle": 1, "senior": 2}
 LEADERBOARD_LIMIT = 50
@@ -125,6 +127,50 @@ def _leaderboard_redis_key(age_key: str) -> str:
     from ..core.redis_client import redis_key
 
     return redis_key("leaderboard", "global", age_key, LEADERBOARD_REDIS_SCHEMA)
+
+
+def invalidate_leaderboard_cache(age_group: str | None = None) -> None:
+    """Drop both in-process and Redis-backed leaderboard caches.
+
+    Call after every mutation that can change leaderboard ordering or
+    visibility: XP gain/spend, ``is_active`` flip, user deletion, parent
+    privacy toggle. Passing ``age_group=None`` clears the global key only;
+    callers should typically clear both the user's group and the global
+    aggregate, hence the helper accepts ``"*"`` as a shortcut.
+    """
+    # 1) In-process cache (per-worker). We can't reach other workers from here,
+    #    but each worker has the same TTL so their stale rows expire within
+    #    GLOBAL_LEADERBOARD_REFRESH_INTERVAL even without explicit invalidation.
+    if age_group == "*":
+        _global_leaderboard_cache.clear()
+    else:
+        key = _leaderboard_cache_age_key(age_group)
+        for cache_key in list(_global_leaderboard_cache.keys()):
+            if cache_key[1] == key or cache_key[1] == GLOBAL_LEADERBOARD_CACHE_KEY_ALL:
+                _global_leaderboard_cache.pop(cache_key, None)
+
+    # 2) Redis-backed cache (shared across workers).
+    from ..core.redis_client import get_redis, redis_available
+
+    if not redis_available():
+        return
+    client = get_redis(Config.REDIS_DB_LEADERBOARD)
+    if not client:
+        return
+    try:
+        if age_group == "*":
+            # Scan-delete all leaderboard rows. Bounded by LEADERBOARD_REDIS_SCHEMA,
+            # so this only touches keys we own.
+            pattern = _leaderboard_redis_key("*")
+            for redis_key_to_delete in client.scan_iter(match=pattern):
+                client.delete(redis_key_to_delete)
+        else:
+            client.delete(_leaderboard_redis_key(_leaderboard_cache_age_key(age_group)))
+            client.delete(_leaderboard_redis_key(GLOBAL_LEADERBOARD_CACHE_KEY_ALL))
+    except (OSError, redis.RedisError):
+        # Cache invalidation is best-effort: the TTL (5 min) bounds staleness
+        # even when Redis is briefly unreachable.
+        pass
 
 
 def _read_leaderboard_from_cache(age_key: str) -> list[dict] | None:
@@ -741,16 +787,6 @@ def get_lesson(current_user: User, lesson_id: int):
     }
 
 
-@student_bp.post("/lessons/<int:lesson_id>/gigachat")
-@auth_required()
-def lesson_gigachat(current_user: User, lesson_id: int):
-    # AUDIT C-08 (open): integration code lives in core/gigachat.py but is intentionally
-    # disabled here. Decide product-side: either delete core/gigachat.py + GIGACHAT_* config,
-    # or re-enable this endpoint AFTER (a) revoking the leaked GIGACHAT_AUTH_KEY at Sber
-    # (audit S-19) and (b) `git filter-repo` removing the historical .env from history.
-    return {"message": "GigaChat недоступен в проекте."}, 404
-
-
 @student_bp.patch("/lessons/<int:lesson_id>/complete")
 @auth_required(LESSON_PARTICIPANT_ROLES)
 def complete_lesson(current_user: User, lesson_id: int):
@@ -927,6 +963,7 @@ def submit_task(current_user: User, task_id: int):
                 if earn_xp:
                     current_user.add_xp(task.xp_reward)
                     xp_awarded = task.xp_reward
+                    invalidate_leaderboard_cache(current_user.age_group)
                 elif current_user.role == UserRole.STUDENT:
                     xp_skipped = True
         elif has_answer and progress.status == "not_started":
@@ -1052,6 +1089,7 @@ def submit_quiz(current_user: User, quiz_id: int):
             if earn_xp:
                 current_user.add_xp(quiz.xp_reward)
                 xp_awarded = quiz.xp_reward
+                invalidate_leaderboard_cache(current_user.age_group)
             elif current_user.role == UserRole.STUDENT:
                 xp_skipped = True
     elif progress.status == "not_started":
@@ -1218,18 +1256,33 @@ def submit_assignment(current_user: User, assignment_id: int):
     existing = AssignmentSubmission.query.filter_by(
         assignment_id=assignment.id, student_id=current_user.id
     ).first()
-    score = 100 if len(answer.strip()) >= 10 else 60
     if existing:
+        # Anti-cheat: once a teacher has graded the submission (status=checked),
+        # the student cannot resubmit and overwrite the verdict. The teacher
+        # must explicitly mark it `needs_revision` to reopen the loop.
+        if existing.status == "checked":
+            return {
+                "message": (
+                    "Это задание уже проверено учителем. "
+                    "Попросите учителя вернуть его на доработку."
+                ),
+                "code": "submission_already_checked",
+            }, 400
         existing.answer = answer
-        existing.score = max(existing.score, score)
+        # Real score is set by the teacher (or the auto-grader for code tasks
+        # via separate flow). Until that happens, the row is pending and shows 0
+        # — do NOT overwrite a previously-set lower teacher score with our
+        # placeholder heuristic.
+        existing.score = 0
         existing.status = "pending_review"
+        existing.feedback = None
     else:
         db.session.add(
             AssignmentSubmission(
                 assignment_id=assignment.id,
                 student_id=current_user.id,
                 answer=answer,
-                score=score,
+                score=0,
                 status="pending_review",
             )
         )
@@ -1386,4 +1439,5 @@ def _award_achievement_if_needed(user: User, code: str, *, award_xp: bool = True
     db.session.add(UserAchievement(user_id=user.id, achievement_id=achievement.id))
     if award_xp:
         user.add_xp(achievement.xp_reward)
+        invalidate_leaderboard_cache(user.age_group)
     db.session.flush()

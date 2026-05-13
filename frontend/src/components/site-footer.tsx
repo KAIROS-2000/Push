@@ -34,6 +34,9 @@ export function SiteFooter({
 		{ href: '/parent', label: 'Родителям' },
 		{ href: '/useful', label: 'Полезные задания' },
 		{ href: '/leaderboard', label: 'Рейтинг' },
+		// Турнир переехал из хэдера в футер, чтобы освободить место в
+		// шапке для основных рабочих разделов (Кабинет, Уроки, Профиль и т.п.).
+		{ href: '/tournament', label: 'Турнир' },
 		{ href: '/support', label: 'Поддержка' },
 		...(shouldShowRegisterLink
 			? [{ href: '/auth/register', label: 'Создать аккаунт' }]

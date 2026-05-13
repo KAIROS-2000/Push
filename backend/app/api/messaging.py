@@ -153,11 +153,17 @@ def _preview(message: Message | None) -> str | None:
 
 
 def _user_payload(user: User | None) -> dict | None:
+    """Public-safe identity payload for chat participants.
+
+    SECURITY: ``email`` MUST NOT be included here. Conversations are visible to
+    every member of the chat (e.g. a student receives the teacher's payload),
+    so leaking the address would enable directory harvesting and account
+    enumeration. The owner of an account reads their own email via /auth/me.
+    """
     if user is None:
         return None
     return {
         "id": user.id,
-        "email": user.email,
         "full_name": user.full_name,
         "role": user.role.value,
     }

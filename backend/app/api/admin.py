@@ -56,6 +56,88 @@ VISIBLE_USER_ROLES = (UserRole.STUDENT, UserRole.TEACHER)
 MANAGED_ADMIN_ROLES = (UserRole.ADMIN,)
 VALID_STATUS_FILTERS = {'all', 'active', 'blocked'}
 VALID_TEACHER_REQUEST_FILTERS = {'all', *TEACHER_APPROVAL_STATUSES}
+MODULE_VALID_AGE_GROUPS = {'junior', 'middle', 'senior'}
+# Curated whitelist for the visual roadmap icons (kept in sync with the
+# frontend module-icon catalogue). Adding a new icon means adding to both
+# this set and the matching frontend renderer.
+MODULE_VALID_ICONS = {
+    'sparkles', 'book-open', 'code', 'rocket', 'star', 'compass',
+    'gamepad', 'lightbulb', 'flask', 'puzzle', 'graduation-cap',
+    'binary', 'cpu', 'terminal',
+}
+import re as _re_admin
+_MODULE_SLUG_RE = _re_admin.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+_MODULE_COLOR_RE = _re_admin.compile(r'^#[0-9A-Fa-f]{6}$')
+
+
+def _validate_module_payload(data: dict, *, partial: bool = False) -> tuple[dict, tuple[dict, int] | None]:
+    """Whitelist + normalize module fields.
+
+    Returns (clean_fields, error). On error, `clean_fields` is empty and the
+    caller should return the error tuple. With ``partial=True`` (PATCH) only
+    fields actually present in ``data`` are validated; with ``partial=False``
+    (POST) the required fields are enforced.
+    """
+
+    clean: dict[str, object] = {}
+
+    if not partial or 'slug' in data:
+        slug = (str(data.get('slug') or '')).strip().lower()
+        if not slug or not _MODULE_SLUG_RE.match(slug) or len(slug) > 120:
+            return {}, ({'message': 'Укажите slug в формате a-z0-9 c дефисами (макс. 120).'}, 400)
+        clean['slug'] = slug
+
+    if not partial or 'title' in data:
+        title = str(data.get('title') or '').strip()
+        if not title:
+            return {}, ({'message': 'Название модуля обязательно.'}, 400)
+        clean['title'] = title[:120]
+
+    if not partial or 'description' in data:
+        description = str(data.get('description') or '').strip()
+        if not description:
+            return {}, ({'message': 'Описание модуля обязательно.'}, 400)
+        clean['description'] = description[:2000]
+
+    if not partial or 'age_group' in data:
+        age_group = str(data.get('age_group') or '').strip().lower()
+        if age_group not in MODULE_VALID_AGE_GROUPS:
+            return {}, (
+                {
+                    'message': 'age_group должен быть одним из: junior, middle, senior.',
+                    'valid': sorted(MODULE_VALID_AGE_GROUPS),
+                },
+                400,
+            )
+        clean['age_group'] = age_group
+
+    if 'icon' in data:
+        icon = str(data.get('icon') or '').strip().lower()
+        if icon and icon not in MODULE_VALID_ICONS:
+            return {}, (
+                {
+                    'message': 'icon вне разрешённого набора.',
+                    'valid': sorted(MODULE_VALID_ICONS),
+                },
+                400,
+            )
+        if icon:
+            clean['icon'] = icon
+
+    if 'color' in data:
+        color = str(data.get('color') or '').strip()
+        if color and not _MODULE_COLOR_RE.match(color):
+            return {}, ({'message': 'color должен быть в формате #RRGGBB.'}, 400)
+        if color:
+            clean['color'] = color
+
+    if 'order_index' in data:
+        clean['order_index'] = _safe_int(data.get('order_index'), 1, minimum=1, maximum=1000)
+
+    if 'is_published' in data:
+        clean['is_published'] = bool(data.get('is_published'))
+
+    return clean, None
 
 
 def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -876,6 +958,10 @@ def block_user(current_user: User, user_id: int):
     user.bump_session_version()
     invalidate_session_version_cache(user.id)
     revoke_refresh_tokens_for_user(user.id)
+    # Blocked students must disappear from the public leaderboard immediately.
+    from .student import invalidate_leaderboard_cache
+
+    invalidate_leaderboard_cache(user.age_group)
     _log_admin_action(
         current_user,
         action='user_blocked',
@@ -901,6 +987,9 @@ def unblock_user(current_user: User, user_id: int):
     if error:
         return error
     user.is_active = True
+    from .student import invalidate_leaderboard_cache
+
+    invalidate_leaderboard_cache(user.age_group)
     _log_admin_action(
         current_user,
         action='user_unblocked',
@@ -934,6 +1023,7 @@ def delete_user(current_user: User, user_id: int):
         'target_role': user.role.value,
         'status': 'deleted',
     }
+    target_age_group = user.age_group
     revoke_refresh_tokens_for_user(user.id)
     invalidate_session_version_cache(user.id)
     cleanup_details = _delete_managed_user_dependencies(user)
@@ -947,6 +1037,9 @@ def delete_user(current_user: User, user_id: int):
     )
     db.session.delete(user)
     db.session.commit()
+    from .student import invalidate_leaderboard_cache
+
+    invalidate_leaderboard_cache(target_age_group)
     return {'message': 'Пользователь удалён'}
 
 
@@ -972,15 +1065,20 @@ def list_modules(current_user: User):
 @auth_required([UserRole.ADMIN, UserRole.SUPERADMIN])
 def create_module(current_user: User):
     data = request.get_json() or {}
+    clean, error = _validate_module_payload(data, partial=False)
+    if error:
+        return error
+    if Module.query.filter_by(slug=clean['slug']).first() is not None:
+        return {'message': 'Модуль с таким slug уже существует.'}, 409
     module = Module(
-        slug=data.get('slug'),
-        title=data.get('title', 'Новый модуль'),
-        description=data.get('description', 'Описание модуля'),
-        age_group=data.get('age_group', 'middle'),
-        icon=data.get('icon', 'sparkles'),
-        color=data.get('color', '#4A90D9'),
-        order_index=int(data.get('order_index', Module.query.count() + 1)),
-        is_published=bool(data.get('is_published', False)),
+        slug=clean['slug'],
+        title=clean['title'],
+        description=clean['description'],
+        age_group=clean['age_group'],
+        icon=clean.get('icon', 'sparkles'),
+        color=clean.get('color', '#4A90D9'),
+        order_index=clean.get('order_index', Module.query.count() + 1),
+        is_published=clean.get('is_published', False),
     )
     db.session.add(module)
     db.session.flush()
@@ -1005,12 +1103,13 @@ def create_module(current_user: User):
 def update_module(current_user: User, module_id: int):
     module = Module.query.get_or_404(module_id)
     data = request.get_json() or {}
+    clean, error = _validate_module_payload(data, partial=True)
+    if error:
+        return error
     was_published = bool(module.is_published)
-    for field in ['title', 'description', 'age_group', 'icon', 'color']:
-        if field in data:
-            setattr(module, field, data[field])
-    if 'is_published' in data:
-        module.is_published = bool(data['is_published'])
+    for field in ('title', 'description', 'age_group', 'icon', 'color', 'order_index', 'is_published'):
+        if field in clean:
+            setattr(module, field, clean[field])
     if was_published != bool(module.is_published):
         _log_admin_action(
             current_user,
@@ -1151,24 +1250,31 @@ def create_module_lesson(current_user: User, module_id: int):
 @admin_bp.post('/admins')
 @auth_required([UserRole.SUPERADMIN])
 def create_admin(current_user: User):
+    from .auth import is_valid_email
+
     data = request.get_json() or {}
     email = (data.get('email') or '').strip().lower()
     password = data.get('password') or ''
     password_error = validate_password(password, minimum_length=ADMIN_PASSWORD_MIN_LENGTH)
-    if not email:
-        return {'message': 'Укажите email нового администратора.'}, 400
+    if not email or not is_valid_email(email):
+        return {'message': 'Укажите корректный email нового администратора.'}, 400
     if password_error:
         return {'message': password_error}, 400
 
     if User.query.filter_by(email=email).first():
         return {'message': 'Пользователь уже существует'}, 409
+    # full_name: truncate to 120 chars (DB column limit) to avoid silent DataError
+    # on PostgreSQL when admin sends an overly long display name.
+    full_name = str(data.get('full_name') or 'Администратор').strip()[:120]
     admin = User(
-        full_name=data.get('full_name', 'Администратор'),
+        full_name=full_name,
         email=email,
         password_hash=hash_password(password),
         role=UserRole.ADMIN,
         age_group='adult',
-        xp=2000,
+        # XP is a learner-economy resource (cosmetics shop). Admins are excluded
+        # from the shop (see api/cosmetics.py role-list), so they must start at 0.
+        xp=0,
     )
     db.session.add(admin)
     db.session.flush()

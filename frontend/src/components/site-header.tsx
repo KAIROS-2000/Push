@@ -157,15 +157,10 @@ export function SiteHeader() {
 	}
 
 	const links = useMemo(() => {
+		// Header keeps only the primary tools per role. Secondary destinations
+		// (Турнир, Полезное, Рейтинг) live in the footer navigation so the
+		// header stays compact and readable on narrow screens.
 		if (!isAuthenticated) {
-			if (zone === 'public') {
-				return [
-					{ href: '/', label: 'Главная' },
-					{ href: '/it-career', label: 'Карьера IT' },
-					{ href: '/tournament', label: 'Турнир' },
-					{ href: '/parent', label: 'Родителям' },
-				]
-			}
 			if (zone === 'parent') {
 				return [
 					{ href: '/', label: 'Главная' },
@@ -177,40 +172,23 @@ export function SiteHeader() {
 			return [
 				{ href: '/', label: 'Главная' },
 				{ href: '/it-career', label: 'Карьера IT' },
-				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/parent', label: 'Родителям' },
 			]
 		}
 
+		// Default learner ("student") set — Турнир/Полезное/Рейтинг переехали в футер.
 		const secured = [
 			{ href: '/dashboard', label: 'Кабинет' },
-			{ href: '/messages', label: 'Сообщения' },
 			{ href: '/roadmap', label: 'Уроки' },
-			{ href: '/useful', label: 'Полезное' },
-			{ href: '/leaderboard', label: 'Рейтинг' },
-			{ href: '/tournament', label: 'Турнир' },
+			{ href: '/messages', label: 'Сообщения' },
 			{ href: '/profile', label: 'Профиль' },
 		]
-
-		// if (role === 'admin' || role === 'superadmin') {
-		// 	return [
-		// 		{ href: '/admin', label: 'Админ' },
-		// 		...(role === 'superadmin'
-		// 			? [{ href: '/superadmin', label: 'Суперадмин' }]
-		// 			: []),
-		// 		{ href: '/roadmap', label: 'Уроки' },
-		// 		{ href: '/profile', label: 'Профиль' },
-		// 	]
-		// }
 
 		if (role === 'admin') {
 			return [
 				{ href: '/admin/users', label: 'Админ' },
 				{ href: '/admin/messages', label: 'Сообщения' },
 				{ href: '/admin/logs', label: 'Логи' },
-				{ href: '/roadmap', label: 'Уроки' },
-				{ href: '/useful', label: 'Полезное' },
-				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		} else if (role === 'superadmin') {
@@ -218,9 +196,6 @@ export function SiteHeader() {
 				{ href: '/superadmin/users', label: 'Суперадмин' },
 				{ href: '/superadmin/messages', label: 'Сообщения' },
 				{ href: '/superadmin/logs', label: 'Логи' },
-				{ href: '/roadmap', label: 'Уроки' },
-				{ href: '/useful', label: 'Полезное' },
-				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		} else if (role === 'teacher') {
@@ -229,20 +204,17 @@ export function SiteHeader() {
 				{ href: '/teacher', label: 'Учитель' },
 				{ href: '/messages', label: 'Сообщения' },
 				{ href: '/roadmap', label: 'Уроки' },
-				{ href: '/useful', label: 'Полезное' },
-				{ href: '/leaderboard', label: 'Рейтинг' },
-				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		}
 
 		if (role === 'parent') {
+			// Per product brief: parent header — без Турнира и Полезного;
+			// эти разделы доступны через футер.
 			return [
 				{ href: '/parent/dashboard', label: 'Семейный кабинет' },
 				{ href: '/roadmap', label: 'Уроки' },
-				{ href: '/useful', label: 'Полезное' },
 				{ href: '/messages', label: 'Сообщения' },
-				{ href: '/tournament', label: 'Турнир' },
 				{ href: '/profile', label: 'Профиль' },
 			]
 		}

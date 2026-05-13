@@ -27,7 +27,7 @@ from ..models.learning import (
     normalize_submission_format,
     normalize_task_validation,
 )
-from ..models.user import User, UserRole
+from ..models.user import AdminAuditLog, User, UserRole
 from ..services import parent_messaging
 from ..services.teacher_query_service import TeacherQueryService
 from ..seed.bootstrap import generate_code
@@ -673,10 +673,37 @@ def grade_submission(current_user: User, submission_id: int):
     if submission.assignment.classroom.teacher_id != current_user.id:
         return {'message': 'Forbidden'}, 403
     data = request.get_json() or {}
+    previous_score = int(submission.score or 0)
+    previous_status = submission.status
+    previous_feedback_length = len(submission.feedback or '')
     submission.score = _safe_int(data.get('score', submission.score), submission.score, minimum=0, maximum=100)
     submission.feedback = data.get('feedback', submission.feedback)
     submission.status = _normalize_submission_review_status(data.get('status'))
     _sync_lesson_progress_from_review(submission)
+    # Audit M-6: persist a semantic audit trail for grading actions so admins
+    # can reconstruct who graded what and when (SiteActivityLog only captures
+    # the HTTP call, not the score/status delta).
+    db.session.add(
+        AdminAuditLog(
+            actor_user_id=current_user.id,
+            actor_role=current_user.role.value,
+            action='submission_graded',
+            entity_type='assignment_submission',
+            entity_id=submission.id,
+            entity_label=f"submission#{submission.id}",
+            details_json={
+                'classroom_id': submission.assignment.classroom_id,
+                'assignment_id': submission.assignment_id,
+                'student_id': submission.student_id,
+                'previous_score': previous_score,
+                'next_score': int(submission.score or 0),
+                'previous_status': previous_status,
+                'next_status': submission.status,
+                'previous_feedback_length': previous_feedback_length,
+                'next_feedback_length': len(submission.feedback or ''),
+            },
+        )
+    )
     db.session.commit()
     return {'submission': submission.to_dict()}
 

@@ -8,7 +8,6 @@ type AdminSection =
   | 'leaderboard'
   | 'messages'
   | 'support'
-  | 'bug-hunter'
   | 'teacher-requests'
   | 'admins'
   | 'lessons'
@@ -55,12 +54,6 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/admin/support',
       label: 'Поддержка',
       description: 'Тикеты из анкеты и чаты',
-    },
-    {
-      key: 'bug-hunter',
-      href: '/admin/bug-hunter',
-      label: 'Баг-хантер',
-      description: 'Репорты и начисление XP',
     },
     {
       key: 'teacher-requests',
@@ -129,12 +122,6 @@ const NAV_ITEMS: Record<AdminArea, NavItem[]> = {
       href: '/superadmin/support',
       label: 'Поддержка',
       description: 'Тикеты из анкеты и чаты',
-    },
-    {
-      key: 'bug-hunter',
-      href: '/superadmin/bug-hunter',
-      label: 'Баг-хантер',
-      description: 'Репорты и начисление XP',
     },
     {
       key: 'teacher-requests',

@@ -38,15 +38,26 @@ def is_privileged_messaging_user(user: User) -> bool:
     return user.role in _STAFF_ROLES
 
 
-def _user_payload(u: User | None) -> dict | None:
+def _user_payload(u: User | None, *, include_email: bool = False) -> dict | None:
+    """Identity payload for staff-direct chat participants.
+
+    SECURITY (audit M-11): defense in depth. Even though every staff_messaging
+    /threads/* route is now gated to ADMIN/SUPERADMIN/TEACHER (audit H-2),
+    we still hide ``email`` from the default payload to prevent accidental
+    leaks through services that fan out into less-trusted contexts. Set
+    ``include_email=True`` in the search-users endpoint and in the explicit
+    thread peer-info responses where the address-book function is required.
+    """
     if u is None:
         return None
-    return {
+    payload: dict = {
         "id": u.id,
-        "email": u.email,
         "full_name": u.full_name,
         "role": u.role.value,
     }
+    if include_email:
+        payload["email"] = u.email
+    return payload
 
 
 def _other_user_id(thread: StaffDirectThread, current_id: int) -> int:
@@ -142,9 +153,12 @@ def _thread_row_for(
     other: User,
 ) -> dict:
     latest = _latest_message(thread)
+    # Staff-thread routes are gated to ADMIN/SUPERADMIN/TEACHER (audit H-2), so
+    # the counterparty's email is acceptable here as part of the address-book
+    # behavior teachers/admins rely on to identify each other.
     return {
         "thread_id": thread.id,
-        "other": _user_payload(other),
+        "other": _user_payload(other, include_email=True),
         "unread_count": _unread_count(thread, current.id),
         "latest_message_at": _iso(latest.created_at) if latest else None,
         "latest_message_preview": _preview(latest),
@@ -220,9 +234,11 @@ def _directory_listings(current: User) -> dict:
         .limit(DIRECTORY_USER_LIMIT)
         .all()
     )
+    # Address-book directory for staff to find each other. Caller is
+    # admin/superadmin only, so emails are intentionally exposed.
     return {
-        "teachers": [_user_payload(u) for u in teachers],
-        "staff": [_user_payload(u) for u in staff],
+        "teachers": [_user_payload(u, include_email=True) for u in teachers],
+        "staff": [_user_payload(u, include_email=True) for u in staff],
     }
 
 
